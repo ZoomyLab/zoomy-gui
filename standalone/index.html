@@ -1,210 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>ShallowFlow Static IDE</title>
-    
+    <title>ShallowFlow Project</title>
+
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/mode-python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/theme-monokai.min.js"></script>
-    
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 
-    <style>
-        body { font-family: -apple-system, system-ui, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #f1f5f9; color: #334155; }
-        
-        /* Layout Components */
-        .sim-block { background: white; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 40px; overflow: hidden; border: 1px solid #e2e8f0; }
-        .sim-header { background: #f8fafc; padding: 15px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
-        .sim-body { display: flex; flex-direction: column; gap: 0; }
-        
-        /* Editor Area */
-        .editor-container { height: 300px; width: 100%; position: relative; }
-        
-        /* Output Areas */
-        .plot-area { height: 400px; background: white; display: flex; align-items: center; justify-content: center; border-top: 1px solid #e2e8f0; }
-        .console-area { background: #1e293b; color: #cbd5e1; padding: 15px; font-family: monospace; white-space: pre-wrap; max-height: 200px; overflow-y: auto; font-size: 0.9rem; border-top: 1px solid #334155; display: none; }
-        
-        /* Buttons */
-        .run-btn { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-        .run-btn:hover { background: #1d4ed8; }
-        .run-btn:disabled { background: #94a3b8; cursor: wait; }
-        
-        /* Global Status */
-        #global-status { position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 10px 20px; border-radius: 50px; font-size: 0.9rem; display: none; z-index: 999; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-    </style>
+    <script src="shallowflow.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+    
 </head>
 <body>
 
-    <h1 style="text-align: center; color: #1e293b;">🌊 ShallowFlow Lab</h1>
-    <p style="text-align: center; color: #64748b; margin-bottom: 40px;">Interactive Scientific Simulations (Static-First Architecture)</p>
+    <h2>Reusable Simulation Components</h2>
 
-    <div class="sim-block" id="block-1">
-        <div class="sim-header">
-            <strong>1. Basic Sine Wave</strong>
-            <button class="run-btn" onclick="runSimulation('block-1')">▶ Run Code</button>
-        </div>
-        <div class="editor-container" id="editor-1"></div>
-        <div class="plot-area" id="plot-1">
-            <span style="color:#cbd5e1">Plot will appear here...</span>
-        </div>
-        <div class="console-area" id="console-1"></div>
-    </div>
+    <div id="sim-sine" class="sim-container"></div>
+    <div id="sim-3d" class="sim-container"></div>
 
-    <div class="sim-block" id="block-2">
-        <div class="sim-header">
-            <strong>2. 3D Vector Field</strong>
-            <button class="run-btn" onclick="runSimulation('block-2')">▶ Run Code</button>
-        </div>
-        <div class="editor-container" id="editor-2"></div>
-        <div class="plot-area" id="plot-2">
-            <span style="color:#cbd5e1">Plot will appear here...</span>
-        </div>
-        <div class="console-area" id="console-2"></div>
-    </div>
-
-    <div id="global-status"></div>
+    <div id="loading-toast"></div>
 
     <script>
-        // 1. SETUP EDITORS IMMEDIATELY
-        // This runs instantly. User sees the code before Python loads.
-        
-        const code1 = `import plotly.graph_objects as go
-import numpy as np
+        // --- USAGE ---
+        createSimulation({
+            targetId: 'sim-sine',
+            codeUrl: 'snippets/sine_wave.py',
+            staticImgUrl: 'previews/sine_wave.svg'
+        });
 
-x = np.linspace(0, 10, 100)
-y = np.sin(x)
-
-fig = go.Figure(data=go.Scatter(x=x, y=y, mode='lines+markers'))
-fig.update_layout(title="Sine Wave", margin=dict(t=30, l=0, r=0, b=0))`;
-
-        const code2 = `import plotly.graph_objects as go
-import numpy as np
-
-# Create a 3D Cone
-fig = go.Figure(data=go.Cone(
-    x=[1], y=[1], z=[1], u=[1], v=[1], w=[0],
-    sizemode="absolute", sizeref=2, anchor="tail"))
-
-fig.update_layout(scene=dict(aspectmode='data'), margin=dict(t=0, l=0, r=0, b=0))`;
-
-        // Initialize Ace Editors
-        const editor1 = ace.edit("editor-1");
-        editor1.setTheme("ace/theme/monokai");
-        editor1.session.setMode("ace/mode/python");
-        editor1.setValue(code1, -1); // -1 moves cursor to start
-
-        const editor2 = ace.edit("editor-2");
-        editor2.setTheme("ace/theme/monokai");
-        editor2.session.setMode("ace/mode/python");
-        editor2.setValue(code2, -1);
-
-        // Map IDs to Editor Instances
-        const editors = { 'block-1': editor1, 'block-2': editor2 };
-
-
-        // 2. PYTHON RUNTIME LOGIC
-        let pyodide = null;
-        let isPyodideLoading = false;
-
-        async function getPyodide() {
-            if (pyodide) return pyodide;
-            
-            // Show Status
-            const status = document.getElementById('global-status');
-            status.style.display = 'block';
-            status.innerHTML = "🔄 <b>Initializing Python Engine...</b> (Downloading ~20MB)";
-            
-            try {
-                // Load Pyodide
-                pyodide = await loadPyodide();
-                
-                status.innerHTML = "📦 <b>Installing Science Stack...</b> (NumPy, Plotly, Pandas)";
-                
-                // Load Packages
-                await pyodide.loadPackage("micropip");
-                const micropip = pyodide.pyimport("micropip");
-                await micropip.install(['numpy', 'pandas', 'plotly', 'matplotlib']);
-                
-                // Optional: Install local wheel if you have it
-                // await micropip.install('zoomy-core');
-
-                // Load the Engine Script
-                status.innerHTML = "🚀 <b>Loading Engine...</b>";
-                const response = await fetch('engine.py');
-                const engineCode = await response.text();
-                await pyodide.runPythonAsync(engineCode);
-
-                status.innerHTML = "✅ <b>Ready!</b>";
-                setTimeout(() => { status.style.display = 'none'; }, 2000);
-                
-                return pyodide;
-
-            } catch (err) {
-                status.innerHTML = "❌ <b>Error loading Python.</b> Check console.";
-                console.error(err);
-                throw err;
-            }
-        }
-
-        async function runSimulation(blockId) {
-            const btn = document.querySelector(`#${blockId} .run-btn`);
-            const plotDiv = document.querySelector(`#${blockId} .plot-area`);
-            const consoleDiv = document.querySelector(`#${blockId} .console-area`);
-            
-            // UI Loading State
-            const originalText = btn.innerHTML;
-            btn.innerHTML = "⏳ Processing...";
-            btn.disabled = true;
-            plotDiv.style.opacity = 0.5;
-
-            try {
-                // A. Ensure Python is Ready
-                const py = await getPyodide();
-
-                // B. Get Code from Editor
-                const code = editors[blockId].getValue();
-
-                // C. Call Python 'process_code' function
-                // We pass code as a string, Python returns JSON string
-                const processFunc = py.globals.get('process_code');
-                const resultJson = processFunc(code);
-                const result = JSON.parse(resultJson);
-
-                // D. Handle Output
-                
-                // 1. Console Output
-                if (result.output.trim() !== "") {
-                    consoleDiv.style.display = 'block';
-                    consoleDiv.innerText = result.output;
-                } else {
-                    consoleDiv.style.display = 'none';
-                }
-
-                // 2. Plot Output
-                if (result.plot_type === 'plotly') {
-                    const plotData = JSON.parse(result.plot_data);
-                    Plotly.newPlot(plotDiv, plotData.data, plotData.layout);
-                } 
-                else if (result.plot_type === 'matplotlib') {
-                    plotDiv.innerHTML = `<img src="data:image/png;base64,${result.plot_data}" style="max-height:100%; max-width:100%">`;
-                }
-                else if (result.status === 'error') {
-                    plotDiv.innerHTML = `<span style="color:red">❌ Execution Error</span>`;
-                }
-
-            } catch (err) {
-                console.error(err);
-                alert("Runtime Error: " + err.message);
-            } finally {
-                // Restore UI
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-                plotDiv.style.opacity = 1;
-            }
-        }
+        createSimulation({
+            targetId: 'sim-3d',
+            codeUrl: 'snippets/cone_3d.py',
+            staticImgUrl: 'previews/cone_3d.svg'
+        });
     </script>
+
 </body>
 </html>

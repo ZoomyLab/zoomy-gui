@@ -1,86 +1,53 @@
-import sys
-import io
-import json
-import base64
-
-# We install these libraries in the HTML loader
+import sys, io, json, base64
 import numpy as np
-import plotly
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 
-# Optional: zoomy-core
-try:
-    import zoomy_core
-
-    HAS_ZOOMY = True
-except ImportError:
-    HAS_ZOOMY = False
+# We initialize the scope once with common libraries
+if not hasattr(sys, "_shallowflow_scope"):
+    sys._shallowflow_scope = {"np": np, "go": go, "plt": plt, "go": go}
 
 
 def process_code(code_string):
-    """
-    Executes user code and returns a JSON string containing:
-    {
-        "status": "success" | "error",
-        "output": "stdout text",
-        "plot_type": "plotly" | "matplotlib" | "none",
-        "plot_data": JSON string or Base64 string
-    }
-    """
-    # 1. Capture Stdout
     new_stdout = io.StringIO()
     old_stdout = sys.stdout
     sys.stdout = new_stdout
 
-    response = {
-        "status": "success",
-        "output": "",
-        "plot_type": "none",
-        "plot_data": None,
-    }
-
-    # 2. Execution Scope
-    # We use a persistent scope so variables survive between runs
-    if not hasattr(process_code, "scope"):
-        process_code.scope = globals().copy()
+    res = {"status": "success", "output": "", "plot_type": "none", "plot_data": None}
+    scope = sys._shallowflow_scope
 
     try:
-        # 3. Run Code
-        exec(code_string, process_code.scope)
+        # Prevent ghost plots from previous runs
+        scope.pop("fig", None)
+        plt.close("all")
 
-        # 4. Detect Figures
-        # A. Check for 'fig' variable (Plotly convention)
-        if "fig" in process_code.scope:
-            obj = process_code.scope["fig"]
-            # Is it a Plotly Figure?
-            if hasattr(obj, "to_json"):
-                response["plot_type"] = "plotly"
-                response["plot_data"] = obj.to_json()
+        # Execute the user code
+        exec(code_string, scope)
 
-        # B. Check for Active Matplotlib Figure
+        # 1. Priority: Plotly
+        if "fig" in scope:
+            fig_obj = scope["fig"]
+            res["plot_type"] = "plotly"
+            # Use Plotly's internal converter to handle NumPy types correctly
+            if hasattr(fig_obj, "to_json"):
+                res["plot_data"] = fig_obj.to_json()
+            else:
+                res["plot_data"] = json.dumps(fig_obj)
+
+        # 2. Fallback: Matplotlib
         elif plt.get_fignums():
-            fig = plt.gcf()
-            # Save to Base64
             buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight")
-            buf.seek(0)
-            img_str = base64.b64encode(buf.read()).decode("utf-8")
-            response["plot_type"] = "matplotlib"
-            response["plot_data"] = img_str
-            plt.close(fig)  # Clean up
+            plt.gcf().savefig(buf, format="png", bbox_inches="tight")
+            res["plot_type"] = "matplotlib"
+            res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 
-    except Exception as e:
+    except Exception:
         import traceback
 
-        response["status"] = "error"
-        response["output"] = traceback.format_exc()
-
+        res["status"] = "error"
+        res["output"] = traceback.format_exc()
     finally:
-        # Restore stdout and capture output
         sys.stdout = old_stdout
-        response["output"] = (
-            new_stdout.getvalue() + response["output"]
-        )  # Append output if error occurred
+        res["output"] = new_stdout.getvalue() + res["output"]
 
-    return json.dumps(response)
+    return json.dumps(res)
