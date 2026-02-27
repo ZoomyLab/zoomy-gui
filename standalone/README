@@ -1,0 +1,16 @@
+# How to use
+
+## Conversion
+
+"""
+panel convert main.py \
+  --to pyodide-worker \
+  --out ./dist \
+  --requirements numpy zoomy-core
+"""
+
+## ship:
+
+"""
+python3 -m http.server 8000
+"""
