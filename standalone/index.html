@@ -1,40 +1,63 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>ShallowFlow Project</title>
+    <title>ShallowFlow Simulation Gallery</title>
 
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 
     <script src="shallowflow.js"></script>
-
     <link rel="stylesheet" href="style.css">
     
+    <style>
+        body { padding: 40px; background: #f8fafc; color: #1e293b; }
+        .gallery-header { margin-bottom: 40px; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; }
+        h3 { text-transform: capitalize; margin-top: 50px; color: #334155; }
+    </style>
 </head>
 <body>
 
-    <h2>Reusable Simulation Components</h2>
+    <div class="gallery-header">
+        <h1>🌊 ShallowFlow Simulation Gallery</h1>
+        <p>Interactive scientific components powered by Pyodide.</p>
+    </div>
 
-    <div id="sim-sine" class="sim-container"></div>
-    <div id="sim-3d" class="sim-container"></div>
+    <div id="simulation-gallery"></div>
 
     <div id="loading-toast"></div>
 
     <script>
-        // --- USAGE ---
-        createSimulation({
-            targetId: 'sim-sine',
-            codeUrl: 'snippets/sine_wave.py',
-            staticImgUrl: 'previews/sine_wave.svg'
-        });
+        async function initGallery() {
+            try {
+                // 1. Fetch the list of snippets
+                const response = await fetch('snippets.json');
+                const snippets = await response.json();
+                const gallery = document.getElementById('simulation-gallery');
 
-        createSimulation({
-            targetId: 'sim-3d',
-            codeUrl: 'snippets/cone_3d.py',
-            staticImgUrl: 'previews/cone_3d.svg'
-        });
+                // 2. Dynamically create blocks for each snippet
+                for (const name of snippets) {
+                    const section = document.createElement('div');
+                    section.innerHTML = `
+                        <h3>Simulation: ${name.replace(/_/g, ' ')}</h3>
+                        <div id="sim-${name}" class="sim-container"></div>
+                    `;
+                    gallery.appendChild(section);
+
+                    // 3. Initialize the simulation
+                    createSimulation({
+                        targetId: `sim-${name}`,
+                        codeUrl: `snippets/${name}.py`,
+                        staticImgUrl: `previews/${name}.svg`
+                    });
+                }
+            } catch (err) {
+                console.error("Gallery Init Failed. Did you run generate_previews.py?", err);
+            }
+        }
+
+        initGallery();
     </script>
 
 </body>

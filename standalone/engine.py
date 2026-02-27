@@ -37,7 +37,7 @@ def process_code(code_string):
         # 2. Fallback: Matplotlib
         elif plt.get_fignums():
             buf = io.BytesIO()
-            plt.gcf().savefig(buf, format="png", bbox_inches="tight")
+            plt.gcf().savefig(buf, format="svg", bbox_inches="tight")
             res["plot_type"] = "matplotlib"
             res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 

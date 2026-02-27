@@ -129,7 +129,7 @@ window.createSimulation = async function({targetId, codeUrl, staticImgUrl}) {
                     previewImg.style.display = 'none';
                     interactiveDiv.style.visibility = 'visible';
                     interactiveDiv.style.opacity = '1';
-                    interactiveDiv.innerHTML = `<img src="data:image/svg;base64,${result.plot_data}" style="max-width:100%; height:auto; display:block; margin:auto;">`;
+                    interactiveDiv.innerHTML = `<img src="data:image/svg+xml;base64,${result.plot_data}" style="max-width:100%; height:auto; display:block; margin:auto;">`;
                 }
             } else {
                 console.error("Python Traceback:\n" + result.output);
