@@ -1,0 +1,26 @@
+#loading-toast {
+    position: fixed; bottom: 20px; left: 20px; 
+    background: #1e293b; color: white; padding: 12px 24px; 
+    border-radius: 50px; display: none; z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.sim-container {
+    border: 1px solid #e2e8f0; border-radius: 8px; 
+    margin-bottom: 30px; background: white; 
+    overflow: hidden; font-family: sans-serif;
+}
+
+.sim-ui { display: flex; flex-direction: column; }
+.sim-editor { height: 250px; width: 100%; border-top: 1px solid #e2e8f0; }
+.sim-plot { height: 400px; display: flex; align-items: center; justify-content: center; background: #fff; }
+.sim-controls { padding: 10px 15px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+.sim-label { color: #64748b; font-size: 0.85rem; font-weight: 500; }
+
+.run-btn { 
+    background: #2563eb; color: white; border: none; 
+    padding: 8px 16px; border-radius: 4px; cursor: pointer; 
+    font-weight: bold; transition: background 0.2s;
+}
+.run-btn:hover { background: #1d4ed8; }
+.run-btn:disabled { background: #94a3b8; cursor: wait; }
