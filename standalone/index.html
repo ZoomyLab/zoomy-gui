@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShallowFlow | Scientific Computing in the Browser</title>
+    <style>
+        /* Modern Reset & Base Styles */
+        :root {
+            --primary: #2563eb;
+            --secondary: #1e293b;
+            --accent: #f59e0b;
+            --bg: #f8fafc;
+            --text: #334155;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: var(--text);
+        }
+
+        /* Header / Hero Section */
+        header {
+            background: white;
+            padding: 4rem 2rem;
+            text-align: center;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            color: var(--secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: #64748b;
+            max-width: 600px;
+            margin: 0 auto 2rem auto;
+        }
+
+        /* The Container for the App */
+        .app-wrapper {
+            max-width: 1000px;
+            margin: -2rem auto 4rem auto; /* Overlap header slightly */
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+            position: relative;
+            min-height: 600px; /* Reserve space so page doesn't jump */
+        }
+
+        /* The Placeholder State (Fast Load) */
+        #placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 600px;
+            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+
+        .cta-button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .cta-button:hover {
+            background-color: #1d4ed8;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px -1px rgba(37, 99, 235, 0.3);
+        }
+
+        .cta-subtext {
+            margin-top: 1rem;
+            font-size: 0.875rem;
+            color: #64748b;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: #94a3b8;
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>🌊 ShallowFlow</h1>
+        <p class="subtitle">
+            Advanced fluid dynamics simulation running directly in your browser. 
+            Zero installation required. Powered by WebAssembly & Pyodide.
+        </p>
+    </header>
+
+    <main>
+        <div class="app-wrapper" id="app-container">
+            
+            <div id="placeholder">
+                <div class="icon">⚛️</div>
+                <h2>Ready to Simulate?</h2>
+                <p style="margin-bottom: 2rem; max-width: 400px; color: #475569;">
+                    Click below to initialize the Python environment. 
+                    This will download the scientific stack (~20MB) to your browser.
+                </p>
+                
+                <button class="cta-button" onclick="loadApp()">
+                    <span>▶ Launch IDE</span>
+                </button>
+                
+                <p class="cta-subtext">
+                    <i>Powered by Pyodide • Runs Locally • Secure</i>
+                </p>
+            </div>
+
+        </div>
+    </main>
+
+    <footer>
+        &copy; 2026 ShallowFlow Project. Hosted on Cloudflare Pages.
+    </footer>
+
+    <script>
+        function loadApp() {
+            var container = document.getElementById('app-container');
+            var placeholder = document.getElementById('placeholder');
+            
+            // 1. Fade out placeholder (Optional visual polish)
+            placeholder.style.opacity = '0.5';
+            placeholder.innerHTML = '<div style="margin-top: 250px;"><h3>🔄 Initializing Python Kernel...</h3><p>Please wait while we load NumPy and Panel.</p></div>';
+
+            // 2. Create the Iframe
+            var iframe = document.createElement('iframe');
+            
+            // POINT THIS TO YOUR DIST FOLDER or CLOUDFLARE URL
+            // If hosting locally together:
+            iframe.src = "dist/main.html"; 
+            
+            // If hosting on a separate subdomain:
+            // iframe.src = "https://ide.shallowflow.com";
+
+            // 3. Styling for the iframe
+            iframe.style.width = "100%";
+            iframe.style.height = "600px"; // Must match container min-height
+            iframe.style.border = "none";
+            iframe.style.backgroundColor = "white";
+            
+            // 4. Important permissions for the Code Editor
+            iframe.allow = "clipboard-read; clipboard-write; fullscreen";
+
+            // 5. Swap them when the iframe loads
+            iframe.onload = function() {
+                console.log("Pyodide App Loaded");
+            };
+
+            // Clear container and append iframe
+            container.innerHTML = '';
+            container.appendChild(iframe);
+        }
+    </script>
+
+</body>
+</html>
