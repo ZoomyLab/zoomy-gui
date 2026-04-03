@@ -2,8 +2,9 @@ import os
 import param
 import panel as pn
 
-from apps.guiv2.basicelements import Card, Section
-from apps.guiv2.libmesh.load_gmsh import load_gmsh
+from basicelements import Card, Section
+from libmesh.load_gmsh import load_gmsh
+from zoomy_core.misc import misc as misc
 
 main_dir = misc.get_main_directory()
 
@@ -16,15 +17,14 @@ class MeshCard(Card):
     def __init__(self, parent_app, path, **params):
         super().__init__(parent_app, **params)
 
-        if path.endswith("msh"):
+        if path.endswith("msh") and os.path.isfile(path):
             plots, cells = load_gmsh(path)
             self.fig = plots[0]
             self.path = path
-        elif path.endswith("png"):
+        elif path.endswith("png") and os.path.isfile(path):
             self.fig = pn.pane.PNG(path, width=300)
         else:
-            image=os.path.join(main_dir, "apps/gui/data/sample_mesh.png")
-            self.fig = pn.pane.PNG(image, width=300)
+            self.fig = pn.pane.Str(f"Mesh not found: {path}", styles={"color": "gray"})
 
         self._layout = pn.Column(self.title, self.fig, self._btn, styles=self._default_style)
 

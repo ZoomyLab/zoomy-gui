@@ -2,7 +2,8 @@ import os
 import param
 import panel as pn
 
-from apps.guiv2.basicelements import Card, Section
+from basicelements import Card, Section
+from zoomy_core.misc import misc as misc
 
 main_dir = misc.get_main_directory()
 
