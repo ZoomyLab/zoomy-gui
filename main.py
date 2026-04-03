@@ -1,15 +1,16 @@
 import param
 import panel as pn
 
-from apps.guiv2.mesh import MeshSection
-from apps.guiv2.model import ModelSection
-from apps.guiv2.visu import VisuSection
-from apps.guiv2.simulation import SimulationSection
+from mesh import MeshSection
+from model import ModelSection
+from visu import VisuSection
+from simulation import SimulationSection
+from sandbox import SandboxSection
 
-pn.extension()
+pn.extension("plotly", "codeeditor")
 
 class PageTabs(param.Parameterized):
-    active_tab = param.Integer(default=0, bounds=(0,4))
+    active_tab = param.Integer(default=0, bounds=(0,5))
     parent_app = param.Parameter(default=None, doc="Reference to the main app")
 
     def __init__(self, **params):
@@ -20,7 +21,8 @@ class PageTabs(param.Parameterized):
         tabModel = ModelSection(self.parent_app)
         tabSim = SimulationSection(self.parent_app)
         tabVisu = VisuSection(self.parent_app)
-        self.tab_list = [tabMesh, tabModel, tabSim, tabVisu]
+        tabSandbox = SandboxSection(self.parent_app)
+        self.tab_list = [tabMesh, tabModel, tabSim, tabVisu, tabSandbox]
 
         self.tabs = pn.Tabs(*[(tab.title, tab.main_view()) for tab in self.tab_list], dynamic=True)
         self.tabs.param.watch(self._update_active_tab, 'active')
