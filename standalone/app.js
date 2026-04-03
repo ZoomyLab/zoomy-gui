@@ -707,6 +707,46 @@ function updateDashboardSummary() {
     });
 }
 
+/* === Dashboard job tracking === */
+
+var _activeJob = null;
+
+function updateDashboardJob(status) {
+    var el = document.querySelector("#card-dash-run .card-description");
+    if (!el) return;
+
+    if (!status) {
+        el.innerHTML = "\u2014";
+        return;
+    }
+
+    var jobId = status.job_id || "?";
+    var s = status.status || "?";
+
+    if (s === "running" && status.progress) {
+        var p = status.progress;
+        var t = p.time || 0;
+        var tend = p.time_end || 1;
+        var pct = tend > 0 ? Math.min(100, (t / tend * 100)).toFixed(0) : 0;
+        var eta = "";
+        if (_activeJob && _activeJob.startTime && t > 0) {
+            var elapsed = (Date.now() - _activeJob.startTime) / 1000;
+            var rate = t / elapsed;
+            if (rate > 0) eta = " \u2248 " + ((tend - t) / rate).toFixed(0) + "s left";
+        }
+        el.innerHTML = '<b>' + jobId + '</b> running ' + pct + '%' + eta +
+            '<div class="progress-bar"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
+    } else if (s === "complete") {
+        el.innerHTML = '<b>' + jobId + '</b> \u2714 complete';
+    } else if (s === "failed") {
+        el.innerHTML = '<b>' + jobId + '</b> \u2718 failed';
+    } else if (s === "queued") {
+        el.innerHTML = '<b>' + jobId + '</b> queued...';
+    } else {
+        el.innerHTML = '<b>' + jobId + '</b> ' + s;
+    }
+}
+
 /* === Dashboard === */
 
 function createDashboard(panel) {
@@ -894,17 +934,20 @@ document.addEventListener("DOMContentLoaded", function () {
         showToast("Submitting job...");
         try {
             var resp = await ZoomyBackend.submit(tag, zoomyCase);
+            _activeJob = { jobId: resp.job_id, tag: tag, startTime: Date.now() };
             logDebug("info", "Job submitted: " + resp.job_id);
             showToast("Job " + resp.job_id + " running...");
+            updateDashboardJob({ job_id: resp.job_id, status: "queued" });
             ZoomyBackend.poll(tag, resp.job_id, function (status) {
+                updateDashboardJob(status);
                 if (status.status === "complete") {
                     logDebug("info", "Job " + resp.job_id + " complete");
                     showToast("Job complete!"); setTimeout(hideToast, 3000);
+                    _activeJob = null;
                 } else if (status.status === "failed") {
                     logDebug("error", "Job " + resp.job_id + " failed:\n" + (status.error || "unknown"));
                     showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
-                } else if (status.progress) {
-                    logDebug("info", "Job " + resp.job_id + " progress: t=" + (status.progress.time || 0).toFixed(4));
+                    _activeJob = null;
                 }
             });
         } catch (err) {
