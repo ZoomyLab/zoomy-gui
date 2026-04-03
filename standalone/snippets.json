@@ -1,1 +1,19 @@
-["sine_wave", "topo", "cone_3d"]
+{
+  "tabs": [
+    {
+      "id": "sandbox",
+      "title": "Sandbox",
+      "blocks": [
+        {"id": "sine", "title": "Sine Wave", "snippet": "snippets/sine_wave.py", "preview": "previews/sine_wave.svg"}
+      ]
+    },
+    {
+      "id": "gallery",
+      "title": "Gallery",
+      "blocks": [
+        {"id": "topo", "title": "Topography", "snippet": "snippets/topo.py", "preview": "previews/topo.svg"},
+        {"id": "cone", "title": "Cone 3D", "snippet": "snippets/cone_3d.py", "preview": "previews/cone_3d.svg"}
+      ]
+    }
+  ]
+}
