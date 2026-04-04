@@ -37,45 +37,32 @@ body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#eee;overflow:hid
 </head>
 <body>
 <div class="game">
-  <!-- Header -->
   <div class="hdr">
     <h2>Gesucht: Ingenieur für antike Bewässerungssysteme</h2>
     <p>Male dein Bewässerungssystem und öffne die Schleuse. <b>Ziel</b>: Fülle die Gärten &mdash; so schnell wie möglich!</p>
   </div>
-
-  <!-- Top gauges -->
   <div class="gtop">
     <div class="gauge"><span id="f0">😢</span><progress id="b0" value="0" max="100"></progress></div>
     <div class="gauge"><span id="f1">😢</span><progress id="b1" value="0" max="100"></progress></div>
   </div>
-
-  <!-- Left sidebar -->
   <div class="left">
     <div class="big" id="score">0</div><div class="lbl">Punkte</div>
     <div class="big" id="timer">60.0</div><div class="lbl">Zeit</div>
     <div class="inflow-arrow">→</div><div class="lbl">Zufluss</div>
     <div class="hs" id="hs"><h3>Highscore</h3></div>
   </div>
-
-  <!-- Canvas -->
   <div class="cvs-wrap">
     <canvas id="flow-canvas"></canvas>
     <canvas id="draw-canvas"></canvas>
-    <div id="loading">⏳ Loading solver&hellip;</div>
+    <div id="loading">⏳ Initializing&hellip;</div>
   </div>
-
-  <!-- Right gauges -->
   <div class="right">
     <div class="gauge" style="flex-direction:column"><span id="f2">😢</span><progress id="b2" value="0" max="100"></progress></div>
     <div class="gauge" style="flex-direction:column"><span id="f3">😢</span><progress id="b3" value="0" max="100"></progress></div>
   </div>
-
-  <!-- Bottom gauge -->
   <div class="gbot">
     <div class="gauge"><span id="f4">😢</span><progress id="b4" value="0" max="100"></progress></div>
   </div>
-
-  <!-- Controls -->
   <div class="ctrl">
     <button id="btn-start">Schleuse öffnen</button>
     <button id="btn-clear">Skizze löschen</button>
@@ -83,169 +70,9 @@ body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#eee;overflow:hid
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════ -->
-<!-- Python solver code (loaded by Pyodide in web worker) -->
-<!-- ═══════════════════════════════════════════ -->
-<script type="text/python" id="solver-code">
-import numpy as np
-from time import time
-
-F = np.float32
-
-# ── Grid / physics parameters ──
-SCALE = 5
-NX = NY = 60 * SCALE
-NG = 5
-IW = IH = NX + 2 * NG  # image 310x310
-N_ELEM = NX + 2
-DX = F(20.0 / N_ELEM)
-GRAVITY = F(9.81)
-WET_TOL = F(1e-6)
-CFL = F(0.45)
-DT_MIN = F(1e-4)
-DT_MAX = F(0.5)
-HALF = F(0.5)
-H_IN = F(0.1)
-Q_IN = F(0.01)
-END_TIME = 60.0
-BUDGET = 0.08
-
-O_IN  = [[175, 225]]
-O_OUT = [[100, 150], [225, 275]]
-O_TOP = [[75, 125], [200, 225]]
-O_BOT = [[150, 200]]
-
-def _ws(op):
-    w, p = [], 0
-    for a, b in op:
-        w.append((p, a)); p = b
-    w.append((p, NX)); return w
-
-W_IN, W_OUT, W_TOP, W_BOT = _ws(O_IN), _ws(O_OUT), _ws(O_TOP), _ws(O_BOT)
-
-# ── Solver ──
-def _init_Q():
-    q = np.zeros((4, N_ELEM, N_ELEM), dtype=np.float32)
-    q[0] = F(0.01); _bc(q); return q
-
-def _wd(q):
-    d = q[0] <= WET_TOL; q[0][d]=0; q[1][d]=0; q[2][d]=0
-
-def _bc(q):
-    q[0,:,-1]=q[0,:,-2]; q[1,:,-1]=-q[1,:,-2]
-    for a,b in O_OUT: q[1,a:b,-1]=np.maximum(q[1,a:b,-2],0)
-    q[2,:,-1]=q[2,:,-2]; q[3,:,-1]=q[3,:,-2]
-    q[0,:,0]=q[0,:,1]
-    for a,b in O_IN: q[0,a:b,0]=np.maximum(q[0,a:b,1],H_IN)
-    q[1,:,0]=-q[1,:,1]
-    for a,b in O_IN: q[1,a:b,0]=np.where(q[1,a:b,1]>=0,Q_IN,q[1,a:b,1])
-    q[2,:,0]=q[2,:,1]; q[3,:,0]=q[3,:,1]
-    q[0,-1,:]=q[0,-2,:]; q[1,-1,:]=q[1,-2,:]; q[2,-1,:]=-q[2,-2,:]
-    for a,b in O_TOP: q[2,-1,a:b]=np.maximum(q[2,-2,a:b],0)
-    q[3,-1,:]=q[3,-2,:]
-    q[0,0,:]=q[0,1,:]; q[1,0,:]=q[1,1,:]; q[2,0,:]=-q[2,1,:]
-    for a,b in O_BOT: q[2,0,a:b]=np.minimum(q[2,1,a:b],0)
-    q[3,0,:]=q[3,1,:]
-
-def _flux(q):
-    h=q[0]; sh=np.where(h>0,h,F(1))
-    u=np.where(h>0,q[1]/sh,F(0)); v=np.where(h>0,q[2]/sh,F(0))
-    z=np.zeros_like(h); hu=h*u; hv=h*v; hh=GRAVITY*h*h*HALF
-    return np.array([hu,hu*u+hh,hu*v,z]), np.array([hv,hu*v,hv*v+hh,z])
-
-def _step(q):
-    _wd(q)
-    Qi=q[:,1:-1,1:-1].copy(); Qn=q[:,2:,1:-1].copy()
-    Qs=q[:,:-2,1:-1].copy(); Qe=q[:,1:-1,2:].copy(); Qw=q[:,1:-1,:-2].copy()
-    for J in (Qn,Qs,Qw,Qe):
-        m=J[3]>0; J[0][m]=Qi[0][m]; J[1][m]=-Qi[1][m]; J[2][m]=-Qi[2][m]
-    Fi,Gi=_flux(Qi); Fn,Gn=_flux(Qn); Fs,Gs=_flux(Qs)
-    Fe,Ge=_flux(Qe); Fw,Gw=_flux(Qw)
-    h=q[0]; sh=np.where(h>0,h,F(1)); c=np.sqrt(GRAVITY*np.maximum(h,F(0)))
-    s=max(float((np.where(h>0,np.abs(q[1]/sh),F(0))+c).max()),
-          float((np.where(h>0,np.abs(q[2]/sh),F(0))+c).max()),1e-10)
-    dt=float(max(DT_MIN,min(CFL*DX/F(s),DT_MAX)))
-    sf=F(s)
-    def lf(ql,qr,fl,fr): d=sf*(qr-ql); d[3]=0; return HALF*(fl+fr-d)
-    Fwf=lf(Qw,Qi,Fw,Fi); Fef=lf(Qi,Qe,Fi,Fe)
-    Gnf=lf(Qi,Qn,Gi,Gn); Gsf=lf(Qs,Qi,Gs,Gi)
-    q[:,1:-1,1:-1]=Qi+F(dt/float(DX))*(Fwf-Fef+Gsf-Gnf)
-    _wd(q); _bc(q); return dt
-
-# ── Rendering (uint8 image) ──
-def _render():
-    ng = NG
-    raw = np.clip(Q[0,1:-1,1:-1]*F(1275), F(0), F(254)).astype(np.uint8) + np.uint8(1)
-    raw[raster[ng:-ng,ng:-ng]>0] = 0
-    for a,b in W_IN:  raw[a:b,:ng]=0
-    for a,b in W_OUT: raw[a:b,-ng:]=0
-    for a,b in W_TOP: raw[-ng:,a:b]=0
-    for a,b in W_BOT: raw[:ng,a:b]=0
-    out = np.zeros((IH,IW), dtype=np.uint8)
-    out[ng:-ng,ng:-ng] = raw
-    out[raster>0] = 0
-    for a,b in O_IN:  out[ng+a:ng+b,:ng]=raw[a:b,0:1]
-    for a,b in O_OUT: out[ng+a:ng+b,-ng:]=raw[a:b,-1:]
-    for a,b in O_TOP: out[-ng:,ng+a:ng+b]=raw[-1:,a:b]
-    for a,b in O_BOT: out[:ng,ng+a:ng+b]=raw[0:1,a:b]
-    return out
-
-# ── API called from JS ──
-Q = None
-raster = None
-game_time = 0.0
-running = False
-finished = False
-outflow = [0.0]*5
-
-# output slots read by JS after tick()
-_img = bytes(IW*IH)
-_time = 0.0
-_of = [0.0]*5
-_fin = False
-_ns = 0
-
-def init():
-    global Q, raster, game_time, running, finished, outflow
-    global _img, _time, _of, _fin, _ns
-    Q = _init_Q(); raster = np.zeros((IH,IW),dtype=np.uint8)
-    game_time=0.; running=False; finished=False; outflow=[0.]*5
-    _time=0.; _of=[0.]*5; _fin=False; _ns=0
-    _img = _render().tobytes()
-
-def start_sim(raster_bytes):
-    global raster, running
-    raster = np.frombuffer(bytes(raster_bytes), dtype=np.uint8).reshape(IH,IW).copy()
-    Q[3,1:-1,1:-1] = raster[NG:-NG,NG:-NG].astype(np.float32)
-    running = True
-
-def tick():
-    global game_time, running, finished, outflow
-    global _img, _time, _of, _fin, _ns
-    n=0
-    if running:
-        t0=time(); dtacc=0.
-        while time()-t0 < BUDGET:
-            dt=_step(Q); game_time+=dt; dtacc+=dt; n+=1
-            if game_time>=END_TIME:
-                running=False; finished=True; game_time=END_TIME; break
-        ig=0
-        for a,b in O_TOP: outflow[ig]+=float(np.sum(Q[2,-2,a:b])*dtacc); ig+=1
-        for i,(a,b) in enumerate(O_OUT): outflow[3-i]+=float(np.sum(Q[1,a:b,-2])*dtacc); ig+=1
-        for a,b in O_BOT: outflow[ig]+=float(np.sum(-Q[2,1,a:b])*dtacc); ig+=1
-        Q[3,1:-1,1:-1] = raster[NG:-NG,NG:-NG].astype(np.float32)
-    _img = _render().tobytes()
-    _time = float(game_time)
-    _of = [float(x) for x in outflow]
-    _fin = finished
-    _ns = n
-
-init()
-</script>
-
-<!-- ═══════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════ -->
 <!-- Main thread JS -->
-<!-- ═══════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════ -->
 <script>
 "use strict";
 
@@ -303,7 +130,7 @@ function getRaster() {
 function renderFrame(buf) {
   const d = imgData.data;
   for (let i = 0; i < W*H; i++) {
-    const v = buf[i] << 2;  // *4 index into LUT
+    const v = buf[i] << 2;
     d[(i<<2)]   = LUT[v];
     d[(i<<2)+1] = LUT[v+1];
     d[(i<<2)+2] = LUT[v+2];
@@ -313,7 +140,7 @@ function renderFrame(buf) {
 }
 
 // ── UI helpers ──
-function face(v) { return v < 50 ? "😢" : v > 75 ? "😊" : "😐"; }
+function face(v) { return v < 50 ? "\u{1F622}" : v > 75 ? "\u{1F60A}" : "\u{1F610}"; }
 
 const highscores = [];
 function updateUI(time, of, fin) {
@@ -335,62 +162,350 @@ function updateUI(time, of, fin) {
     scoreSaved = true;
     highscores.push(sc); highscores.sort((a,b)=>b-a); highscores.length = Math.min(highscores.length, 10);
     document.getElementById("hs").innerHTML = "<h3>Highscore</h3>" +
-      highscores.map((s,i) => `<div>${i+1}. ${s}</div>`).join("");
+      highscores.map((s,i) => "<div>"+(i+1)+". "+s+"</div>").join("");
   }
 }
 
-// ── Web Worker (Pyodide + NumPy solver) ──
-const pythonCode = document.getElementById("solver-code").textContent;
-
+// ═══════════════════════════════════════════════════
+// Web Worker — Pure JS SWE Solver (no Pyodide)
+// ═══════════════════════════════════════════════════
 const workerSrc = `
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
+"use strict";
 
-let py = null;
+// ── Constants ──
+const NX = 300, NY = 300, NG = 5;
+const IW = NX + 2*NG, IH = NX + 2*NG;       // 310 image
+const N  = NX + 2;                            // 302 solver grid (1 ghost each side)
+const NN = N * N;                             // 91204
+const G  = 9.81, HALF_G = 0.5 * G;
+const WET = 1e-6, CFL = 0.45;
+const DT_MIN = 1e-4, DT_MAX = 0.5;
+const DX = 20.0 / N;
+const END_TIME = 60.0, BUDGET = 0.08;
+const H_IN = 0.1, Q_IN = 0.01;
 
-async function boot() {
-  py = await loadPyodide();
-  await py.loadPackage("numpy");
-  py.runPython(PYTHON_CODE);
-  // send initial frame
-  doTick();
-  self.postMessage({type:"ready"});
+// Boundary openings (in solver interior coords, 0-based in the N×N grid)
+const O_IN  = [[175,225]];
+const O_OUT = [[100,150],[225,275]];
+const O_TOP = [[75,125],[200,225]];
+const O_BOT = [[150,200]];
+
+// Wall segments (complement of openings)
+function wallSegs(op) {
+  const w = []; let p = 0;
+  for (const [a,b] of op) { w.push([p,a]); p = b; }
+  w.push([p, NX]); return w;
+}
+const W_IN = wallSegs(O_IN), W_OUT = wallSegs(O_OUT);
+const W_TOP = wallSegs(O_TOP), W_BOT = wallSegs(O_BOT);
+
+// ── State: 4 flat Float32Arrays (struct-of-arrays, row-major j*N+i) ──
+let qh, qhu, qhv, qw;         // current state
+let qh2, qhu2, qhv2;          // double-buffer for updates
+let raster;                     // Uint8Array(IW*IH) wall mask
+let gameTime, running, finished;
+let outflow;                    // [5] floats
+
+function idx(j, i) { return j * N + i; }
+
+// ── Init ──
+function init() {
+  qh  = new Float32Array(NN); qhu = new Float32Array(NN);
+  qhv = new Float32Array(NN); qw  = new Float32Array(NN);
+  qh2 = new Float32Array(NN); qhu2 = new Float32Array(NN); qhv2 = new Float32Array(NN);
+  qh.fill(0.01);
+  raster = new Uint8Array(IW * IH);
+  gameTime = 0; running = false; finished = false;
+  outflow = [0,0,0,0,0];
+  applyBC();
 }
 
-function doTick() {
-  py.runPython("tick()");
-  const imgProxy = py.globals.get("_img");
-  const img = imgProxy.toJs();          // bytes → Uint8Array
-  imgProxy.destroy();
-  const ofProxy = py.globals.get("_of");
-  const of = ofProxy.toJs();            // list → Array
-  ofProxy.destroy();
+// ── Wet/dry fix ──
+function wetDry() {
+  for (let k = 0; k < NN; k++) {
+    if (qh[k] <= WET) { qh[k] = 0; qhu[k] = 0; qhv[k] = 0; }
+  }
+}
+
+// ── Boundary conditions ──
+function applyBC() {
+  for (let j = 0; j < N; j++) {
+    const jN = j * N;
+    // East (i = N-1): reflective wall
+    qh[jN+N-1]  = qh[jN+N-2];
+    qhu[jN+N-1] = -qhu[jN+N-2];
+    qhv[jN+N-1] = qhv[jN+N-2];
+    qw[jN+N-1]  = qw[jN+N-2];
+    // West (i = 0): reflective wall
+    qh[jN]  = qh[jN+1];
+    qhu[jN] = -qhu[jN+1];
+    qhv[jN] = qhv[jN+1];
+    qw[jN]  = qw[jN+1];
+  }
+  // East outflow openings
+  for (const [a,b] of O_OUT) {
+    for (let j = a; j < b; j++) {
+      const jN = j * N;
+      qhu[jN+N-1] = Math.max(qhu[jN+N-2], 0);
+    }
+  }
+  // West inflow openings
+  for (const [a,b] of O_IN) {
+    for (let j = a; j < b; j++) {
+      const jN = j * N;
+      qh[jN] = Math.max(qh[jN+1], H_IN);
+      qhu[jN] = qhu[jN+1] >= 0 ? Q_IN : qhu[jN+1];
+    }
+  }
+  // North (j = N-1) and South (j = 0)
+  const jn = (N-1)*N, j2 = (N-2)*N;
+  for (let i = 0; i < N; i++) {
+    qh[jn+i]  = qh[j2+i];
+    qhu[jn+i] = qhu[j2+i];
+    qhv[jn+i] = -qhv[j2+i];
+    qw[jn+i]  = qw[j2+i];
+    qh[i]     = qh[N+i];
+    qhu[i]    = qhu[N+i];
+    qhv[i]    = -qhv[N+i];
+    qw[i]     = qw[N+i];
+  }
+  // North outflow openings
+  for (const [a,b] of O_TOP) {
+    for (let i = a; i < b; i++) {
+      qhv[jn+i] = Math.max(qhv[j2+i], 0);
+    }
+  }
+  // South outflow openings
+  for (const [a,b] of O_BOT) {
+    for (let i = a; i < b; i++) {
+      qhv[i] = Math.min(qhv[N+i], 0);
+    }
+  }
+}
+
+// ── One solver step. Returns dt. ──
+function step() {
+  wetDry();
+
+  // Pass 1: global max wave speed
+  let sMax = 1e-10;
+  for (let k = 0; k < NN; k++) {
+    const h = qh[k];
+    if (h <= 0) continue;
+    const u = qhu[k] / h, v = qhv[k] / h;
+    const c = Math.sqrt(G * h);
+    const su = Math.abs(u) + c, sv = Math.abs(v) + c;
+    if (su > sMax) sMax = su;
+    if (sv > sMax) sMax = sv;
+  }
+  const dt = Math.max(DT_MIN, Math.min(CFL * DX / sMax, DT_MAX));
+  const r = dt / DX;
+
+  // Pass 2: fused reconstruction + flux + LF + update over interior cells
+  for (let j = 1; j < N-1; j++) {
+    for (let i = 1; i < N-1; i++) {
+      const c  = j*N + i;
+      const cn = (j+1)*N + i;
+      const cs = (j-1)*N + i;
+      const ce = j*N + (i+1);
+      const cw = j*N + (i-1);
+
+      // Center cell
+      const hi = qh[c], hui = qhu[c], hvi = qhv[c];
+
+      // Read 4 neighbours (with wall reflection where qw > 0)
+      let hn = qh[cn], hun = qhu[cn], hvn = qhv[cn];
+      if (qw[cn] > 0) { hn = hi; hun = -hui; hvn = -hvi; }
+      let hs = qh[cs], hus = qhu[cs], hvs = qhv[cs];
+      if (qw[cs] > 0) { hs = hi; hus = -hui; hvs = -hvi; }
+      let he = qh[ce], hue = qhu[ce], hve = qhv[ce];
+      if (qw[ce] > 0) { he = hi; hue = -hui; hve = -hvi; }
+      let hw = qh[cw], huw = qhu[cw], hvw = qhv[cw];
+      if (qw[cw] > 0) { hw = hi; huw = -hui; hvw = -hvi; }
+
+      // Inline flux for each state: Fx = [hu, hu*u + ½gh², hu*v, 0]
+      //                              Fy = [hv, hu*v, hv*v + ½gh², 0]
+      // We only need components 0-2 (component 3 is always 0 and dissipation[3]=0)
+
+      // Helper: velocity from (h, hu, hv)
+      // For cell X: ux = hux/hx if hx>0 else 0, vx = hvx/hx if hx>0 else 0
+
+      // Center
+      const shi = hi > 0 ? hi : 1, ui = hi > 0 ? hui/shi : 0, vi = hi > 0 ? hvi/shi : 0;
+      const fxi0=hi*ui, fxi1=hi*ui*ui+HALF_G*hi*hi, fxi2=hi*ui*vi;
+      const fyi0=hi*vi, fyi1=hi*ui*vi, fyi2=hi*vi*vi+HALF_G*hi*hi;
+
+      // North
+      const shn = hn > 0 ? hn : 1, un = hn > 0 ? hun/shn : 0, vn = hn > 0 ? hvn/shn : 0;
+      const fyn0=hn*vn, fyn1=hn*un*vn, fyn2=hn*vn*vn+HALF_G*hn*hn;
+
+      // South
+      const shs = hs > 0 ? hs : 1, us_ = hs > 0 ? hus/shs : 0, vs = hs > 0 ? hvs/shs : 0;
+      const fys0=hs*vs, fys1=hs*us_*vs, fys2=hs*vs*vs+HALF_G*hs*hs;
+
+      // East
+      const she = he > 0 ? he : 1, ue = he > 0 ? hue/she : 0, ve = he > 0 ? hve/she : 0;
+      const fxe0=he*ue, fxe1=he*ue*ue+HALF_G*he*he, fxe2=he*ue*ve;
+
+      // West
+      const shw = hw > 0 ? hw : 1, uw = hw > 0 ? huw/shw : 0, vw = hw > 0 ? hvw/shw : 0;
+      const fxw0=hw*uw, fxw1=hw*uw*uw+HALF_G*hw*hw, fxw2=hw*uw*vw;
+
+      // Lax-Friedrichs numerical fluxes at 4 interfaces
+      // F_west  = 0.5*(Fw + Fi - s*(Qi - Qw))     [west face]
+      // F_east  = 0.5*(Fi + Fe - s*(Qe - Qi))     [east face]
+      // G_north = 0.5*(Gi + Gn - s*(Qn - Qi))     [north face]
+      // G_south = 0.5*(Gs + Gi - s*(Qi - Qs))     [south face]
+      // Update: Q_new = Q_old + r * (F_west - F_east + G_south - G_north)
+
+      const fw0 = 0.5*(fxw0+fxi0 - sMax*(hi-hw));
+      const fw1 = 0.5*(fxw1+fxi1 - sMax*(hui-huw));
+      const fw2 = 0.5*(fxw2+fxi2 - sMax*(hvi-hvw));
+
+      const fe0 = 0.5*(fxi0+fxe0 - sMax*(he-hi));
+      const fe1 = 0.5*(fxi1+fxe1 - sMax*(hue-hui));
+      const fe2 = 0.5*(fxi2+fxe2 - sMax*(hve-hvi));
+
+      const gn0 = 0.5*(fyi0+fyn0 - sMax*(hn-hi));
+      const gn1 = 0.5*(fyi1+fyn1 - sMax*(hun-hui));
+      const gn2 = 0.5*(fyi2+fyn2 - sMax*(hvn-hvi));
+
+      const gs0 = 0.5*(fys0+fyi0 - sMax*(hi-hs));
+      const gs1 = 0.5*(fys1+fyi1 - sMax*(hui-hus));
+      const gs2 = 0.5*(fys2+fyi2 - sMax*(hvi-hvs));
+
+      qh2[c]  = hi  + r * (fw0 - fe0 + gs0 - gn0);
+      qhu2[c] = hui + r * (fw1 - fe1 + gs1 - gn1);
+      qhv2[c] = hvi + r * (fw2 - fe2 + gs2 - gn2);
+    }
+  }
+
+  // Swap buffers
+  const th = qh, thu = qhu, thv = qhv;
+  qh = qh2; qhu = qhu2; qhv = qhv2;
+  qh2 = th; qhu2 = thu; qhv2 = thv;
+
+  wetDry();
+  applyBC();
+  return dt;
+}
+
+// ── Render uint8 image (310×310) ──
+function render() {
+  const img = new Uint8Array(IW * IH);  // 0 = wall/black
+  const ng = NG;
+  // Interior: scale h to 1-255
+  for (let j = 0; j < NX; j++) {
+    for (let i = 0; i < NY; i++) {
+      const h = qh[(j+1)*N + (i+1)];
+      const rj = j + ng, ri = i + ng;
+      // Check obstacle
+      if (raster[rj*IW + ri] > 0) continue; // stays 0
+      const v = Math.min(h * 1275, 254);
+      img[rj*IW + ri] = (v | 0) + 1;
+    }
+  }
+  // Mark boundary walls as 0 (already 0, but mark port openings)
+  for (const [a,b] of W_IN)  for (let j=a;j<b;j++) for (let i=0;i<ng;i++) img[(j+ng)*IW+i]=0;
+  for (const [a,b] of W_OUT) for (let j=a;j<b;j++) for (let i=IW-ng;i<IW;i++) img[(j+ng)*IW+i]=0;
+  for (const [a,b] of W_TOP) for (let j=IH-ng;j<IH;j++) for (let i=a+ng;i<b+ng;i++) img[j*IW+i]=0;
+  for (const [a,b] of W_BOT) for (let j=0;j<ng;j++) for (let i=a+ng;i<b+ng;i++) img[j*IW+i]=0;
+  // Fill port openings with adjacent interior flow
+  for (const [a,b] of O_IN) {
+    for (let j=a;j<b;j++) {
+      const v = img[(j+ng)*IW + ng];
+      for (let i=0;i<ng;i++) img[(j+ng)*IW+i] = v;
+    }
+  }
+  for (const [a,b] of O_OUT) {
+    for (let j=a;j<b;j++) {
+      const v = img[(j+ng)*IW + (IW-ng-1)];
+      for (let i=IW-ng;i<IW;i++) img[(j+ng)*IW+i] = v;
+    }
+  }
+  for (const [a,b] of O_TOP) {
+    for (let i=a;i<b;i++) {
+      const v = img[(IH-ng-1)*IW + (i+ng)];
+      for (let j=IH-ng;j<IH;j++) img[j*IW+(i+ng)] = v;
+    }
+  }
+  for (const [a,b] of O_BOT) {
+    for (let i=a;i<b;i++) {
+      const v = img[ng*IW + (i+ng)];
+      for (let j=0;j<ng;j++) img[j*IW+(i+ng)] = v;
+    }
+  }
+  // Mark raster obstacles in ghost region too
+  for (let k = 0; k < IW*IH; k++) { if (raster[k] > 0) img[k] = 0; }
+  return img;
+}
+
+// ── Worker API ──
+function startSim(rasterBuf) {
+  raster = new Uint8Array(rasterBuf);
+  // Copy obstacle mask into solver wall field
+  for (let j = 0; j < NX; j++) {
+    for (let i = 0; i < NY; i++) {
+      qw[(j+1)*N + (i+1)] = raster[(j+NG)*IW + (i+NG)] > 0 ? 1 : 0;
+    }
+  }
+  running = true;
+}
+
+function tick() {
+  let ns = 0;
+  if (running) {
+    const t0 = performance.now();
+    let dtacc = 0;
+    while ((performance.now() - t0) < BUDGET * 1000) {
+      const dt = step();
+      gameTime += dt; dtacc += dt; ns++;
+      if (gameTime >= END_TIME) {
+        running = false; finished = true; gameTime = END_TIME; break;
+      }
+    }
+    // Accumulate outflow at gauge openings
+    let ig = 0;
+    for (const [a,b] of O_TOP) {
+      let s = 0;
+      for (let i = a; i < b; i++) s += qhv[(N-2)*N + i];
+      outflow[ig++] += s * dtacc;
+    }
+    for (let oi = 0; oi < O_OUT.length; oi++) {
+      const [a,b] = O_OUT[oi];
+      let s = 0;
+      for (let j = a; j < b; j++) s += qhu[j*N + (N-2)];
+      outflow[3 - oi] += s * dtacc;
+    }
+    for (const [a,b] of O_BOT) {
+      let s = 0;
+      for (let i = a; i < b; i++) s += -qhv[1*N + i];
+      outflow[ig++] += s * dtacc;
+    }
+    // Re-stamp obstacles into solver
+    for (let j = 0; j < NX; j++)
+      for (let i = 0; i < NY; i++)
+        qw[(j+1)*N + (i+1)] = raster[(j+NG)*IW + (i+NG)] > 0 ? 1 : 0;
+  }
+  const img = render();
   self.postMessage({
-    type: "frame",
-    image: img,
-    time:  py.globals.get("_time"),
-    of:    Array.from(of),
-    fin:   py.globals.get("_fin"),
-    ns:    py.globals.get("_ns"),
-  }, [img.buffer]);                      // transfer buffer
+    type: "frame", image: img.buffer,
+    time: gameTime, of: outflow.slice(), fin: finished, ns: ns
+  }, [img.buffer]);
 }
 
+// ── Message handler ──
 self.onmessage = function(e) {
   const m = e.data;
-  if (m.type === "tick") { doTick(); }
-  else if (m.type === "start") {
-    const r = py.toPy(m.raster);
-    py.globals.get("start_sim")(r);
-    r.destroy();
-    doTick();
-  }
-  else if (m.type === "reset") {
-    py.globals.get("init")();
-    doTick();
-  }
+  if      (m.type === "tick")  { tick(); }
+  else if (m.type === "start") { startSim(m.raster); tick(); }
+  else if (m.type === "reset") { init(); tick(); }
 };
 
-const PYTHON_CODE = ${JSON.stringify(pythonCode)};
-boot();
+// Boot
+init();
+tick();  // send initial frame
+self.postMessage({type: "ready"});
 `;
 
 let worker, active = false, scoreSaved = false;
@@ -434,7 +549,7 @@ document.getElementById("btn-reset").onclick = function() {
   document.getElementById("timer").textContent = "60.0";
   for (let i = 0; i < 5; i++) {
     document.getElementById("b"+i).value = 0;
-    document.getElementById("f"+i).textContent = "😢";
+    document.getElementById("f"+i).textContent = "\u{1F622}";
   }
   worker.postMessage({type:"reset"});
 };
