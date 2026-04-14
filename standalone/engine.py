@@ -48,33 +48,34 @@ def process_code(code_string):
 
     res = {"status": "success", "output": "", "plot_type": "none", "plot_data": None}
     scope = sys._shallowflow_scope
-    scope["go"] = _get_go()
-    scope["plt"] = _get_plt()
 
     try:
-        # Clean up previous runs
+        # Clean up previous matplotlib figures if loaded
+        if _plt is not None:
+            scope["plt"] = _plt
+            _plt.close("all")
+        if _go is not None:
+            scope["go"] = _go
         scope.pop("fig", None)
-        _get_plt().close("all")
 
         # Execute user code
         exec(code_string, scope)
 
-        # --- 3. Handle Plotly (The Fix) ---
+        # --- 3. Handle Plotly (only if plotly was imported by user code) ---
         if "fig" in scope:
-            fig_obj = scope["fig"]
-            res["plot_type"] = "plotly"
+            try:
+                go = _get_go()
+                fig_obj = scope["fig"]
+                res["plot_type"] = "plotly"
+                fig_data = fig_obj.to_dict() if hasattr(fig_obj, "to_dict") else fig_obj
+                res["plot_data"] = json.dumps(fig_data, cls=NumpyEncoder)
+            except ImportError:
+                res["output"] += "\n(plotly not installed — cannot render figure)"
 
-            if hasattr(fig_obj, "to_dict"):
-                fig_data = fig_obj.to_dict()
-            else:
-                fig_data = fig_obj
-
-            res["plot_data"] = json.dumps(fig_data, cls=NumpyEncoder)
-
-        # --- 4. Handle Matplotlib ---
-        elif _get_plt().get_fignums():
+        # --- 4. Handle Matplotlib (only if matplotlib was imported by user code) ---
+        elif _plt is not None and _plt.get_fignums():
             buf = io.BytesIO()
-            _get_plt().gcf().savefig(buf, format="svg", bbox_inches="tight")
+            _plt.gcf().savefig(buf, format="svg", bbox_inches="tight")
             res["plot_type"] = "matplotlib"
             res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 
