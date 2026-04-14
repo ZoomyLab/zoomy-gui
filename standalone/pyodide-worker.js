@@ -151,6 +151,8 @@ onmessage = async function (e) {
         if (count > 0) postMessage({ type: "log", level: "info", msg: "Pre-extracted params for " + count + " models" });
     } catch (e) {}
 
+    postMessage({ type: "log", level: "info", msg: "Startup: installing exec stack..." });
     await installExec();
+    postMessage({ type: "log", level: "info", msg: "Startup: IIFE complete — worker ready for commands" });
     postMessage({ type: "fully_ready" });
 })();
