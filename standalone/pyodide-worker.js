@@ -83,7 +83,9 @@ onmessage = async function (e) {
             postMessage({ type: "result", id: msg.id, data: result });
 
         } else if (msg.cmd === "describe_model") {
-            await installParam();
+            postMessage({ type: "log", level: "info", msg: "describe_model: installing deps..." });
+            await installExec();
+            postMessage({ type: "log", level: "info", msg: "describe_model: instantiating " + msg.class_path });
             var descCode = "def _describe_model(class_path, init_kwargs):\n" +
                 "    mod_path, cls_name = class_path.rsplit('.', 1)\n" +
                 "    mod = __import__(mod_path, fromlist=[cls_name])\n" +
@@ -94,9 +96,10 @@ onmessage = async function (e) {
                 "            return str(m.describe())\n" +
                 "        return cls.__doc__ or cls.__name__\n" +
                 "    except Exception as e:\n" +
-                "        return str(e)\n";
+                "        import traceback; return traceback.format_exc()\n";
             await py.runPythonAsync(descCode);
             var desc = py.globals.get("_describe_model")(msg.class_path, py.toPy(msg.init || {}));
+            postMessage({ type: "log", level: "info", msg: "describe_model: done" });
             postMessage({ type: "result", id: msg.id, data: desc });
         }
     } catch (err) {

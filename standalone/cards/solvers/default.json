@@ -6,7 +6,7 @@
     "requires_tag": "numpy",
     "class": "zoomy_core.fvm.solver_numpy.HyperbolicSolver",
     "init": {"time_end": 0.1, "reconstruction_order": 1},
-    "template": "from zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver\nimport zoomy_core.fvm.timestepping as ts\n\nsolver = FreeSurfaceFlowSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    reconstruction_order=1,\n)\nQ, Qaux = solver.solve(mesh, model, write_output=False)\n\n# --- Plot result ---\nimport matplotlib.pyplot as plt\nfrom zoomy_core.mesh import ensure_lsq_mesh\nlsq = ensure_lsq_mesh(mesh, model)\nnc = lsq.n_inner_cells\nxc = lsq.cell_centers[0, :nc]\nfig, ax = plt.subplots(figsize=(8, 4))\nfor v in range(min(Q.shape[0], 4)):\n    vn = list(model.variables.keys())[v] if hasattr(model.variables, 'keys') else str(v)\n    ax.plot(xc, Q[v, :nc], label=vn)\nax.legend(); ax.grid(True, alpha=0.3)\nax.set_xlabel('x'); ax.set_title('Simulation result')\n"
+    "template": "from zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver\nimport zoomy_core.fvm.timestepping as ts\n\nsolver = FreeSurfaceFlowSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    reconstruction_order=1,\n)\nQ, Qaux = solver.solve(mesh, model, write_output=False)\nprint('Done:', Q.shape[0], 'variables,', mesh.n_inner_cells, 'cells')\n"
   },
   {
     "id": "solver-jax",

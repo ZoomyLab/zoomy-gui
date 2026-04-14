@@ -1,6 +1,8 @@
 import sys, io, json, base64
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib
+matplotlib.use("agg")
 import matplotlib.pyplot as plt
 
 # --- 1. Custom Encoder for Robustness ---
