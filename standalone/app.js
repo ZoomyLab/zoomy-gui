@@ -68,6 +68,7 @@ function pyCall(cmd, params) {
         _pyCallbacks[id] = { resolve: resolve, reject: reject };
         var msg = { cmd: cmd, id: id };
         Object.keys(params || {}).forEach(function (k) { msg[k] = params[k]; });
+        logDebug("info", "pyCall → worker: cmd=" + cmd + " id=" + id);
         _pyWorker.postMessage(msg);
     });
 }
