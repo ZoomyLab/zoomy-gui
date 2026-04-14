@@ -75,13 +75,17 @@ SelectionManager.prototype.toDict = function () {
 
 /* === Session Manager (per-session selections + card overrides) === */
 
+var _sessionCounter = 0;
+
 function SessionManager() {
     this.sessions = [];
     this.activeId = null;
 }
 
 SessionManager.prototype.create = function (title, project) {
-    var id = "s-" + Date.now();
+    /* Snapshot departing session before creating new one */
+    if (project && this.activeId) this.snapshotSession(project);
+    var id = "s-" + Date.now() + "-" + (++_sessionCounter);
     var session = { id: id, title: title, description: "Simulation session.", selections: {}, cardOverrides: {} };
     /* Clone current selections as the new session's starting point */
     if (project) {
