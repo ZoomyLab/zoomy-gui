@@ -7,11 +7,15 @@ function loadScript(src) { return new Promise(function (ok, fail) { var s = docu
 function showToast(msg) { var t = document.getElementById("loading-toast"); if (t) { t.style.display = "block"; t.textContent = msg; } }
 function hideToast() { var t = document.getElementById("loading-toast"); if (t) t.style.display = "none"; }
 
-/* Minimal markdown → HTML (headings, bold, italic, newlines, code) */
+/* Minimal markdown → HTML (headings, bold, italic, newlines, code, math blocks) */
 function miniMarkdown(s) {
     if (!s) return "";
     /* Already contains HTML tags → pass through */
     if (/<[a-z][\s\S]*>/i.test(s)) return s;
+    /* Protect $$ math blocks: wrap in div so KaTeX renders them as display math */
+    s = s.replace(/\$\$([\s\S]*?)\$\$/g, function (_, math) {
+        return '\n<div class="math-block">$$' + math + '$$</div>\n';
+    });
     return s
         .replace(/^### (.+)$/gm, '<h4>$1</h4>')
         .replace(/^## (.+)$/gm, '<h3>$1</h3>')
