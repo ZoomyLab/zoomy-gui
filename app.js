@@ -158,6 +158,24 @@ function renderOutputCell(cell, container) {
     container.appendChild(div);
 }
 
+/* Count completed display() calls in source code (balanced parens on one logical line) */
+function countDisplayCalls(code) {
+    var count = 0;
+    var re = /\bdisplay\s*\(/g;
+    var match;
+    while ((match = re.exec(code)) !== null) {
+        /* Walk forward from the opening paren to find balanced close */
+        var depth = 1, i = match.index + match[0].length;
+        while (i < code.length && depth > 0) {
+            if (code[i] === "(") depth++;
+            else if (code[i] === ")") depth--;
+            i++;
+        }
+        if (depth === 0) count++;
+    }
+    return count;
+}
+
 function setupOutputPanel(cardId, editorWrap) {
     var panelId = cardId + "-output";
     if (document.getElementById(panelId)) return;
@@ -166,7 +184,8 @@ function setupOutputPanel(cardId, editorWrap) {
     toolbar.className = "output-cells-toolbar";
     toolbar.innerHTML = '<span>Output</span><div>' +
         '<button id="' + panelId + '-run">&#9654; Run</button> ' +
-        '<button id="' + panelId + '-clear">Clear</button></div>';
+        '<button id="' + panelId + '-clear">Clear</button> ' +
+        '<label style="font-size:var(--fs-s);cursor:pointer"><input type="checkbox" id="' + panelId + '-auto"> auto</label></div>';
 
     var cells = document.createElement("div");
     cells.className = "output-cells";
@@ -175,27 +194,30 @@ function setupOutputPanel(cardId, editorWrap) {
     editorWrap.appendChild(toolbar);
     editorWrap.appendChild(cells);
 
-    document.getElementById(panelId + "-run").onclick = async function (e) {
-        e.stopPropagation();
+    var _running = false;
+
+    async function executeAndDisplay() {
+        if (_running) return;
         var container = document.getElementById(cardId);
         var editor = container && container._editor;
         if (!editor) return;
-        /* Clear previous output */
+        _running = true;
         cells.innerHTML = "";
         _activeOutputTarget = panelId;
         var code = editor.getValue();
         try {
             var resultJson = await runCode(code);
             var result = JSON.parse(resultJson);
-            if (result.output) {
+            /* stdout output goes into a cell only if not empty */
+            if (result.output && result.output.trim()) {
                 renderOutputCell({ mime: "text/plain", content: result.output }, cells);
             }
+            /* Plotly/matplotlib from process_code (non-display path) */
             if (result.plot_type === "plotly" && result.plot_data) {
                 await ensurePlotly();
                 renderOutputCell({ mime: "application/vnd.plotly+json", content: result.plot_data }, cells);
             } else if (result.plot_type === "matplotlib" && result.plot_data) {
-                var svg = atob(result.plot_data);
-                renderOutputCell({ mime: "image/svg+xml", content: svg }, cells);
+                renderOutputCell({ mime: "image/svg+xml", content: atob(result.plot_data) }, cells);
             }
             if (result.status === "error") {
                 renderOutputCell({ mime: "text/plain", content: result.output }, cells);
@@ -204,12 +226,40 @@ function setupOutputPanel(cardId, editorWrap) {
             renderOutputCell({ mime: "text/plain", content: "Error: " + err.message }, cells);
         }
         _activeOutputTarget = null;
-    };
+        _running = false;
+    }
 
-    document.getElementById(panelId + "-clear").onclick = function (e) {
-        e.stopPropagation();
-        cells.innerHTML = "";
-    };
+    /* Manual run button */
+    document.getElementById(panelId + "-run").onclick = function (e) { e.stopPropagation(); executeAndDisplay(); };
+
+    /* Clear button */
+    document.getElementById(panelId + "-clear").onclick = function (e) { e.stopPropagation(); cells.innerHTML = ""; };
+
+    /* Auto-run: watch editor for completed display() statements */
+    var _lastDisplayCount = 0;
+    var _autoDebounce = null;
+    var autoCheckbox = document.getElementById(panelId + "-auto");
+
+    var container = document.getElementById(cardId);
+    if (container && container._editor) {
+        container._editor.session.on("change", function () {
+            if (!autoCheckbox || !autoCheckbox.checked) return;
+            if (_autoDebounce) clearTimeout(_autoDebounce);
+            _autoDebounce = setTimeout(function () {
+                var code = container._editor.getValue();
+                var n = countDisplayCalls(code);
+                if (n > _lastDisplayCount) {
+                    _lastDisplayCount = n;
+                    executeAndDisplay();
+                } else {
+                    _lastDisplayCount = n;
+                }
+            }, 800);
+        });
+
+        /* Initialize count from current content */
+        _lastDisplayCount = countDisplayCalls(container._editor.getValue());
+    }
 }
 
 /* Handle display() messages from Pyodide worker */
