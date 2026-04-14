@@ -1,9 +1,18 @@
 import sys, io, json, base64
 import numpy as np
 import plotly.graph_objects as go
-import matplotlib
-matplotlib.use("agg")
-import matplotlib.pyplot as plt
+
+# Lazy matplotlib import — avoid loading at module level in Pyodide
+# (matplotlib-pyodide's wasm_backend can hang in web workers)
+plt = None
+def _get_plt():
+    global plt
+    if plt is None:
+        import matplotlib
+        matplotlib.use("agg")
+        import matplotlib.pyplot as _plt
+        plt = _plt
+    return plt
 
 # --- 1. Custom Encoder for Robustness ---
 class NumpyEncoder(json.JSONEncoder):
@@ -22,7 +31,7 @@ class NumpyEncoder(json.JSONEncoder):
 
 # --- 2. Initialize Scope ---
 if not hasattr(sys, "_shallowflow_scope"):
-    sys._shallowflow_scope = {"np": np, "go": go, "plt": plt}
+    sys._shallowflow_scope = {"np": np, "go": go}
 
 def process_code(code_string):
     new_stdout = io.StringIO()
@@ -31,11 +40,13 @@ def process_code(code_string):
 
     res = {"status": "success", "output": "", "plot_type": "none", "plot_data": None}
     scope = sys._shallowflow_scope
+    mpl = _get_plt()
+    scope["plt"] = mpl
 
     try:
         # Clean up previous runs
         scope.pop("fig", None)
-        plt.close("all")
+        mpl.close("all")
 
         # Execute user code
         exec(code_string, scope)
@@ -44,23 +55,19 @@ def process_code(code_string):
         if "fig" in scope:
             fig_obj = scope["fig"]
             res["plot_type"] = "plotly"
-            
-            # Instead of fig.to_json() (which uses Plotly's internal encoder),
-            # we convert to a dict and use our robust NumpyEncoder.
+
             if hasattr(fig_obj, "to_dict"):
                 fig_data = fig_obj.to_dict()
             else:
                 fig_data = fig_obj
-            
-            # Serialize the figure data to a string
+
             res["plot_data"] = json.dumps(fig_data, cls=NumpyEncoder)
 
         # --- 4. Handle Matplotlib ---
-        elif plt.get_fignums():
+        elif mpl.get_fignums():
             buf = io.BytesIO()
-            plt.gcf().savefig(buf, format="svg", bbox_inches="tight")
+            mpl.gcf().savefig(buf, format="svg", bbox_inches="tight")
             res["plot_type"] = "matplotlib"
-            # SVG is already a string/XML, but we base64 it to be safe for transport
             res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 
     except Exception:
