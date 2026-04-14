@@ -856,9 +856,43 @@ function buildCardsTab(panel, tab) {
 
 /* === Init === */
 
+function _mergeRegistryIntoConfig(config, registry) {
+    /* Merge auto-discovered cards from server registry into the static config.
+       Library/user cards are added if their id is not already present. */
+    if (!registry || !registry.tabs) return config;
+    var regTabs = {};
+    registry.tabs.forEach(function (t) { regTabs[t.id] = t; });
+
+    config.tabs.forEach(function (tab) {
+        var rt = regTabs[tab.id];
+        if (!rt || !rt.cards) return;
+        var existing = {};
+        (tab.cards || []).forEach(function (c) { existing[c.id] = true; });
+        rt.cards.forEach(function (c) {
+            if (!existing[c.id]) {
+                tab.cards = tab.cards || [];
+                tab.cards.push(c);
+            }
+        });
+    });
+    return config;
+}
+
 async function initApp() {
     try {
         var config = await fetch("cards.json").then(function (r) { return r.json(); });
+
+        /* Try to fetch auto-discovered models/solvers from a connected server */
+        try {
+            var regUrl = (ZoomyBackend.getUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
+            var registry = await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
+            config = _mergeRegistryIntoConfig(config, registry);
+            if (window.logDebug) logDebug("info", "Registry loaded: " + (registry.tabs || []).reduce(function (n, t) { return n + (t.cards || []).length; }, 0) + " cards");
+        } catch (e) {
+            /* Server not available — use static cards.json only */
+            if (window.logDebug) logDebug("info", "No server registry (using cards.json only): " + (e.message || e));
+        }
+
         initProject(config);
         var tabBar = document.getElementById("tab-bar");
         var tabContent = document.getElementById("tab-content");
