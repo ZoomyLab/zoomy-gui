@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "user-swe-dambreak",
+    "title": "Tutorial: SWE Dam Break",
+    "source": "user",
+    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+    "init": {"level": 0},
+    "template": "from zoomy_core.model.models.sme_model import SMEInviscid\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\n\n# Create SWE model (shallow water equations)\nmodel = SMEInviscid(level=0)\n\n# Dam-break initial condition: h=2 left, h=1 right\ndef dam_break_ic(x):\n    Q = np.zeros(model.n_variables)\n    Q[1] = 2.0 if x[0] < 5.0 else 1.0  # water depth h\n    return Q\n\nmodel.initial_conditions = IC.UserFunction(function=dam_break_ic)\nmodel.boundary_conditions = BC.BoundaryConditions([\n    BC.Extrapolation(tag='left'),\n    BC.Extrapolation(tag='right'),\n])\n",
+    "description": "**Tutorial**: 1D dam-break with SWE.\n\nA classic test case: water at h=2 on the left, h=1 on the right.\nThe dam breaks and a shock + rarefaction wave develop."
+  }
+]
