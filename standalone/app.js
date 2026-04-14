@@ -806,6 +806,8 @@ function createDashboard(panel) {
 function buildCardsTab(panel, tab) {
     var isVis = tab.cardType === "vis";
     var mgr = new CardManager(tab.id, {
+        layout: tab.layout || (isVis ? "stack" : "stack"),
+        columns: tab.columns || 2,
         collapseUnselected: isVis,
         onSelect: function () { mgr.updateUI(); updateDashboardSummary(); }
     });
@@ -838,9 +840,22 @@ function buildCardsTab(panel, tab) {
         cardContainer = content;
     }
 
+    /* Use the CardManager's render() to create a layout wrapper (grid or stack) */
+    var gridWrapper = null;
+    if (!hasSubtabs && tab.layout === "grid") {
+        gridWrapper = mgr.render(panel);
+    }
+
     tab.cards.forEach(function (c) {
         mgr.add(c);
-        var target = hasSubtabs && c.subtab ? cardContainer.querySelector("#subtab-" + c.subtab) : panel;
+        var target;
+        if (hasSubtabs && c.subtab) {
+            target = cardContainer.querySelector("#subtab-" + c.subtab);
+        } else if (gridWrapper) {
+            target = gridWrapper;
+        } else {
+            target = panel;
+        }
         if (!target) target = panel;
         var div = document.createElement("div");
         div.id = "card-" + c.id;
