@@ -1,0 +1,81 @@
+[
+  {
+    "id": "solver-numpy",
+    "title": "NumPy Solver (Pyodide)",
+    "description": "HyperbolicSolver via Pyodide \u2014 runs in the browser, always available.",
+    "requires_tag": "numpy",
+    "template": "# NumPy solver \u2014 runs locally via Pyodide\ndt = 0.001\nt_end = 1.0"
+  },
+  {
+    "id": "solver-jax",
+    "title": "JAX Solver",
+    "description": "GPU-accelerated JAX solver via Docker backend.",
+    "requires_tag": "jax",
+    "params": {
+      "time_end": {
+        "type": "Number",
+        "default": 0.1,
+        "bounds": [
+          0,
+          null
+        ]
+      },
+      "CFL": {
+        "type": "Number",
+        "default": 0.45,
+        "bounds": [
+          0.01,
+          0.99
+        ]
+      },
+      "reconstruction_order": {
+        "type": "Integer",
+        "default": 1,
+        "bounds": [
+          1,
+          2
+        ]
+      }
+    }
+  },
+  {
+    "id": "solver-amrex",
+    "title": "AMReX Solver",
+    "description": "Block-structured AMR solver via Docker backend.",
+    "requires_tag": "amrex",
+    "params": {
+      "time_end": {
+        "type": "Number",
+        "default": 0.1
+      },
+      "CFL": {
+        "type": "Number",
+        "default": 0.45
+      },
+      "n_levels": {
+        "type": "Integer",
+        "default": 1,
+        "bounds": [
+          1,
+          4
+        ]
+      }
+    }
+  },
+  {
+    "id": "solver-dmplex",
+    "title": "DMPlex Solver",
+    "description": "PETSc DMPlex unstructured solver via Docker backend.",
+    "requires_tag": "dmplex",
+    "params": {
+      "time_end": {
+        "type": "Number",
+        "default": 0.1
+      },
+      "CFL": {
+        "type": "Number",
+        "default": 0.45
+      }
+    }
+  }
+]

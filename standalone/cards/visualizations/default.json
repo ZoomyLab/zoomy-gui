@@ -1,0 +1,26 @@
+[
+  {
+    "id": "vis-empty-mpl",
+    "subtab": "matplotlib",
+    "title": "Empty Figure",
+    "template": "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(1, 1, figsize=(6, 4))\nax.set_title('Empty View')",
+    "description": "Empty matplotlib subplots."
+  },
+  {
+    "id": "vis-sine",
+    "subtab": "pyvista",
+    "title": "Sine Wave",
+    "snippet": "snippets/sine_wave.py",
+    "preview": "previews/sine_wave.svg",
+    "description": "Interactive sine wave plot."
+  },
+  {
+    "id": "vis-topo",
+    "subtab": "pyvista",
+    "title": "Topography",
+    "snippet": "snippets/topo.py",
+    "preview": "previews/topo.svg",
+    "description": "3D topography mesh.",
+    "has_timeline": true
+  }
+]

@@ -874,42 +874,88 @@ function buildCardsTab(panel, tab) {
 
 /* === Init === */
 
-function _mergeRegistryIntoConfig(config, registry) {
-    /* Merge auto-discovered cards from server registry into the static config.
-       Library/user cards are added if their id is not already present. */
-    if (!registry || !registry.tabs) return config;
-    var regTabs = {};
-    registry.tabs.forEach(function (t) { regTabs[t.id] = t; });
+/* === Card loading from cards/ folder structure === */
 
-    config.tabs.forEach(function (tab) {
-        var rt = regTabs[tab.id];
-        if (!rt || !rt.cards) return;
-        var existing = {};
-        (tab.cards || []).forEach(function (c) { existing[c.id] = true; });
-        rt.cards.forEach(function (c) {
-            if (!existing[c.id]) {
-                tab.cards = tab.cards || [];
-                tab.cards.push(c);
-            }
+var CARD_CATEGORIES = [
+    { dir: "models",         tabId: "model" },
+    { dir: "solvers",        tabId: "solver" },
+    { dir: "meshes",         tabId: "mesh" },
+    { dir: "visualizations", tabId: "visualization" }
+];
+
+async function _fetchJson(url) {
+    try {
+        var r = await fetch(url);
+        if (!r.ok) return [];
+        return await r.json();
+    } catch (e) { return []; }
+}
+
+async function _loadCategoryCards(dir) {
+    /* Load default + generated + user for one category, merge, deduplicate. */
+    var def  = await _fetchJson("cards/" + dir + "/default.json");
+    var gen  = await _fetchJson("cards/" + dir + "/generated.json");
+    var usr  = await _fetchJson("cards/" + dir + "/user.json");
+    var seen = {};
+    var merged = [];
+    [def, gen, usr].forEach(function (list) {
+        list.forEach(function (c) {
+            if (!seen[c.id]) { seen[c.id] = true; merged.push(c); }
         });
     });
-    return config;
+    return merged;
+}
+
+async function _loadAllCards() {
+    /* Load tab metadata + all category cards. Returns config object. */
+    var tabsMeta = await _fetchJson("cards/tabs.json");
+
+    /* Fallback: if tabs.json doesn't exist, use legacy cards.json */
+    if (!tabsMeta || Object.keys(tabsMeta).length === 0) {
+        var legacy = await _fetchJson("cards.json");
+        if (legacy && legacy.tabs) return legacy;
+        tabsMeta = {};
+    }
+
+    var tabs = [];
+
+    /* Dashboard always first */
+    tabs.push(tabsMeta.dashboard || { id: "dashboard", title: "Dashboard", type: "dashboard" });
+
+    /* Load each card category */
+    for (var i = 0; i < CARD_CATEGORIES.length; i++) {
+        var cat = CARD_CATEGORIES[i];
+        var cards = await _loadCategoryCards(cat.dir);
+        var meta = tabsMeta[cat.tabId] || { id: cat.tabId, title: cat.dir, type: "cards" };
+        meta.cards = cards;
+        tabs.push(meta);
+    }
+
+    return { tabs: tabs };
 }
 
 async function initApp() {
     try {
-        var config = await fetch("cards.json").then(function (r) { return r.json(); });
+        var config = await _loadAllCards();
 
-        /* Try to fetch auto-discovered models/solvers from a connected server */
+        /* Also try server registry for additional auto-discovered cards */
         try {
             var regUrl = (ZoomyBackend.getUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
             var registry = await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
-            config = _mergeRegistryIntoConfig(config, registry);
-            if (window.logDebug) logDebug("info", "Registry loaded: " + (registry.tabs || []).reduce(function (n, t) { return n + (t.cards || []).length; }, 0) + " cards");
-        } catch (e) {
-            /* Server not available — use static cards.json only */
-            if (window.logDebug) logDebug("info", "No server registry (using cards.json only): " + (e.message || e));
-        }
+            if (registry && registry.tabs) {
+                var regTabs = {};
+                registry.tabs.forEach(function (t) { regTabs[t.id] = t; });
+                config.tabs.forEach(function (tab) {
+                    var rt = regTabs[tab.id];
+                    if (!rt || !rt.cards) return;
+                    var existing = {};
+                    (tab.cards || []).forEach(function (c) { existing[c.id] = true; });
+                    rt.cards.forEach(function (c) {
+                        if (!existing[c.id]) { tab.cards.push(c); }
+                    });
+                });
+            }
+        } catch (e) { /* server not available */ }
 
         initProject(config);
         var tabBar = document.getElementById("tab-bar");

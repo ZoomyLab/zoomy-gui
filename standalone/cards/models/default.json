@@ -1,0 +1,73 @@
+[
+  {
+    "id": "sme-l0",
+    "title": "SWE (SME L0)",
+    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+    "init": {
+      "level": 0
+    },
+    "template": "from zoomy_core.model.models.sme_model import SMEInviscid\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\n\nmodel = SMEInviscid(level=0)\n",
+    "description": "Shallow water equations (depth-averaged, inviscid).<br>$$\\partial_t \\begin{pmatrix} h \\\\ hu \\end{pmatrix} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}\\nabla\\mathbf{Q} = 0$$"
+  },
+  {
+    "id": "sme-l1",
+    "title": "SME L1",
+    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+    "init": {
+      "level": 1
+    },
+    "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=1)\n",
+    "description": "Shallow Moment Equations level 1 \u2014 vertical velocity profile.<br>$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}(\\mathbf{Q})\\nabla\\mathbf{Q} = \\mathbf{S}(\\mathbf{Q})$$"
+  },
+  {
+    "id": "sme-l2",
+    "title": "SME L2",
+    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+    "init": {
+      "level": 2
+    },
+    "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=2)\n",
+    "description": "Shallow Moment Equations level 2 \u2014 higher-order vertical profile."
+  },
+  {
+    "id": "sme-viscous",
+    "title": "SME (Newtonian)",
+    "class": "zoomy_core.model.models.sme_model.SMEModel",
+    "init": {
+      "level": 1
+    },
+    "template": "from zoomy_core.model.models.sme_model import SMEModel\n\nmodel = SMEModel(level=1)\n",
+    "description": "Shallow Moment Equations with Newtonian viscosity and Navier slip."
+  },
+  {
+    "id": "vam",
+    "title": "VAM",
+    "class": "zoomy_core.model.models.vam_model.VAMModel",
+    "init": {
+      "level": 1
+    },
+    "template": "from zoomy_core.model.models.vam_model import VAMModel\n\nmodel = VAMModel(level=1, eigenvalue_mode='numerical')\n",
+    "description": "Viscous Alignment Model \u2014 non-hydrostatic shallow moments with vertical velocity."
+  },
+  {
+    "id": "advection",
+    "title": "Scalar Advection",
+    "class": "zoomy_core.model.models.advection_model.ScalarAdvection",
+    "init": {
+      "dimension": 1
+    },
+    "template": "from zoomy_core.model.models.advection_model import ScalarAdvection\nimport numpy as np\n\nmodel = ScalarAdvection(dimension=1)\nmodel.parameter_values = np.array([1.0])\n",
+    "description": "Linear scalar advection.<br>$$\\partial_t u + a \\partial_x u = 0$$"
+  },
+  {
+    "id": "advdiff",
+    "title": "Advection-Diffusion",
+    "class": "zoomy_core.model.models.advection_model.ScalarAdvectionDiffusion",
+    "init": {
+      "dimension": 1,
+      "nu": 0.01
+    },
+    "template": "from zoomy_core.model.models.advection_model import ScalarAdvectionDiffusion\nimport numpy as np\n\nmodel = ScalarAdvectionDiffusion(dimension=1, nu=0.01)\nmodel.parameter_values = np.array([1.0, 0.01])\n",
+    "description": "Scalar advection-diffusion (IMEX time integration).<br>$$\\partial_t u + a \\partial_x u = \\nu \\partial_{xx} u$$"
+  }
+]
