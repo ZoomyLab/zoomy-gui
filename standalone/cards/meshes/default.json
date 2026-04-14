@@ -43,14 +43,5 @@
     },
     "description": "Uniform 3D hex mesh",
     "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_3d(({x_min}, {x_max}, {y_min}, {y_max}, {z_min}, {z_max}), nx={nx}, ny={ny}, nz={nz})\n"
-  },
-  {
-    "id": "mesh-channel",
-    "title": "Channel (Quad 2D)",
-    "description": "Pre-built 2D quad channel mesh.",
-    "preview": "previews/mesh_channel_quad_2d_mesh.svg",
-    "mesh_sizes": [
-      "coarse"
-    ]
   }
 ]
