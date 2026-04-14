@@ -1381,12 +1381,15 @@ document.addEventListener("DOMContentLoaded", function () {
                 return "from " + mod + " import " + cls + "\n\nmodel = " + cls + "(" + kwargs + ")\n";
             }
 
-            /* Resolve code: user-edited > explicit template > auto-generated from class */
+            /* Resolve code: user-edited > template with substitution > auto-generated from class */
             function resolveCode(state, card) {
-                if (state.code) return state.code;
-                if (card.template) return fillTemplate(card.template, card.init);
+                /* If user edited the code (different from default template), use as-is */
+                var defCode = card.template || card.snippet || "";
+                if (state.code && state.code !== defCode) return state.code;
+                /* Template with {placeholder} substitution */
+                if (card.template) return fillTemplate(card.template, state.params && Object.keys(state.params).length ? state.params : card.init);
                 if (card["class"]) return autoTemplate(card["class"], card.init);
-                return "";
+                return state.code || "";
             }
 
             /* The script is: model.py + mesh.py + solver.py — exactly what the server runs */
