@@ -99,6 +99,131 @@ function makeAceEditor(id, code) {
     return e;
 }
 
+/* === Output Cells (notebook-style display) === */
+
+var _activeOutputTarget = null;  /* cardId of the currently running editor */
+var _mermaidReady = false;
+
+function renderOutputCell(cell, container) {
+    var div = document.createElement("div");
+    div.className = "output-cell";
+
+    switch (cell.mime) {
+        case "text/plain":
+            div.className += " output-cell-text";
+            div.textContent = cell.content;
+            break;
+        case "text/html":
+            div.className += " output-cell-html";
+            div.innerHTML = cell.content;
+            break;
+        case "image/svg+xml":
+            div.className += " output-cell-svg";
+            div.innerHTML = cell.content;
+            break;
+        case "text/x-mermaid":
+            div.className += " output-cell-mermaid";
+            var mermaidId = "mermaid-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+            div.id = mermaidId;
+            div.textContent = cell.content;
+            if (window.mermaid) {
+                if (!_mermaidReady) { mermaid.initialize({ startOnLoad: false, theme: "neutral" }); _mermaidReady = true; }
+                mermaid.render(mermaidId + "-svg", cell.content).then(function (result) { div.innerHTML = result.svg; });
+            }
+            break;
+        case "text/x-latex":
+            div.className += " output-cell-latex";
+            div.textContent = cell.content;
+            if (window.katex) {
+                try { katex.render(cell.content, div, { displayMode: true, throwOnError: false }); } catch (e) { div.textContent = cell.content; }
+            }
+            break;
+        case "application/vnd.plotly+json":
+            div.className += " output-cell-plotly";
+            div.style.minHeight = "280px";
+            container.appendChild(div);
+            if (window.Plotly) {
+                try {
+                    var plotData = JSON.parse(cell.content);
+                    Plotly.newPlot(div, plotData.data || [], plotData.layout || {}, { responsive: true });
+                } catch (e) { div.textContent = "Plot error: " + e.message; }
+            } else {
+                div.textContent = "(Plotly not loaded)";
+            }
+            return;  /* already appended */
+        default:
+            div.className += " output-cell-text";
+            div.textContent = cell.content;
+    }
+    container.appendChild(div);
+}
+
+function setupOutputPanel(cardId, editorWrap) {
+    var panelId = cardId + "-output";
+    if (document.getElementById(panelId)) return;
+
+    var toolbar = document.createElement("div");
+    toolbar.className = "output-cells-toolbar";
+    toolbar.innerHTML = '<span>Output</span><div>' +
+        '<button id="' + panelId + '-run">&#9654; Run</button> ' +
+        '<button id="' + panelId + '-clear">Clear</button></div>';
+
+    var cells = document.createElement("div");
+    cells.className = "output-cells";
+    cells.id = panelId;
+
+    editorWrap.appendChild(toolbar);
+    editorWrap.appendChild(cells);
+
+    document.getElementById(panelId + "-run").onclick = async function (e) {
+        e.stopPropagation();
+        var container = document.getElementById(cardId);
+        var editor = container && container._editor;
+        if (!editor) return;
+        /* Clear previous output */
+        cells.innerHTML = "";
+        _activeOutputTarget = panelId;
+        var code = editor.getValue();
+        try {
+            var resultJson = await runCode(code);
+            var result = JSON.parse(resultJson);
+            if (result.output) {
+                renderOutputCell({ mime: "text/plain", content: result.output }, cells);
+            }
+            if (result.plot_type === "plotly" && result.plot_data) {
+                await ensurePlotly();
+                renderOutputCell({ mime: "application/vnd.plotly+json", content: result.plot_data }, cells);
+            } else if (result.plot_type === "matplotlib" && result.plot_data) {
+                var svg = atob(result.plot_data);
+                renderOutputCell({ mime: "image/svg+xml", content: svg }, cells);
+            }
+            if (result.status === "error") {
+                renderOutputCell({ mime: "text/plain", content: result.output }, cells);
+            }
+        } catch (err) {
+            renderOutputCell({ mime: "text/plain", content: "Error: " + err.message }, cells);
+        }
+        _activeOutputTarget = null;
+    };
+
+    document.getElementById(panelId + "-clear").onclick = function (e) {
+        e.stopPropagation();
+        cells.innerHTML = "";
+    };
+}
+
+/* Handle display() messages from Pyodide worker */
+if (_pyWorker) {
+    var _origOnMessage = _pyWorker.onmessage;
+    _pyWorker.addEventListener("message", function (ev) {
+        if (ev.data.type === "display" && ev.data.cell) {
+            var cell = JSON.parse(ev.data.cell);
+            var target = _activeOutputTarget ? document.getElementById(_activeOutputTarget) : null;
+            if (target) renderOutputCell(cell, target);
+        }
+    });
+}
+
 /* === CardManager ===
  * layout: "stack" (full width, default) or "grid" (multi-column)
  * columns: number of grid columns (default 2, only for layout:"grid")
@@ -177,10 +302,15 @@ function isCardModified(cardId) {
 }
 
 function buildProjectZip() {
+    /* Sync UI selections into core project */
     Object.keys(managers).forEach(function (tabId) {
         if (managers[tabId].selectedId) _project.selections.select(tabId, managers[tabId].selectedId);
     });
-    _project.sessions.sessions = sessionMgr.cards;
+    /* Sync session list from UI into core */
+    _project.sessions.sessions.forEach(function (coreSess) {
+        var uiSess = sessionMgr.cards.find(function (s) { return s.id === coreSess.id; });
+        if (uiSess) { coreSess.title = uiSess.title; coreSess.description = uiSess.description; }
+    });
     _project.sessions.activeId = sessionMgr.selectedId;
 
     var data = _project.buildSaveData();
@@ -190,7 +320,7 @@ function buildProjectZip() {
         zip.file(c.folder + "/card.json", JSON.stringify(c.meta, null, 2));
         if (c.code) zip.file(c.folder + "/code.py", c.code);
     });
-    logDebug("info", "Project: " + data.cards.length + " modified cards saved");
+    logDebug("info", "Project: " + data.cards.length + " modified cards across " + _project.sessions.sessions.length + " session(s) saved");
     return zip;
 }
 
@@ -217,14 +347,9 @@ async function loadProject(file) {
         var project = {};
         if (projectFile) {
             project = JSON.parse(await projectFile.async("string"));
-            if (project.sessions) {
-                sessionMgr.cards = project.sessions;
-                sessionMgr.selectedId = project.activeSession || (project.sessions[0] && project.sessions[0].id);
-                renderSessionSidebar();
-                renderDashboardSessionCard();
-            }
         }
 
+        /* Parse card files from ZIP */
         var cardFiles = {};
         zip.forEach(function (relativePath, entry) {
             if (entry.dir) return;
@@ -238,81 +363,182 @@ async function loadProject(file) {
             else if (filename === "code.py") cardFiles[folderKey].code = entry;
         });
 
-        var restoredCount = 0;
+        /* Build card entries array for applySaveData */
+        var cardEntries = [];
         for (var folderKey in cardFiles) {
             var cf = cardFiles[folderKey];
             if (!cf.json) continue;
             var metaStr = await cf.json.async("string");
             var meta = JSON.parse(metaStr);
+            var code = cf.code ? await cf.code.async("string") : null;
 
-            var targetId = meta.id || null;
-            if (targetId && !cardState[targetId]) targetId = null;
-            if (!targetId) {
-                for (var cid in cardDefaults) {
-                    if (cardDefaults[cid].title === meta.title) { targetId = cid; break; }
+            /* Determine sessionId from folder path (first segment matches session title) */
+            var folderSession = folderKey.split("/")[0];
+            var sessionId = null;
+            if (project.sessions) {
+                for (var si = 0; si < project.sessions.length; si++) {
+                    var sTitle = ZoomyCore.safeFolderName(project.sessions[si].title);
+                    if (sTitle === folderSession) { sessionId = project.sessions[si].id; break; }
                 }
             }
-            if (!targetId) {
-                for (var cid in cardState) {
-                    if (cardState[cid].title === meta.title) { targetId = cid; break; }
-                }
-            }
-            if (!targetId) {
-                logDebug("warn", "Skipped unknown card: " + meta.title);
-                continue;
-            }
 
-            var cs = cardState[targetId];
-            cs.tab = meta.tab || cs.tab || "";
-            cs.subtab = meta.subtab || cs.subtab || "";
-            cs.title = meta.title;
-            cs.description = meta.description || "";
-            cs.params = meta.params || {};
-            cs.code = cf.code ? await cf.code.async("string") : "";
+            cardEntries.push({ meta: meta, code: code, sessionId: sessionId, folder: folderKey });
+        }
 
-            var titleEl = document.querySelector("#" + CSS.escape(targetId) + " .card-title");
-            if (titleEl) titleEl.textContent = cardState[targetId].title;
-            var descEl = document.querySelector("#" + CSS.escape(targetId) + " .card-description");
+        /* Apply via core.js (handles v1.0 and v1.1) */
+        var restoredCount = _project.applySaveData(project, cardEntries);
+
+        /* Sync session sidebar from core sessions */
+        sessionMgr.cards = _project.sessions.sessions.map(function (s) {
+            return { id: s.id, title: s.title, description: s.description || "" };
+        });
+        sessionMgr.selectedId = _project.sessions.activeId;
+        renderSessionSidebar();
+        renderDashboardSessionCard();
+
+        /* Sync UI managers with restored selections */
+        var sel = _project.selections.toDict();
+        Object.keys(sel).forEach(function (tabId) {
+            if (managers[tabId]) managers[tabId].select(sel[tabId]);
+        });
+
+        /* Refresh any open editors with restored card state */
+        Object.keys(_project.cardState.cards).forEach(function (cardId) {
+            var cs = _project.cardState.cards[cardId];
+            var titleEl = document.querySelector("#" + CSS.escape(cardId) + " .card-title");
+            if (titleEl) titleEl.textContent = cs.title;
+            var descEl = document.querySelector("#" + CSS.escape(cardId) + " .card-description");
             if (descEl) {
-                descEl.innerHTML = cardState[targetId].description;
+                descEl.innerHTML = cs.description;
                 if (window.renderMathInElement) {
                     renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
                 }
             }
-            var cEl = document.getElementById(targetId);
-            if (cEl && cEl._editor && cardState[targetId].code) {
-                cEl._editor.setValue(cardState[targetId].code, -1);
-                logDebug("info", "Updated editor for " + meta.title);
-            } else if (cardState[targetId].code) {
-                logDebug("info", "Code loaded for " + meta.title + " (editor not open, will apply on next open)");
-            }
+            var cEl = document.getElementById(cardId);
+            if (cEl && cEl._editor && cs.code) cEl._editor.setValue(cs.code, -1);
+        });
 
-            restoredCount++;
-        }
-
-        if (project.selections) {
-            Object.keys(project.selections).forEach(function (tabId) {
-                if (managers[tabId]) {
-                    managers[tabId].select(project.selections[tabId]);
-                }
-            });
-        }
-
-        logDebug("info", "Project loaded: " + restoredCount + " cards restored from " + Object.keys(cardFiles).length + " entries");
+        logDebug("info", "Project loaded: " + restoredCount + " session(s) restored from " + Object.keys(cardFiles).length + " card entries");
     } catch (err) {
         logDebug("error", "Load failed: " + err.message);
+    }
+}
+
+/* === URL-based project loading (relative, GitHub, Zenodo) === */
+
+function resolveProjectUrl(raw) {
+    /* zenodo:12345 or zenodo:12345/filename.zip */
+    if (raw.startsWith("zenodo:")) {
+        var parts = raw.slice(7).split("/");
+        var recordId = parts[0];
+        var filename = parts[1] || null;
+        if (filename) {
+            return { url: "https://zenodo.org/api/records/" + recordId + "/files/" + filename + "/content", type: "direct" };
+        }
+        return { url: "https://zenodo.org/api/records/" + recordId, type: "zenodo-metadata" };
+    }
+    /* Full URL (GitHub releases, any HTTPS host) */
+    if (raw.startsWith("http://") || raw.startsWith("https://")) {
+        return { url: raw, type: "direct" };
+    }
+    /* Relative path (same-origin) */
+    return { url: raw, type: "direct" };
+}
+
+async function loadProjectFromUrl(raw) {
+    var resolved = resolveProjectUrl(raw);
+    var downloadUrl = resolved.url;
+
+    if (resolved.type === "zenodo-metadata") {
+        /* Fetch Zenodo record metadata, find first .zip file */
+        logDebug("info", "Fetching Zenodo record metadata...");
+        var metaResp = await fetch(resolved.url);
+        if (!metaResp.ok) throw new Error("Zenodo record not found (HTTP " + metaResp.status + ")");
+        var record = await metaResp.json();
+        var files = record.files || [];
+        var zipFile = files.find(function (f) { return (f.key || "").endsWith(".zip"); });
+        if (!zipFile) throw new Error("No .zip file found in Zenodo record");
+        downloadUrl = zipFile.links && zipFile.links.self ? zipFile.links.self
+                    : "https://zenodo.org/api/records/" + raw.slice(7).split("/")[0] + "/files/" + zipFile.key + "/content";
+        logDebug("info", "Found Zenodo file: " + zipFile.key);
+    }
+
+    logDebug("info", "Downloading project: " + downloadUrl);
+    var resp = await fetch(downloadUrl);
+    if (!resp.ok) throw new Error("Failed to fetch project (HTTP " + resp.status + ")");
+    var blob = await resp.blob();
+    await loadProject(blob);
+}
+
+async function checkUrlProject() {
+    var params = new URLSearchParams(window.location.search);
+    var projectUrl = params.get("project");
+    if (!projectUrl) return;
+    logDebug("info", "Auto-loading project from URL: " + projectUrl);
+    showToast("Loading project...");
+    try {
+        await loadProjectFromUrl(projectUrl);
+        hideToast();
+        /* Auto-switch to specific session if requested */
+        var sessionName = params.get("session");
+        if (sessionName && _project) {
+            var target = _project.sessions.sessions.find(function (s) { return s.title === sessionName || s.id === sessionName; });
+            if (target) {
+                _project.sessions.switchTo(target.id, _project);
+                sessionMgr.selectedId = target.id;
+                renderSessionSidebar();
+                renderDashboardSessionCard();
+                var sel = _project.selections.toDict();
+                Object.keys(sel).forEach(function (tab) { if (managers[tab]) managers[tab].select(sel[tab]); });
+            }
+        }
+        /* Auto-run if #run hash */
+        if (window.location.hash === "#run") {
+            logDebug("info", "Auto-running simulation (#run)");
+            document.getElementById("btn-run-sim").click();
+        }
+    } catch (err) {
+        logDebug("error", "Failed to load project from URL: " + err.message);
+        hideToast();
     }
 }
 
 /* === Session manager (cards in sidebar, full card on dashboard) === */
 
 var sessionMgr = new CardManager("sessions", {
-    onSelect: function () { renderSessionSidebar(); renderDashboardSessionCard(); }
+    onSelect: function () {
+        if (_project) {
+            /* Snapshot departing session, restore arriving session in core.js */
+            var arriving = sessionMgr.selectedId;
+            _project.sessions.switchTo(arriving, _project);
+            /* Sync UI managers with restored selections */
+            var sel = _project.selections.toDict();
+            Object.keys(sel).forEach(function (tab) {
+                if (managers[tab]) managers[tab].select(sel[tab]);
+            });
+            /* Refresh open editors with restored card state */
+            Object.keys(_project.cardState.cards).forEach(function (cardId) {
+                var cEl = document.getElementById(cardId);
+                var cs = _project.cardState.cards[cardId];
+                if (cEl && cEl._editor && cs) cEl._editor.setValue(cs.code || "", -1);
+            });
+        }
+        renderSessionSidebar();
+        renderDashboardSessionCard();
+    }
 });
 
 function createSession(name) {
     var id = "session-" + Date.now();
+    /* Snapshot current session before creating new one */
+    if (_project) _project.sessions.snapshotSession(_project);
     sessionMgr.add({ id: id, title: name, description: "Simulation session." });
+    /* Register in core.js SessionManager */
+    if (_project) {
+        var session = { id: id, title: name, description: "Simulation session.", selections: _project.selections.toDict(), cardOverrides: {} };
+        _project.sessions.sessions.push(session);
+        _project.sessions.activeId = id;
+    }
     sessionMgr.select(id);
 }
 
@@ -705,6 +931,8 @@ function createCard(targetId, card, mgr, cardType) {
             container._code = code;
             cState.code = code;
             container._editor.session.on("change", function () { cState.code = container._editor.getValue(); });
+            /* Attach output cells panel below editor */
+            setupOutputPanel(targetId, editorWrap);
             editorLoaded = true;
         });
     }
@@ -1183,8 +1411,21 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     };
 
-    createSession("Default session");
-    initApp();
+    initApp().then(function () {
+        /* Sync initial session from core.js into sidebar */
+        if (_project && _project.sessions.sessions.length > 0) {
+            sessionMgr.cards = _project.sessions.sessions.map(function (s) {
+                return { id: s.id, title: s.title, description: s.description || "" };
+            });
+            sessionMgr.selectedId = _project.sessions.activeId;
+            renderSessionSidebar();
+            renderDashboardSessionCard();
+        } else {
+            createSession("Default session");
+        }
+        /* Check URL for auto-loading a project */
+        checkUrlProject();
+    });
 
     /* Auto-discover backend */
     ZoomyBackend.discover();

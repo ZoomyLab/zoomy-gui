@@ -73,16 +73,20 @@ SelectionManager.prototype.toDict = function () {
     return JSON.parse(JSON.stringify(this.selections));
 };
 
-/* === Session Manager === */
+/* === Session Manager (per-session selections + card overrides) === */
 
 function SessionManager() {
     this.sessions = [];
     this.activeId = null;
 }
 
-SessionManager.prototype.create = function (title) {
+SessionManager.prototype.create = function (title, project) {
     var id = "s-" + Date.now();
-    var session = { id: id, title: title, description: "Simulation session." };
+    var session = { id: id, title: title, description: "Simulation session.", selections: {}, cardOverrides: {} };
+    /* Clone current selections as the new session's starting point */
+    if (project) {
+        session.selections = project.selections.toDict();
+    }
     this.sessions.push(session);
     this.activeId = id;
     return session;
@@ -95,8 +99,63 @@ SessionManager.prototype.active = function () {
     return null;
 };
 
-SessionManager.prototype.switchTo = function (id) {
+SessionManager.prototype.get = function (id) {
+    for (var i = 0; i < this.sessions.length; i++) {
+        if (this.sessions[i].id === id) return this.sessions[i];
+    }
+    return null;
+};
+
+SessionManager.prototype.switchTo = function (id, project) {
+    if (this.activeId === id) return;
+    /* Snapshot departing session */
+    if (project) this.snapshotSession(project);
     this.activeId = id;
+    /* Restore arriving session */
+    if (project) this.restoreSession(project);
+};
+
+SessionManager.prototype.snapshotSession = function (project) {
+    var session = this.active();
+    if (!session) return;
+    session.selections = project.selections.toDict();
+    /* Save only modified card state as overrides */
+    var overrides = {};
+    Object.keys(project.cardState.cards).forEach(function (cardId) {
+        if (project.cardState.isModified(cardId)) {
+            var cs = project.cardState.cards[cardId];
+            overrides[cardId] = { params: JSON.parse(JSON.stringify(cs.params || {})), code: cs.code || "" };
+        }
+    });
+    session.cardOverrides = overrides;
+};
+
+SessionManager.prototype.restoreSession = function (project) {
+    var session = this.active();
+    if (!session) return;
+    /* Reset all cards to defaults first */
+    Object.keys(project.cardState.defaults).forEach(function (cardId) {
+        var def = project.cardState.defaults[cardId];
+        var cs = project.cardState.cards[cardId];
+        if (cs) {
+            cs.params = JSON.parse(JSON.stringify(def.params || {}));
+            cs.code = def.code || "";
+        }
+    });
+    /* Apply session-specific overrides */
+    var overrides = session.cardOverrides || {};
+    Object.keys(overrides).forEach(function (cardId) {
+        var cs = project.cardState.cards[cardId];
+        if (cs) {
+            if (overrides[cardId].params) cs.params = JSON.parse(JSON.stringify(overrides[cardId].params));
+            if (overrides[cardId].code) cs.code = overrides[cardId].code;
+        }
+    });
+    /* Restore selections */
+    var sel = session.selections || {};
+    Object.keys(sel).forEach(function (tab) {
+        project.selections.select(tab, sel[tab]);
+    });
 };
 
 /* === Project (orchestrates everything) === */
@@ -174,29 +233,43 @@ function safeFolderName(str) {
 
 Project.prototype.buildSaveData = function () {
     var proj = this;
+    /* Snapshot current session before serializing */
+    proj.sessions.snapshotSession(proj);
+
+    /* Build per-session serializable data */
+    var sessionsData = proj.sessions.sessions.map(function (s) {
+        return {
+            id: s.id, title: s.title, description: s.description,
+            selections: s.selections || {},
+            cardOverrides: s.cardOverrides || {}
+        };
+    });
+
     var meta = {
-        version: "1.0",
-        sessions: proj.sessions.sessions,
-        activeSession: proj.sessions.activeId,
-        selections: proj.selections.toDict()
+        version: "1.1",
+        sessions: sessionsData,
+        activeSession: proj.sessions.activeId
     };
 
+    /* Emit card files for every session that has overrides */
     var cards = [];
-    var sessionTitle = (proj.sessions.active() || {}).title || "default";
+    sessionsData.forEach(function (session) {
+        var overrides = session.cardOverrides || {};
+        Object.keys(overrides).forEach(function (cardId) {
+            var cs = proj.cardState.cards[cardId];
+            if (!cs || !cs.tab) return;
+            var ov = overrides[cardId];
 
-    Object.keys(proj.cardState.cards).forEach(function (cardId) {
-        if (!proj.cardState.isModified(cardId)) return;
-        var cs = proj.cardState.cards[cardId];
-        if (!cs.tab) return;
+            var folder = safeFolderName(session.title) + "/" + cs.tab;
+            if (cs.subtab) folder += "/" + cs.subtab;
+            folder += "/" + safeFolderName(cs.title);
 
-        var folder = safeFolderName(sessionTitle) + "/" + cs.tab;
-        if (cs.subtab) folder += "/" + cs.subtab;
-        folder += "/" + safeFolderName(cs.title);
-
-        cards.push({
-            folder: folder,
-            meta: { id: cardId, title: cs.title, description: cs.description, params: cs.params, tab: cs.tab, subtab: cs.subtab },
-            code: cs.code || null
+            cards.push({
+                folder: folder,
+                sessionId: session.id,
+                meta: { id: cardId, title: cs.title, description: cs.description, params: ov.params || cs.params, tab: cs.tab, subtab: cs.subtab },
+                code: ov.code || null
+            });
         });
     });
 
@@ -204,44 +277,84 @@ Project.prototype.buildSaveData = function () {
 };
 
 Project.prototype.applySaveData = function (projectJson, cardEntries) {
+    var proj = this;
+
+    /* Helper: resolve card ID from meta (by id or title) */
+    function resolveCardId(meta) {
+        var targetId = meta.id || null;
+        if (targetId && !proj.cardState.cards[targetId]) targetId = null;
+        if (!targetId) {
+            Object.keys(proj.cardState.defaults).forEach(function (cid) {
+                if (!targetId && proj.cardState.defaults[cid].title === meta.title) targetId = cid;
+            });
+        }
+        if (!targetId) {
+            Object.keys(proj.cardState.cards).forEach(function (cid) {
+                if (!targetId && proj.cardState.cards[cid].title === meta.title) targetId = cid;
+            });
+        }
+        return targetId;
+    }
+
+    /* Version 1.1: per-session selections + overrides */
+    if (projectJson.version === "1.1" && projectJson.sessions) {
+        this.sessions.sessions = projectJson.sessions.map(function (s) {
+            /* Rebuild cardOverrides with resolved card IDs */
+            var resolvedOverrides = {};
+            var ov = s.cardOverrides || {};
+            Object.keys(ov).forEach(function (cardId) {
+                var resolved = cardId;
+                if (!proj.cardState.cards[resolved]) {
+                    /* Try to resolve by scanning card entries for this session */
+                    var matching = cardEntries.filter(function (e) { return e.sessionId === s.id && e.meta.id === cardId; });
+                    if (matching.length > 0) resolved = resolveCardId(matching[0].meta) || cardId;
+                }
+                if (proj.cardState.cards[resolved]) resolvedOverrides[resolved] = ov[cardId];
+            });
+            return {
+                id: s.id, title: s.title, description: s.description || "",
+                selections: s.selections || {},
+                cardOverrides: resolvedOverrides
+            };
+        });
+        this.sessions.activeId = projectJson.activeSession || (this.sessions.sessions[0] && this.sessions.sessions[0].id) || "";
+        /* Restore the active session's state */
+        this.sessions.restoreSession(this);
+        return this.sessions.sessions.length;
+    }
+
+    /* Version 1.0 (legacy): global selections, flat card list */
     if (projectJson.sessions) {
-        this.sessions.sessions = projectJson.sessions;
+        this.sessions.sessions = projectJson.sessions.map(function (s) {
+            return { id: s.id, title: s.title, description: s.description || "", selections: {}, cardOverrides: {} };
+        });
         this.sessions.activeId = projectJson.activeSession || "";
     }
     if (projectJson.selections) {
         var sel = projectJson.selections;
         for (var tab in sel) this.selections.select(tab, sel[tab]);
+        /* Store selections in the active session */
+        var active = this.sessions.active();
+        if (active) active.selections = JSON.parse(JSON.stringify(sel));
     }
 
     var restored = 0;
     for (var i = 0; i < cardEntries.length; i++) {
         var entry = cardEntries[i];
-        var meta = entry.meta;
-        var targetId = meta.id || null;
-
-        if (targetId && !this.cardState.cards[targetId]) targetId = null;
-        if (!targetId) {
-            var self = this;
-            Object.keys(this.cardState.defaults).forEach(function (cid) {
-                if (!targetId && self.cardState.defaults[cid].title === meta.title) targetId = cid;
-            });
-        }
-        if (!targetId) {
-            Object.keys(this.cardState.cards).forEach(function (cid) {
-                if (!targetId && self.cardState.cards[cid].title === meta.title) targetId = cid;
-            });
-        }
+        var targetId = resolveCardId(entry.meta);
         if (!targetId) continue;
 
         var cs = this.cardState.cards[targetId];
-        cs.tab = meta.tab || cs.tab || "";
-        cs.subtab = meta.subtab || cs.subtab || "";
-        cs.title = meta.title;
-        cs.description = meta.description || "";
-        cs.params = meta.params || {};
+        cs.tab = entry.meta.tab || cs.tab || "";
+        cs.subtab = entry.meta.subtab || cs.subtab || "";
+        cs.title = entry.meta.title;
+        cs.description = entry.meta.description || "";
+        cs.params = entry.meta.params || {};
         if (entry.code) cs.code = entry.code;
         restored++;
     }
+    /* Snapshot restored state into active session */
+    this.sessions.snapshotSession(this);
     return restored;
 };
 
@@ -249,7 +362,6 @@ Project.prototype.applySaveData = function (projectJson, cardEntries) {
 
 Project.fromConfig = function (config) {
     var proj = new Project();
-    proj.sessions.create("Default session");
 
     var tabs = config.tabs || [];
     for (var i = 0; i < tabs.length; i++) {
@@ -268,6 +380,8 @@ Project.fromConfig = function (config) {
         }
         if (firstId) proj.selections.select(tabId, firstId);
     }
+    /* Create default session with initial selections */
+    proj.sessions.create("Default session", proj);
     return proj;
 };
 
