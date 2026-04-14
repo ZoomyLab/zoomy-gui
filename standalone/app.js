@@ -690,9 +690,16 @@ function createCard(targetId, card, mgr, cardType) {
                 code = cState.code;
             } else if (card.snippet) {
                 try { code = await fetch(card.snippet).then(function (r) { return r.text(); }); } catch (e) { code = "# snippet not found"; }
-            } else {
-                code = card.template || "# edit here";
+            } else if (card.template) {
+                code = card.template;
                 if (card.init) Object.keys(card.init).forEach(function (k) { code = code.split("{" + k + "}").join(String(card.init[k])); });
+            } else if (card["class"]) {
+                /* Auto-generate from class + init */
+                var _p = card["class"].split("."), _cls = _p[_p.length-1], _mod = _p.slice(0,-1).join(".");
+                var _kw = card.init ? Object.keys(card.init).map(function(k){ var v=card.init[k]; return k+"="+(typeof v==="string"?"'"+v+"'":v); }).join(", ") : "";
+                code = "from " + _mod + " import " + _cls + "\n\nmodel = " + _cls + "(" + _kw + ")\n";
+            } else {
+                code = "# edit here";
             }
             container._editor = makeAceEditor(targetId + "-ace", code);
             container._code = code;
@@ -1080,14 +1087,38 @@ document.addEventListener("DOMContentLoaded", function () {
                 return tmpl.replace(/\{(\w+)\}/g, function (_, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; });
             }
 
+            /* Auto-generate minimal script from class path + init kwargs */
+            function autoTemplate(classPath, init) {
+                if (!classPath) return "";
+                var parts = classPath.split(".");
+                var cls = parts[parts.length - 1];
+                var mod = parts.slice(0, -1).join(".");
+                var kwargs = "";
+                if (init && Object.keys(init).length > 0) {
+                    kwargs = Object.keys(init).map(function (k) {
+                        var v = init[k];
+                        return k + "=" + (typeof v === "string" ? "'" + v + "'" : v);
+                    }).join(", ");
+                }
+                return "from " + mod + " import " + cls + "\n\nmodel = " + cls + "(" + kwargs + ")\n";
+            }
+
+            /* Resolve code: user-edited > explicit template > auto-generated from class */
+            function resolveCode(state, card) {
+                if (state.code) return state.code;
+                if (card.template) return fillTemplate(card.template, card.init);
+                if (card["class"]) return autoTemplate(card["class"], card.init);
+                return "";
+            }
+
             /* The script is: model.py + mesh.py + solver.py — exactly what the server runs */
             var code = "import sys\nfrom loguru import logger; logger.remove(); logger.add(sys.stdout, level='INFO')\n\n";
             code += "# --- Model ---\n";
-            code += fillTemplate(modelState.code || modelCard.template || "", modelCard.init) + "\n\n";
+            code += resolveCode(modelState, modelCard) + "\n\n";
             code += "# --- Mesh ---\n";
-            code += fillTemplate(meshState.code || meshCard.template || "", meshCard.init) + "\n\n";
+            code += resolveCode(meshState, meshCard) + "\n\n";
             code += "# --- Solver ---\n";
-            code += fillTemplate(solverState.code || solverCard.template || "", solverCard.init) + "\n";
+            code += resolveCode(solverState, solverCard) + "\n";
 
             logDebug("info", "Running locally via Pyodide...");
             logDebug("info", "Code:\n" + code.substring(0, 500));
