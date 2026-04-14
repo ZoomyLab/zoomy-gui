@@ -1018,6 +1018,26 @@ document.addEventListener("DOMContentLoaded", function () {
         var solverCard = managers.solver.cards.find(function (c) { return "card-" + c.id === solverSel; });
 
         var tag = solverCard.requires_tag || "numpy";
+
+        /* Pyodide (in-browser numpy): build Python script and run in web worker */
+        if (tag === "numpy" && !ZoomyBackend.getUrlForTag("numpy")) {
+            var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
+            var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
+            var code = (modelState.code || modelCard.template || "") + "\n" + (meshState.code || meshCard.template || "");
+            code += "\nfrom zoomy_core.fvm.solver_numpy import HyperbolicSolver";
+            code += "\nimport zoomy_core.fvm.timestepping as ts";
+            code += "\nsolver = HyperbolicSolver(time_end=0.1, compute_dt=ts.adaptive(CFL=0.45))";
+            code += "\nQ, Qaux = solver.solve(mesh, model, write_output=False)";
+            code += "\nprint('Simulation complete: Q shape =', Q.shape)";
+
+            logDebug("info", "Running locally via Pyodide...");
+            logDebug("info", "Code:\n" + code.substring(0, 300));
+            showToast("Running via Pyodide...");
+            var msgId = "run-" + Date.now();
+            _pyWorker.postMessage({ cmd: "run_code", code: code, id: msgId });
+            return;
+        }
+
         if (!ZoomyBackend.isTagConnected(tag)) { showToast("Backend '" + tag + "' not connected"); setTimeout(hideToast, 2000); return; }
 
         var zoomyCase = {

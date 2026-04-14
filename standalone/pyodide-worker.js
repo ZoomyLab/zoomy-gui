@@ -94,12 +94,19 @@ onmessage = async function (e) {
 
     /* Pre-extract params for all cards with a class — cold imports happen here, not on gear click */
     try {
-        var config = await fetch("cards.json").then(function (r) { return r.json(); });
+        /* Load cards from the folder structure (default + generated) */
+        var allCards = [];
+        var dirs = ["cards/models/default.json", "cards/models/generated.json",
+                    "cards/solvers/default.json", "cards/solvers/generated.json"];
+        for (var di = 0; di < dirs.length; di++) {
+            try {
+                var arr = await fetch(dirs[di]).then(function (r) { return r.ok ? r.json() : []; });
+                allCards = allCards.concat(arr);
+            } catch (e) {}
+        }
         var count = 0;
-        for (var i = 0; i < config.tabs.length; i++) {
-            var cards = config.tabs[i].cards || [];
-            for (var j = 0; j < cards.length; j++) {
-                var c = cards[j];
+        for (var j = 0; j < allCards.length; j++) {
+                var c = allCards[j];
                 if (c["class"]) {
                     var key = c["class"] + "|" + JSON.stringify(c.init || {});
                     if (!paramCache[key]) {
