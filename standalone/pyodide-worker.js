@@ -83,23 +83,32 @@ onmessage = async function (e) {
             postMessage({ type: "result", id: msg.id, data: result });
 
         } else if (msg.cmd === "describe_model") {
-            postMessage({ type: "log", level: "info", msg: "describe_model: installing deps..." });
+            postMessage({ type: "log", level: "info", msg: "describe_model: starting for " + msg.class_path.split(".").pop() + " (may take 30-60s in Pyodide)..." });
             await installExec();
-            postMessage({ type: "log", level: "info", msg: "describe_model: instantiating " + msg.class_path });
-            var descCode = "def _describe_model(class_path, init_kwargs):\n" +
-                "    mod_path, cls_name = class_path.rsplit('.', 1)\n" +
-                "    mod = __import__(mod_path, fromlist=[cls_name])\n" +
-                "    cls = getattr(mod, cls_name)\n" +
-                "    try:\n" +
-                "        m = cls(**init_kwargs) if init_kwargs else cls()\n" +
-                "        if hasattr(m, 'describe'):\n" +
-                "            return str(m.describe())\n" +
-                "        return cls.__doc__ or cls.__name__\n" +
-                "    except Exception as e:\n" +
-                "        import traceback; return traceback.format_exc()\n";
+            /* Use runPythonAsync so the event loop can breathe */
+            var descCode = [
+                "import sys as _sys",
+                "def _describe_model(class_path, init_kwargs):",
+                "    _sys.stdout.write('describe: importing ' + class_path + '\\n')",
+                "    mod_path, cls_name = class_path.rsplit('.', 1)",
+                "    mod = __import__(mod_path, fromlist=[cls_name])",
+                "    cls = getattr(mod, cls_name)",
+                "    try:",
+                "        _sys.stdout.write('describe: instantiating ' + cls_name + '...\\n')",
+                "        m = cls(**init_kwargs) if init_kwargs else cls()",
+                "        _sys.stdout.write('describe: calling describe()\\n')",
+                "        if hasattr(m, 'describe'):",
+                "            return str(m.describe())",
+                "        return cls.__doc__ or cls.__name__",
+                "    except Exception as e:",
+                "        import traceback; return traceback.format_exc()",
+            ].join("\n");
             await py.runPythonAsync(descCode);
-            var desc = py.globals.get("_describe_model")(msg.class_path, py.toPy(msg.init || {}));
-            postMessage({ type: "log", level: "info", msg: "describe_model: done" });
+            postMessage({ type: "log", level: "info", msg: "describe_model: calling Python..." });
+            var desc = await py.runPythonAsync(
+                "_describe_model('" + msg.class_path + "', " + JSON.stringify(msg.init || {}) + ")"
+            );
+            postMessage({ type: "log", level: "info", msg: "describe_model: done (" + (desc ? desc.length : 0) + " chars)" });
             postMessage({ type: "result", id: msg.id, data: desc });
         }
     } catch (err) {
