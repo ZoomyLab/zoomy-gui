@@ -7,6 +7,21 @@ function loadScript(src) { return new Promise(function (ok, fail) { var s = docu
 function showToast(msg) { var t = document.getElementById("loading-toast"); if (t) { t.style.display = "block"; t.textContent = msg; } }
 function hideToast() { var t = document.getElementById("loading-toast"); if (t) t.style.display = "none"; }
 
+/* Minimal markdown → HTML (headings, bold, italic, newlines, code) */
+function miniMarkdown(s) {
+    if (!s) return "";
+    /* Already contains HTML tags → pass through */
+    if (/<[a-z][\s\S]*>/i.test(s)) return s;
+    return s
+        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+}
+
 /* === Debug log === */
 var _debugLines = [];
 function logDebug(level, msg) {
@@ -502,7 +517,7 @@ function createCard(targetId, card, mgr, cardType) {
     }
 
     html += '<div class="card-body">';
-    if (card.description) html += '<p class="card-description">' + card.description + '</p>';
+    if (card.description) html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
     html += '<div class="card-actions">';
     if (hasTimeline) html += '<div class="card-timeline"><input type="range" min="0" max="100" value="0" id="' + targetId + '-tl"><span id="' + targetId + '-ts">0</span></div>';
     if (hasRefresh) html += '<button class="icon-btn" id="' + targetId + '-refresh" title="Run">&#9654;</button>';
@@ -1053,17 +1068,83 @@ document.addEventListener("DOMContentLoaded", function () {
         if (tag === "numpy" && !ZoomyBackend.getUrlForTag("numpy")) {
             var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
             var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
-            var code = (modelState.code || modelCard.template || "") + "\n" + (meshState.code || meshCard.template || "");
-            code += "\nfrom zoomy_core.fvm.solver_numpy import HyperbolicSolver";
-            code += "\nimport zoomy_core.fvm.timestepping as ts";
-            code += "\nsolver = HyperbolicSolver(time_end=0.1, compute_dt=ts.adaptive(CFL=0.45))";
-            code += "\nQ, Qaux = solver.solve(mesh, model, write_output=False)";
-            code += "\nprint('Simulation complete: Q shape =', Q.shape)";
+
+            /* Substitute template placeholders {key} with init values */
+            function fillTemplate(tmpl, init) {
+                if (!tmpl || !init) return tmpl || "";
+                return tmpl.replace(/\{(\w+)\}/g, function (_, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; });
+            }
+
+            /* Build the full simulation script */
+            var modelCode = modelState.code || fillTemplate(modelCard.template, modelCard.init) || "";
+            var meshCode = fillTemplate(meshState.code || meshCard.template || "", meshCard.init);
+
+            var code = "import sys, numpy as np\n";
+            code += "from loguru import logger; logger.remove(); logger.add(sys.stdout, level='INFO')\n";
+            code += modelCode + "\n";
+
+            /* Add default IC/BCs if model code doesn't set them */
+            if (modelCode.indexOf("initial_conditions") === -1) {
+                code += "import zoomy_core.model.boundary_conditions as BC\n";
+                code += "import zoomy_core.model.initial_conditions as IC\n";
+                code += "nv = model.n_variables\n";
+                code += "def _default_ic(x):\n";
+                code += "    Q = np.zeros(nv)\n";
+                code += "    if nv >= 2: Q[1] = 1.0  # h=1\n";
+                code += "    return Q\n";
+                code += "model.initial_conditions = IC.UserFunction(function=_default_ic)\n";
+                code += "model.boundary_conditions = BC.BoundaryConditions([\n";
+                code += "    BC.Extrapolation(tag='left'), BC.Extrapolation(tag='right')])\n";
+            }
+
+            code += meshCode + "\n";
+
+            /* Solver — use FreeSurfaceFlowSolver for models with h/b, else HyperbolicSolver */
+            code += "import zoomy_core.fvm.timestepping as ts\n";
+            code += "vkeys = list(model.variables.keys()) if hasattr(model.variables, 'keys') else []\n";
+            code += "if 'h' in vkeys and 'b' in vkeys:\n";
+            code += "    from zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver as _Solver\n";
+            code += "else:\n";
+            code += "    from zoomy_core.fvm.solver_numpy import HyperbolicSolver as _Solver\n";
+            code += "solver = _Solver(time_end=0.1, compute_dt=ts.adaptive(CFL=0.3))\n";
+            code += "Q, Qaux = solver.solve(mesh, model, write_output=False)\n";
+            code += "print('Done:', Q.shape[0], 'variables,', mesh.n_inner_cells, 'cells')\n";
+
+            /* Simple result plot */
+            code += "import matplotlib.pyplot as plt\n";
+            code += "from zoomy_core.mesh import ensure_lsq_mesh\n";
+            code += "lsq = ensure_lsq_mesh(mesh, model)\n";
+            code += "nc = lsq.n_inner_cells; xc = lsq.cell_centers[0, :nc]\n";
+            code += "fig, ax = plt.subplots(figsize=(8, 4))\n";
+            code += "for v in range(min(Q.shape[0], 4)):\n";
+            code += "    vn = list(model.variables.keys())[v] if hasattr(model.variables, 'keys') else str(v)\n";
+            code += "    ax.plot(xc, Q[v, :nc], label=vn)\n";
+            code += "ax.legend(); ax.grid(True, alpha=0.3)\n";
+            code += "ax.set_xlabel('x'); ax.set_title('Simulation result')\n";
 
             logDebug("info", "Running locally via Pyodide...");
-            logDebug("info", "Code:\n" + code.substring(0, 300));
+            logDebug("info", "Code:\n" + code.substring(0, 500));
             showToast("Running via Pyodide...");
             var msgId = "run-" + Date.now();
+            var runHandler = function (ev) {
+                if (ev.data.id !== msgId) return;
+                _pyWorker.removeEventListener("message", runHandler);
+                if (ev.data.type === "result") {
+                    logDebug("info", "Pyodide result received");
+                    showToast("Simulation complete!"); setTimeout(hideToast, 3000);
+                    try {
+                        var result = JSON.parse(ev.data.data);
+                        if (result.plot_data) {
+                            updateDashboardJob({ job_id: "pyodide", status: "complete", result: result });
+                        }
+                        if (result.output) logDebug("info", result.output);
+                    } catch (e) { logDebug("info", String(ev.data.data)); }
+                } else if (ev.data.type === "error") {
+                    logDebug("error", "Pyodide error: " + ev.data.error);
+                    showToast("Error — see Log"); setTimeout(hideToast, 3000);
+                }
+            };
+            _pyWorker.addEventListener("message", runHandler);
             _pyWorker.postMessage({ cmd: "run_code", code: code, id: msgId });
             return;
         }

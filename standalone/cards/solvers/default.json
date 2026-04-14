@@ -2,9 +2,11 @@
   {
     "id": "solver-numpy",
     "title": "NumPy Solver (Pyodide)",
-    "description": "HyperbolicSolver via Pyodide \u2014 runs in the browser, always available.",
+    "description": "Runs in the browser via Pyodide — always available, no server needed.\n\nSupports: HyperbolicSolver, FreeSurfaceFlowSolver, IMEXSolver.",
     "requires_tag": "numpy",
-    "template": "# NumPy solver \u2014 runs locally via Pyodide\ndt = 0.001\nt_end = 1.0"
+    "class": "zoomy_core.fvm.solver_numpy.HyperbolicSolver",
+    "init": {"time_end": 0.1, "reconstruction_order": 1},
+    "template": "from zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver\nimport zoomy_core.fvm.timestepping as ts\n\nsolver = FreeSurfaceFlowSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    reconstruction_order=1,\n)\nQ, Qaux = solver.solve(mesh, model, write_output=False)"
   },
   {
     "id": "solver-jax",
@@ -12,30 +14,9 @@
     "description": "GPU-accelerated JAX solver via Docker backend.",
     "requires_tag": "jax",
     "params": {
-      "time_end": {
-        "type": "Number",
-        "default": 0.1,
-        "bounds": [
-          0,
-          null
-        ]
-      },
-      "CFL": {
-        "type": "Number",
-        "default": 0.45,
-        "bounds": [
-          0.01,
-          0.99
-        ]
-      },
-      "reconstruction_order": {
-        "type": "Integer",
-        "default": 1,
-        "bounds": [
-          1,
-          2
-        ]
-      }
+      "time_end": {"type": "Number", "default": 0.1, "bounds": [0, null]},
+      "CFL": {"type": "Number", "default": 0.45, "bounds": [0.01, 0.99]},
+      "reconstruction_order": {"type": "Integer", "default": 1, "bounds": [1, 2]}
     }
   },
   {
@@ -44,22 +25,9 @@
     "description": "Block-structured AMR solver via Docker backend.",
     "requires_tag": "amrex",
     "params": {
-      "time_end": {
-        "type": "Number",
-        "default": 0.1
-      },
-      "CFL": {
-        "type": "Number",
-        "default": 0.45
-      },
-      "n_levels": {
-        "type": "Integer",
-        "default": 1,
-        "bounds": [
-          1,
-          4
-        ]
-      }
+      "time_end": {"type": "Number", "default": 0.1},
+      "CFL": {"type": "Number", "default": 0.45},
+      "n_levels": {"type": "Integer", "default": 1, "bounds": [1, 4]}
     }
   },
   {
@@ -68,14 +36,8 @@
     "description": "PETSc DMPlex unstructured solver via Docker backend.",
     "requires_tag": "dmplex",
     "params": {
-      "time_end": {
-        "type": "Number",
-        "default": 0.1
-      },
-      "CFL": {
-        "type": "Number",
-        "default": 0.45
-      }
+      "time_end": {"type": "Number", "default": 0.1},
+      "CFL": {"type": "Number", "default": 0.45}
     }
   }
 ]
