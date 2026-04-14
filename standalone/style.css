@@ -282,8 +282,8 @@ button { margin-bottom: 0; }
 
 /* --- Card grid layout (CardManager layout:"grid") --- */
 .card-grid { display: grid; gap: 0.8rem; }
-.card-grid > .card { cursor: default; }
-.card-grid > .card:hover { border-color: var(--c-border); }
+.card-grid > .card { cursor: pointer; }
+.card-grid > .card:hover { border-color: var(--c-muted); }
 .card-grid > .card .card-header { padding: 0.8rem 0.8rem 0.3rem; }
 .card-grid > .card .card-title { font-weight: 300; }
 .card-grid > .card .card-header-actions { display: none; }

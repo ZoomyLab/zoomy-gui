@@ -575,10 +575,40 @@ function createCard(targetId, card, mgr, cardType) {
         if (hasDescription) {
             var descWrap = document.createElement("div");
             descWrap.className = "gear-desc-section";
-            descWrap.innerHTML =
-                '<div class="gear-desc-toggle" id="' + targetId + '-desc-toggle">Description &#9662;</div>' +
-                '<div class="gear-desc-editor" id="' + targetId + '-desc-ace" style="display:none"></div>';
+            var descHtml = '<div class="gear-desc-toggle" id="' + targetId + '-desc-toggle">Description &#9662;</div>';
+            if (hasClass && (cardType === "model" || cardType === "solver")) {
+                descHtml += '<button class="btn btn-sm" id="' + targetId + '-desc-fetch" style="margin:0.3rem 0">Fetch from model.describe()</button>';
+            }
+            descHtml += '<div class="gear-desc-editor" id="' + targetId + '-desc-ace" style="display:none"></div>';
+            descWrap.innerHTML = descHtml;
             paramsDiv.appendChild(descWrap);
+
+            if (hasClass && document.getElementById(targetId + "-desc-fetch")) {
+                document.getElementById(targetId + "-desc-fetch").onclick = function () {
+                    this.textContent = "Loading...";
+                    this.disabled = true;
+                    var btn = this;
+                    var msgId = "desc-" + Date.now();
+                    _pyWorker.postMessage({ cmd: "describe_model", id: msgId, class_path: card["class"], init: card.init || {} });
+                    var handler = function (ev) {
+                        if (ev.data.id !== msgId) return;
+                        _pyWorker.removeEventListener("message", handler);
+                        btn.textContent = "Fetch from model.describe()";
+                        btn.disabled = false;
+                        if (ev.data.type === "result") {
+                            cState.description = ev.data.data;
+                            var descEl = container.querySelector(".card-description");
+                            if (descEl) {
+                                descEl.innerHTML = ev.data.data;
+                                if (window.renderMathInElement) renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
+                            }
+                        } else {
+                            logDebug("error", "describe_model failed: " + (ev.data.error || "unknown"));
+                        }
+                    };
+                    _pyWorker.addEventListener("message", handler);
+                };
+            }
 
             document.getElementById(targetId + "-desc-toggle").onclick = async function () {
                 var editorDiv = document.getElementById(targetId + "-desc-ace");
