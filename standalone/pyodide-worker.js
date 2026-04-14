@@ -81,6 +81,23 @@ onmessage = async function (e) {
             await installExec();
             var result = py.globals.get("process_code")(msg.code);
             postMessage({ type: "result", id: msg.id, data: result });
+
+        } else if (msg.cmd === "describe_model") {
+            await installParam();
+            var descCode = "def _describe_model(class_path, init_kwargs):\n" +
+                "    mod_path, cls_name = class_path.rsplit('.', 1)\n" +
+                "    mod = __import__(mod_path, fromlist=[cls_name])\n" +
+                "    cls = getattr(mod, cls_name)\n" +
+                "    try:\n" +
+                "        m = cls(**init_kwargs) if init_kwargs else cls()\n" +
+                "        if hasattr(m, 'describe'):\n" +
+                "            return str(m.describe())\n" +
+                "        return cls.__doc__ or cls.__name__\n" +
+                "    except Exception as e:\n" +
+                "        return str(e)\n";
+            await py.runPythonAsync(descCode);
+            var desc = py.globals.get("_describe_model")(msg.class_path, py.toPy(msg.init || {}));
+            postMessage({ type: "result", id: msg.id, data: desc });
         }
     } catch (err) {
         postMessage({ type: "error", id: msg.id, error: err.message || String(err) });
