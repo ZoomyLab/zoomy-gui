@@ -51,6 +51,7 @@ _pyWorker.onmessage = function (e) {
         return;
     }
     if (msg.type === "log") {
+        logDebug(msg.level || "info", "[Worker] " + msg.msg);
         if (msg.msg.indexOf("Loading") === 0 || msg.msg.indexOf("Installing") === 0) showToast(msg.msg);
         return;
     }
@@ -599,29 +600,25 @@ function createCard(targetId, card, mgr, cardType) {
             paramsDiv.appendChild(descWrap);
 
             if (hasClass && document.getElementById(targetId + "-desc-fetch")) {
-                document.getElementById(targetId + "-desc-fetch").onclick = function () {
+                document.getElementById(targetId + "-desc-fetch").onclick = async function () {
                     this.textContent = "Loading...";
                     this.disabled = true;
                     var btn = this;
-                    var msgId = "desc-" + Date.now();
-                    _pyWorker.postMessage({ cmd: "describe_model", id: msgId, class_path: card["class"], init: card.init || {} });
-                    var handler = function (ev) {
-                        if (ev.data.id !== msgId) return;
-                        _pyWorker.removeEventListener("message", handler);
-                        btn.textContent = "Fetch from model.describe()";
-                        btn.disabled = false;
-                        if (ev.data.type === "result") {
-                            cState.description = ev.data.data;
-                            var descEl = container.querySelector(".card-description");
-                            if (descEl) {
-                                descEl.innerHTML = ev.data.data;
-                                if (window.renderMathInElement) renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
-                            }
-                        } else {
-                            logDebug("error", "describe_model failed: " + (ev.data.error || "unknown"));
+                    logDebug("info", "Fetching describe() for " + card["class"] + "...");
+                    try {
+                        var desc = await pyCall("describe_model", { class_path: card["class"], init: card.init || {} });
+                        logDebug("info", "describe() returned " + (desc ? desc.length : 0) + " chars");
+                        cState.description = desc;
+                        var descEl = container.querySelector(".card-description");
+                        if (descEl) {
+                            descEl.innerHTML = miniMarkdown(desc);
+                            if (window.renderMathInElement) renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
                         }
-                    };
-                    _pyWorker.addEventListener("message", handler);
+                    } catch (err) {
+                        logDebug("error", "describe_model failed: " + err.message);
+                    }
+                    btn.textContent = "Fetch from model.describe()";
+                    btn.disabled = false;
                 };
             }
 
