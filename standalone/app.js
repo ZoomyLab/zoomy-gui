@@ -591,7 +591,7 @@ function createCard(targetId, card, mgr, cardType) {
             var descWrap = document.createElement("div");
             descWrap.className = "gear-desc-section";
             var descHtml = '<div class="gear-desc-toggle" id="' + targetId + '-desc-toggle">Description &#9662;</div>';
-            if (hasClass && (cardType === "model" || cardType === "solver")) {
+            if (hasClass && cardType === "model") {
                 descHtml += '<button class="btn btn-sm" id="' + targetId + '-desc-fetch" style="margin:0.3rem 0">Fetch from model.describe()</button>';
             }
             descHtml += '<div class="gear-desc-editor" id="' + targetId + '-desc-ace" style="display:none"></div>';
@@ -1064,63 +1064,26 @@ document.addEventListener("DOMContentLoaded", function () {
 
         var tag = solverCard.requires_tag || "numpy";
 
-        /* Pyodide (in-browser numpy): build Python script and run in web worker */
+        /* Pyodide (in-browser numpy): concatenate editor code from all 3 cards */
         if (tag === "numpy" && !ZoomyBackend.getUrlForTag("numpy")) {
             var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
             var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
+            var solverState = getCardState("card-" + solverCard.id, solverCard, "solver", "");
 
-            /* Substitute template placeholders {key} with init values */
+            /* Substitute {key} placeholders with init values */
             function fillTemplate(tmpl, init) {
                 if (!tmpl || !init) return tmpl || "";
                 return tmpl.replace(/\{(\w+)\}/g, function (_, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; });
             }
 
-            /* Build the full simulation script */
-            var modelCode = modelState.code || fillTemplate(modelCard.template, modelCard.init) || "";
-            var meshCode = fillTemplate(meshState.code || meshCard.template || "", meshCard.init);
-
-            var code = "import sys, numpy as np\n";
-            code += "from loguru import logger; logger.remove(); logger.add(sys.stdout, level='INFO')\n";
-            code += modelCode + "\n";
-
-            /* Add default IC/BCs if model code doesn't set them */
-            if (modelCode.indexOf("initial_conditions") === -1) {
-                code += "import zoomy_core.model.boundary_conditions as BC\n";
-                code += "import zoomy_core.model.initial_conditions as IC\n";
-                code += "nv = model.n_variables\n";
-                code += "def _default_ic(x):\n";
-                code += "    Q = np.zeros(nv)\n";
-                code += "    if nv >= 2: Q[1] = 1.0  # h=1\n";
-                code += "    return Q\n";
-                code += "model.initial_conditions = IC.UserFunction(function=_default_ic)\n";
-                code += "model.boundary_conditions = BC.BoundaryConditions([\n";
-                code += "    BC.Extrapolation(tag='left'), BC.Extrapolation(tag='right')])\n";
-            }
-
-            code += meshCode + "\n";
-
-            /* Solver — use FreeSurfaceFlowSolver for models with h/b, else HyperbolicSolver */
-            code += "import zoomy_core.fvm.timestepping as ts\n";
-            code += "vkeys = list(model.variables.keys()) if hasattr(model.variables, 'keys') else []\n";
-            code += "if 'h' in vkeys and 'b' in vkeys:\n";
-            code += "    from zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver as _Solver\n";
-            code += "else:\n";
-            code += "    from zoomy_core.fvm.solver_numpy import HyperbolicSolver as _Solver\n";
-            code += "solver = _Solver(time_end=0.1, compute_dt=ts.adaptive(CFL=0.3))\n";
-            code += "Q, Qaux = solver.solve(mesh, model, write_output=False)\n";
-            code += "print('Done:', Q.shape[0], 'variables,', mesh.n_inner_cells, 'cells')\n";
-
-            /* Simple result plot */
-            code += "import matplotlib.pyplot as plt\n";
-            code += "from zoomy_core.mesh import ensure_lsq_mesh\n";
-            code += "lsq = ensure_lsq_mesh(mesh, model)\n";
-            code += "nc = lsq.n_inner_cells; xc = lsq.cell_centers[0, :nc]\n";
-            code += "fig, ax = plt.subplots(figsize=(8, 4))\n";
-            code += "for v in range(min(Q.shape[0], 4)):\n";
-            code += "    vn = list(model.variables.keys())[v] if hasattr(model.variables, 'keys') else str(v)\n";
-            code += "    ax.plot(xc, Q[v, :nc], label=vn)\n";
-            code += "ax.legend(); ax.grid(True, alpha=0.3)\n";
-            code += "ax.set_xlabel('x'); ax.set_title('Simulation result')\n";
+            /* The script is: model.py + mesh.py + solver.py — exactly what the server runs */
+            var code = "import sys\nfrom loguru import logger; logger.remove(); logger.add(sys.stdout, level='INFO')\n\n";
+            code += "# --- Model ---\n";
+            code += fillTemplate(modelState.code || modelCard.template || "", modelCard.init) + "\n\n";
+            code += "# --- Mesh ---\n";
+            code += fillTemplate(meshState.code || meshCard.template || "", meshCard.init) + "\n\n";
+            code += "# --- Solver ---\n";
+            code += fillTemplate(solverState.code || solverCard.template || "", solverCard.init) + "\n";
 
             logDebug("info", "Running locally via Pyodide...");
             logDebug("info", "Code:\n" + code.substring(0, 500));
