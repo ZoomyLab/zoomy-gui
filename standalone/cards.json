@@ -10,64 +10,7 @@
       "title": "Model",
       "type": "cards",
       "cardType": "model",
-      "cards": [
-        {
-          "id": "sme-l0",
-          "title": "SWE (SME L0)",
-          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
-          "init": {"level": 0},
-          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\n\nmodel = SMEInviscid(level=0)\n",
-          "description": "Shallow water equations (depth-averaged, inviscid).<br>$$\\partial_t \\begin{pmatrix} h \\\\ hu \\end{pmatrix} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}\\nabla\\mathbf{Q} = 0$$"
-        },
-        {
-          "id": "sme-l1",
-          "title": "SME L1",
-          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
-          "init": {"level": 1},
-          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=1)\n",
-          "description": "Shallow Moment Equations level 1 — vertical velocity profile.<br>$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}(\\mathbf{Q})\\nabla\\mathbf{Q} = \\mathbf{S}(\\mathbf{Q})$$"
-        },
-        {
-          "id": "sme-l2",
-          "title": "SME L2",
-          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
-          "init": {"level": 2},
-          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=2)\n",
-          "description": "Shallow Moment Equations level 2 — higher-order vertical profile."
-        },
-        {
-          "id": "sme-viscous",
-          "title": "SME (Newtonian)",
-          "class": "zoomy_core.model.models.sme_model.SMEModel",
-          "init": {"level": 1},
-          "template": "from zoomy_core.model.models.sme_model import SMEModel\n\nmodel = SMEModel(level=1)\n",
-          "description": "Shallow Moment Equations with Newtonian viscosity and Navier slip."
-        },
-        {
-          "id": "vam",
-          "title": "VAM",
-          "class": "zoomy_core.model.models.vam_model.VAMModel",
-          "init": {"level": 1},
-          "template": "from zoomy_core.model.models.vam_model import VAMModel\n\nmodel = VAMModel(level=1, eigenvalue_mode='numerical')\n",
-          "description": "Viscous Alignment Model — non-hydrostatic shallow moments with vertical velocity."
-        },
-        {
-          "id": "advection",
-          "title": "Scalar Advection",
-          "class": "zoomy_core.model.models.advection_model.ScalarAdvection",
-          "init": {"dimension": 1},
-          "template": "from zoomy_core.model.models.advection_model import ScalarAdvection\nimport numpy as np\n\nmodel = ScalarAdvection(dimension=1)\nmodel.parameter_values = np.array([1.0])\n",
-          "description": "Linear scalar advection.<br>$$\\partial_t u + a \\partial_x u = 0$$"
-        },
-        {
-          "id": "advdiff",
-          "title": "Advection-Diffusion",
-          "class": "zoomy_core.model.models.advection_model.ScalarAdvectionDiffusion",
-          "init": {"dimension": 1, "nu": 0.01},
-          "template": "from zoomy_core.model.models.advection_model import ScalarAdvectionDiffusion\nimport numpy as np\n\nmodel = ScalarAdvectionDiffusion(dimension=1, nu=0.01)\nmodel.parameter_values = np.array([1.0, 0.01])\n",
-          "description": "Scalar advection-diffusion (IMEX time integration).<br>$$\\partial_t u + a \\partial_x u = \\nu \\partial_{xx} u$$"
-        }
-      ]
+      "cards": []
     },
     {
       "id": "mesh",
@@ -80,19 +23,19 @@
           "title": "1D Uniform Mesh",
           "init": {"x_min": 0.0, "x_max": 10.0, "n_cells": 100},
           "description": "Uniform 1D mesh via BaseMesh.create_1d.",
-          "template": "from zoomy_core.mesh import BaseMesh\n\nmesh = BaseMesh.create_1d(domain=({x_min}, {x_max}), n_inner_cells={n_cells})\n"
+          "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_1d(domain=({x_min}, {x_max}), n_inner_cells={n_cells})\n"
         },
         {
           "id": "mesh-2d",
           "title": "2D Uniform Mesh",
           "init": {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "nx": 50, "ny": 50},
           "description": "Uniform 2D quad mesh via BaseMesh.create_2d.",
-          "template": "from zoomy_core.mesh import BaseMesh\n\nmesh = BaseMesh.create_2d(({x_min}, {x_max}, {y_min}, {y_max}), nx={nx}, ny={ny})\n"
+          "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_2d(({x_min}, {x_max}, {y_min}, {y_max}), nx={nx}, ny={ny})\n"
         },
         {
           "id": "mesh-channel",
           "title": "Channel (Quad 2D)",
-          "description": "Pre-built 2D quad channel mesh.<br><img src='previews/mesh_channel_quad_2d_mesh.svg' alt='channel mesh'>",
+          "description": "Pre-built 2D quad channel mesh.",
           "mesh_sizes": ["coarse"]
         }
       ]
@@ -104,40 +47,36 @@
       "cardType": "solver",
       "cards": [
         {
-          "id": "solver-hyperbolic",
-          "title": "Hyperbolic Solver",
-          "class": "zoomy_core.fvm.solver_numpy.HyperbolicSolver",
-          "init": {"time_end": 0.1, "reconstruction_order": 1},
-          "description": "Explicit FVM with Rusanov flux. O1 (constant) or O2 (MUSCL+Venkatakrishnan).",
-          "requires_tag": "numpy"
-        },
-        {
-          "id": "solver-fsf",
-          "title": "Free-Surface Solver",
-          "class": "zoomy_core.fvm.solver_numpy.FreeSurfaceFlowSolver",
-          "init": {"time_end": 0.1, "reconstruction_order": 1},
-          "description": "Hyperbolic solver with hydrostatic reconstruction for SWE/SME/VAM.",
-          "requires_tag": "numpy"
-        },
-        {
-          "id": "solver-imex",
-          "title": "IMEX Solver",
-          "class": "zoomy_core.fvm.solver_imex_numpy.IMEXSolver",
-          "init": {"time_end": 0.1, "reconstruction_order": 1},
-          "description": "IMEX: explicit convection + implicit diffusion/source. Crank-Nicolson + RK2.",
-          "requires_tag": "numpy"
-        },
-        {
           "id": "solver-jax",
           "title": "JAX Solver",
           "description": "GPU-accelerated JAX solver via Docker backend.",
-          "requires_tag": "jax"
+          "requires_tag": "jax",
+          "params": {
+            "time_end": {"type": "Number", "default": 0.1, "bounds": [0, null]},
+            "CFL": {"type": "Number", "default": 0.45, "bounds": [0.01, 0.99]},
+            "reconstruction_order": {"type": "Integer", "default": 1, "bounds": [1, 2]}
+          }
         },
         {
           "id": "solver-amrex",
           "title": "AMReX Solver",
           "description": "Block-structured AMR solver via Docker backend.",
-          "requires_tag": "amrex"
+          "requires_tag": "amrex",
+          "params": {
+            "time_end": {"type": "Number", "default": 0.1},
+            "CFL": {"type": "Number", "default": 0.45},
+            "n_levels": {"type": "Integer", "default": 1, "bounds": [1, 4]}
+          }
+        },
+        {
+          "id": "solver-dmplex",
+          "title": "DMPlex Solver",
+          "description": "PETSc DMPlex unstructured solver via Docker backend.",
+          "requires_tag": "dmplex",
+          "params": {
+            "time_end": {"type": "Number", "default": 0.1},
+            "CFL": {"type": "Number", "default": 0.45}
+          }
         }
       ]
     },
@@ -155,7 +94,7 @@
           "id": "vis-empty-mpl",
           "subtab": "matplotlib",
           "title": "Empty Figure",
-          "template": "import matplotlib.pyplot as plt\n\nfig, ax = plt.subplots(1, 1, figsize=(6, 4))\nax.set_title('Empty View')\nax.set_xlabel('x')\nax.set_ylabel('y')",
+          "template": "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(1, 1, figsize=(6, 4))\nax.set_title('Empty View')",
           "description": "Empty matplotlib subplots."
         },
         {
@@ -164,8 +103,7 @@
           "title": "Sine Wave",
           "snippet": "snippets/sine_wave.py",
           "preview": "previews/sine_wave.svg",
-          "description": "Interactive sine wave plot.",
-          "has_timeline": false
+          "description": "Interactive sine wave plot."
         },
         {
           "id": "vis-topo",
@@ -175,14 +113,6 @@
           "preview": "previews/topo.svg",
           "description": "3D topography mesh.",
           "has_timeline": true
-        },
-        {
-          "id": "vis-cone",
-          "subtab": "pyvista",
-          "title": "Cone 3D",
-          "snippet": "snippets/cone_3d.py",
-          "preview": "previews/cone_3d.svg",
-          "description": "3D cone vector field."
         }
       ]
     }
