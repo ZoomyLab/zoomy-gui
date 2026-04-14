@@ -467,7 +467,9 @@ function createCard(targetId, card, mgr, cardType) {
     var hasRefresh  = cardType === "vis";
     var hasSizes    = cardType === "mesh" && card.mesh_sizes && card.mesh_sizes.length > 0;
     var hasTimeline = cardType === "vis" && !!card.has_timeline;
-    var hasPreview  = !!card.preview;
+    /* Preview: explicit path or auto-detect by convention previews/{id}.svg */
+    if (!card.preview) card._autoPreview = "previews/" + card.id + ".svg";
+    var hasPreview  = !!card.preview || !!card._autoPreview;
     var hasMaximize = cardType === "model" || cardType === "solver" || cardType === "vis";
     var hasClass    = !!card["class"];
     var hasLocal    = !!card._localParams;
@@ -492,8 +494,9 @@ function createCard(targetId, card, mgr, cardType) {
     html += '</div></div>';
 
     if (hasPreview || hasRefresh) {
+        var previewSrc = card.preview || card._autoPreview;
         html += '<div class="card-preview" id="' + targetId + '-pw">';
-        if (hasPreview) html += '<img id="' + targetId + '-preview" src="' + card.preview + '">';
+        if (previewSrc) html += '<img id="' + targetId + '-preview" src="' + previewSrc + '" onerror="this.parentElement.style.display=\'none\'">';
         html += '<div class="card-preview-interactive" id="' + targetId + '-interactive"></div>';
         html += '</div>';
     }
