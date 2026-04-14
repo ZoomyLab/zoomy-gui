@@ -10,7 +10,64 @@
       "title": "Model",
       "type": "cards",
       "cardType": "model",
-      "cards": []
+      "cards": [
+        {
+          "id": "sme-l0",
+          "title": "SWE (SME L0)",
+          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+          "init": {"level": 0},
+          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\n\nmodel = SMEInviscid(level=0)\n",
+          "description": "Shallow water equations (depth-averaged, inviscid).<br>$$\\partial_t \\begin{pmatrix} h \\\\ hu \\end{pmatrix} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}\\nabla\\mathbf{Q} = 0$$"
+        },
+        {
+          "id": "sme-l1",
+          "title": "SME L1",
+          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+          "init": {"level": 1},
+          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=1)\n",
+          "description": "Shallow Moment Equations level 1 — vertical velocity profile.<br>$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}(\\mathbf{Q})\\nabla\\mathbf{Q} = \\mathbf{S}(\\mathbf{Q})$$"
+        },
+        {
+          "id": "sme-l2",
+          "title": "SME L2",
+          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+          "init": {"level": 2},
+          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=2)\n",
+          "description": "Shallow Moment Equations level 2 — higher-order vertical profile."
+        },
+        {
+          "id": "sme-viscous",
+          "title": "SME (Newtonian)",
+          "class": "zoomy_core.model.models.sme_model.SMEModel",
+          "init": {"level": 1},
+          "template": "from zoomy_core.model.models.sme_model import SMEModel\n\nmodel = SMEModel(level=1)\n",
+          "description": "Shallow Moment Equations with Newtonian viscosity and Navier slip."
+        },
+        {
+          "id": "vam",
+          "title": "VAM",
+          "class": "zoomy_core.model.models.vam_model.VAMModel",
+          "init": {"level": 1},
+          "template": "from zoomy_core.model.models.vam_model import VAMModel\n\nmodel = VAMModel(level=1, eigenvalue_mode='numerical')\n",
+          "description": "Viscous Alignment Model — non-hydrostatic shallow moments with vertical velocity."
+        },
+        {
+          "id": "advection",
+          "title": "Scalar Advection",
+          "class": "zoomy_core.model.models.advection_model.ScalarAdvection",
+          "init": {"dimension": 1},
+          "template": "from zoomy_core.model.models.advection_model import ScalarAdvection\nimport numpy as np\n\nmodel = ScalarAdvection(dimension=1)\nmodel.parameter_values = np.array([1.0])\n",
+          "description": "Linear scalar advection.<br>$$\\partial_t u + a \\partial_x u = 0$$"
+        },
+        {
+          "id": "advdiff",
+          "title": "Advection-Diffusion",
+          "class": "zoomy_core.model.models.advection_model.ScalarAdvectionDiffusion",
+          "init": {"dimension": 1, "nu": 0.01},
+          "template": "from zoomy_core.model.models.advection_model import ScalarAdvectionDiffusion\nimport numpy as np\n\nmodel = ScalarAdvectionDiffusion(dimension=1, nu=0.01)\nmodel.parameter_values = np.array([1.0, 0.01])\n",
+          "description": "Scalar advection-diffusion (IMEX time integration).<br>$$\\partial_t u + a \\partial_x u = \\nu \\partial_{xx} u$$"
+        }
+      ]
     },
     {
       "id": "mesh",
@@ -43,6 +100,12 @@
           "init": {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "z_min": 0.0, "z_max": 1.0, "nx": 10, "ny": 10, "nz": 10},
           "description": "Uniform 3D hex mesh",
           "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_3d(({x_min}, {x_max}, {y_min}, {y_max}, {z_min}, {z_max}), nx={nx}, ny={ny}, nz={nz})\n"
+        },
+        {
+          "id": "mesh-channel",
+          "title": "Channel (Quad 2D)",
+          "description": "Pre-built 2D quad channel mesh.",
+          "mesh_sizes": ["coarse"]
         }
       ]
     },
@@ -52,6 +115,13 @@
       "type": "cards",
       "cardType": "solver",
       "cards": [
+        {
+          "id": "solver-numpy",
+          "title": "NumPy Solver (Pyodide)",
+          "description": "HyperbolicSolver via Pyodide — runs in the browser, always available.",
+          "requires_tag": "numpy",
+          "template": "# NumPy solver — runs locally via Pyodide\ndt = 0.001\nt_end = 1.0"
+        },
         {
           "id": "solver-jax",
           "title": "JAX Solver",
