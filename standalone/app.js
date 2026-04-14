@@ -604,6 +604,17 @@ function createCard(targetId, card, mgr, cardType) {
             descWrap.innerHTML = descHtml;
             paramsDiv.appendChild(descWrap);
 
+            /* Shared: render description from markdown text */
+            var _descEditor = null;
+            function _renderDescription(mdText) {
+                cState.description = mdText;
+                var descEl = container.querySelector(".card-description");
+                if (descEl) {
+                    descEl.innerHTML = miniMarkdown(mdText);
+                    if (window.renderMathInElement) renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
+                }
+            }
+
             if (hasClass && document.getElementById(targetId + "-desc-fetch")) {
                 document.getElementById(targetId + "-desc-fetch").onclick = async function () {
                     this.textContent = "Loading...";
@@ -613,11 +624,11 @@ function createCard(targetId, card, mgr, cardType) {
                     try {
                         var desc = await pyCall("describe_model", { class_path: card["class"], init: card.init || {} });
                         logDebug("info", "describe() returned " + (desc ? desc.length : 0) + " chars");
-                        cState.description = desc;
-                        var descEl = container.querySelector(".card-description");
-                        if (descEl) {
-                            descEl.innerHTML = miniMarkdown(desc);
-                            if (window.renderMathInElement) renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
+                        /* Put into editor (if open) — the editor's on("change") triggers render */
+                        if (_descEditor) {
+                            _descEditor.setValue(desc, -1);
+                        } else {
+                            _renderDescription(desc);
                         }
                     } catch (err) {
                         logDebug("error", "describe_model failed: " + err.message);
@@ -634,22 +645,13 @@ function createCard(targetId, card, mgr, cardType) {
                     this.innerHTML = "Description &#9652;";
                     if (!descEditorReady) {
                         await ensureAce();
-                        var ed = makeAceEditor(targetId + "-desc-ace", cState.description || "");
-                        ed.session.setMode("ace/mode/html");
-                        ed.setOptions({ maxLines: 20, minLines: 10 });
-                        ed.setTheme("ace/theme/chrome");
-                        ed.renderer.setShowGutter(false);
-                        ed.session.on("change", function () {
-                            cState.description = ed.getValue();
-                            var descEl = container.querySelector(".card-description");
-                            if (descEl) {
-                                descEl.innerHTML = ed.getValue();
-                                if (window.renderMathInElement) {
-                                    renderMathInElement(descEl, {
-                                        delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}]
-                                    });
-                                }
-                            }
+                        _descEditor = makeAceEditor(targetId + "-desc-ace", cState.description || "");
+                        _descEditor.session.setMode("ace/mode/markdown");
+                        _descEditor.setOptions({ maxLines: 20, minLines: 10 });
+                        _descEditor.setTheme("ace/theme/chrome");
+                        _descEditor.renderer.setShowGutter(false);
+                        _descEditor.session.on("change", function () {
+                            _renderDescription(_descEditor.getValue());
                         });
                         descEditorReady = true;
                     }
