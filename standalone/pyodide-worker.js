@@ -29,10 +29,8 @@ async function installParam() {
 
 async function installExec() {
     if (execReady) return;
-    await initPyodide();
-    postMessage({ type: "log", level: "info", msg: "Installing zoomy-core (numpy bundled)..." });
-    var mp = py.pyimport("micropip");
-    await mp.install(["zoomy-core"]);
+    await installParam();  /* ensures zoomy-core + numpy + scipy are installed */
+    postMessage({ type: "log", level: "info", msg: "Loading execution engine..." });
     var code = await fetch("engine.py").then(function (r) { return r.text(); });
     await py.runPythonAsync(code);
     execReady = true;
