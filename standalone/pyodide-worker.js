@@ -136,15 +136,14 @@ onmessage = async function (e) {
         }
         var count = 0;
         for (var j = 0; j < allCards.length; j++) {
-                var c = allCards[j];
-                if (c["class"]) {
-                    var key = c["class"] + "|" + JSON.stringify(c.init || {});
-                    if (!paramCache[key]) {
-                        try {
-                            paramCache[key] = py.globals.get("extract_param_schema")(c["class"], py.toPy(c.init || {}));
-                            count++;
-                        } catch (e) {}
-                    }
+            var c = allCards[j];
+            if (c["class"]) {
+                var key = c["class"] + "|" + JSON.stringify(c.init || {});
+                if (!paramCache[key]) {
+                    try {
+                        paramCache[key] = py.globals.get("extract_param_schema")(c["class"], py.toPy(c.init || {}));
+                        count++;
+                    } catch (e) {}
                 }
             }
         }
