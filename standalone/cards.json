@@ -12,20 +12,60 @@
       "cardType": "model",
       "cards": [
         {
-          "id": "smt",
-          "title": "Shallow Moments (Topo)",
-          "class": "zoomy_core.model.models.shallow_moments_topo.ShallowMomentsTopo",
-          "init": {"level": 2, "dimension": 2},
-          "template": "from zoomy_core.model.models.shallow_moments_topo import ShallowMomentsTopo\n\nclass UserModel(ShallowMomentsTopo):\n    pass",
-          "description": "Galerkin-projected shallow water equations.<br>$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}(\\mathbf{Q}) \\nabla \\mathbf{Q} = \\mathbf{S}(\\mathbf{Q})$$"
+          "id": "sme-l0",
+          "title": "SWE (SME L0)",
+          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+          "init": {"level": 0},
+          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\n\nmodel = SMEInviscid(level=0)\n",
+          "description": "Shallow water equations (depth-averaged, inviscid).<br>$$\\partial_t \\begin{pmatrix} h \\\\ hu \\end{pmatrix} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}\\nabla\\mathbf{Q} = 0$$"
         },
         {
-          "id": "swt",
-          "title": "Shallow Water (Topo)",
-          "class": "zoomy_core.model.models.shallow_water_topo.ShallowWaterEquationsWithTopo",
-          "init": {"dimension": 2},
-          "template": "from zoomy_core.model.models.shallow_water_topo import ShallowWaterEquationsWithTopo\n\nclass UserModel(ShallowWaterEquationsWithTopo):\n    pass",
-          "description": "Classical Saint-Venant equations.<br>$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) = \\mathbf{S}(\\mathbf{Q})$$"
+          "id": "sme-l1",
+          "title": "SME L1",
+          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+          "init": {"level": 1},
+          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=1)\n",
+          "description": "Shallow Moment Equations level 1 — vertical velocity profile.<br>$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}(\\mathbf{Q})\\nabla\\mathbf{Q} = \\mathbf{S}(\\mathbf{Q})$$"
+        },
+        {
+          "id": "sme-l2",
+          "title": "SME L2",
+          "class": "zoomy_core.model.models.sme_model.SMEInviscid",
+          "init": {"level": 2},
+          "template": "from zoomy_core.model.models.sme_model import SMEInviscid\n\nmodel = SMEInviscid(level=2)\n",
+          "description": "Shallow Moment Equations level 2 — higher-order vertical profile."
+        },
+        {
+          "id": "sme-viscous",
+          "title": "SME (Newtonian)",
+          "class": "zoomy_core.model.models.sme_model.SMEModel",
+          "init": {"level": 1},
+          "template": "from zoomy_core.model.models.sme_model import SMEModel\n\nmodel = SMEModel(level=1)\n",
+          "description": "Shallow Moment Equations with Newtonian viscosity and Navier slip."
+        },
+        {
+          "id": "vam",
+          "title": "VAM",
+          "class": "zoomy_core.model.models.vam_model.VAMModel",
+          "init": {"level": 1},
+          "template": "from zoomy_core.model.models.vam_model import VAMModel\n\nmodel = VAMModel(level=1, eigenvalue_mode='numerical')\n",
+          "description": "Viscous Alignment Model — non-hydrostatic shallow moments with vertical velocity."
+        },
+        {
+          "id": "advection",
+          "title": "Scalar Advection",
+          "class": "zoomy_core.model.models.advection_model.ScalarAdvection",
+          "init": {"dimension": 1},
+          "template": "from zoomy_core.model.models.advection_model import ScalarAdvection\nimport numpy as np\n\nmodel = ScalarAdvection(dimension=1)\nmodel.parameter_values = np.array([1.0])\n",
+          "description": "Linear scalar advection.<br>$$\\partial_t u + a \\partial_x u = 0$$"
+        },
+        {
+          "id": "advdiff",
+          "title": "Advection-Diffusion",
+          "class": "zoomy_core.model.models.advection_model.ScalarAdvectionDiffusion",
+          "init": {"dimension": 1, "nu": 0.01},
+          "template": "from zoomy_core.model.models.advection_model import ScalarAdvectionDiffusion\nimport numpy as np\n\nmodel = ScalarAdvectionDiffusion(dimension=1, nu=0.01)\nmodel.parameter_values = np.array([1.0, 0.01])\n",
+          "description": "Scalar advection-diffusion (IMEX time integration).<br>$$\\partial_t u + a \\partial_x u = \\nu \\partial_{xx} u$$"
         }
       ]
     },
@@ -36,24 +76,24 @@
       "cardType": "mesh",
       "cards": [
         {
+          "id": "mesh-1d",
+          "title": "1D Uniform Mesh",
+          "init": {"x_min": 0.0, "x_max": 10.0, "n_cells": 100},
+          "description": "Uniform 1D mesh via BaseMesh.create_1d.",
+          "template": "from zoomy_core.mesh import BaseMesh\n\nmesh = BaseMesh.create_1d(domain=({x_min}, {x_max}), n_inner_cells={n_cells})\n"
+        },
+        {
+          "id": "mesh-2d",
+          "title": "2D Uniform Mesh",
+          "init": {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "nx": 50, "ny": 50},
+          "description": "Uniform 2D quad mesh via BaseMesh.create_2d.",
+          "template": "from zoomy_core.mesh import BaseMesh\n\nmesh = BaseMesh.create_2d(({x_min}, {x_max}, {y_min}, {y_max}), nx={nx}, ny={ny})\n"
+        },
+        {
           "id": "mesh-channel",
           "title": "Channel (Quad 2D)",
           "description": "Pre-built 2D quad channel mesh.<br><img src='previews/mesh_channel_quad_2d_mesh.svg' alt='channel mesh'>",
           "mesh_sizes": ["coarse"]
-        },
-        {
-          "id": "mesh-1d",
-          "title": "Create 1D Mesh",
-          "init": {"x_min": 0.0, "x_max": 1.0, "n_cells": 100},
-          "description": "Uniform 1D mesh from bounding box and resolution.",
-          "template": "import numpy as np\n\nx_min, x_max, n_cells = {x_min}, {x_max}, {n_cells}\ndx = (x_max - x_min) / n_cells\nprint(f'1D mesh: {n_cells} cells, dx={dx:.4f}')"
-        },
-        {
-          "id": "mesh-2d",
-          "title": "Create 2D Mesh",
-          "init": {"x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "nx": 50, "ny": 50},
-          "description": "Uniform 2D mesh from bounding box and resolution.",
-          "template": "import numpy as np\n\nx_min, x_max, nx = {x_min}, {x_max}, {nx}\ny_min, y_max, ny = {y_min}, {y_max}, {ny}\ndx, dy = (x_max-x_min)/nx, (y_max-y_min)/ny\nprint(f'2D mesh: {nx}x{ny}, dx={dx:.4f}, dy={dy:.4f}')"
         }
       ]
     },
@@ -64,11 +104,28 @@
       "cardType": "solver",
       "cards": [
         {
-          "id": "solver-numpy",
-          "title": "NumPy Solver",
-          "description": "HyperbolicSolver with NumPy backend. Available via Pyodide (browser) or Docker.",
-          "requires_tag": "numpy",
-          "template": "# NumPy solver\ndt = 0.001\nt_end = 1.0"
+          "id": "solver-hyperbolic",
+          "title": "Hyperbolic Solver",
+          "class": "zoomy_core.fvm.solver_numpy.HyperbolicSolver",
+          "init": {"time_end": 0.1, "reconstruction_order": 1},
+          "description": "Explicit FVM with Rusanov flux. O1 (constant) or O2 (MUSCL+Venkatakrishnan).",
+          "requires_tag": "numpy"
+        },
+        {
+          "id": "solver-fsf",
+          "title": "Free-Surface Solver",
+          "class": "zoomy_core.fvm.solver_numpy.FreeSurfaceFlowSolver",
+          "init": {"time_end": 0.1, "reconstruction_order": 1},
+          "description": "Hyperbolic solver with hydrostatic reconstruction for SWE/SME/VAM.",
+          "requires_tag": "numpy"
+        },
+        {
+          "id": "solver-imex",
+          "title": "IMEX Solver",
+          "class": "zoomy_core.fvm.solver_imex_numpy.IMEXSolver",
+          "init": {"time_end": 0.1, "reconstruction_order": 1},
+          "description": "IMEX: explicit convection + implicit diffusion/source. Crank-Nicolson + RK2.",
+          "requires_tag": "numpy"
         },
         {
           "id": "solver-jax",
