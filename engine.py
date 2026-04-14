@@ -37,9 +37,57 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NumpyEncoder, self).default(obj)
 
-# --- 2. Initialize Scope ---
+# --- 2. Rich display function (Jupyter-like output cells) ---
+
+class ZoomyDisplay:
+    """Rich output funnel. In Pyodide: sends to GUI output cells. In CPython: falls back to print."""
+
+    def __call__(self, obj=None, *, mermaid=None, latex=None, html=None):
+        if mermaid is not None:
+            self._emit({"mime": "text/x-mermaid", "content": str(mermaid)})
+        elif latex is not None:
+            self._emit({"mime": "text/x-latex", "content": str(latex)})
+        elif html is not None:
+            self._emit({"mime": "text/html", "content": str(html)})
+        elif obj is None:
+            return
+        elif hasattr(obj, "to_dict"):  # Plotly figure
+            self._emit({"mime": "application/vnd.plotly+json", "content": json.dumps(obj.to_dict(), cls=NumpyEncoder)})
+        elif hasattr(obj, "savefig"):  # Matplotlib figure
+            buf = io.BytesIO()
+            obj.savefig(buf, format="svg", bbox_inches="tight")
+            buf.seek(0)
+            self._emit({"mime": "image/svg+xml", "content": buf.read().decode("utf-8")})
+        elif hasattr(obj, "to_html"):  # pandas DataFrame
+            self._emit({"mime": "text/html", "content": obj.to_html()})
+        elif isinstance(obj, np.ndarray):
+            self._emit({"mime": "text/plain", "content": repr(obj)})
+        else:
+            self._emit({"mime": "text/plain", "content": str(obj)})
+
+    def _emit(self, cell):
+        if hasattr(sys, "_zoomy_display_callback"):
+            sys._zoomy_display_callback(cell)
+        else:
+            # Fallback for CPython / CLI
+            content = cell.get("content", "")
+            if cell.get("mime") == "text/x-mermaid":
+                print("[mermaid]", content[:200])
+            elif cell.get("mime") == "text/x-latex":
+                print("[latex]", content[:200])
+            else:
+                print(content[:500] if len(content) > 500 else content)
+
+display = ZoomyDisplay()
+
+# --- 3. Initialize Scope ---
 if not hasattr(sys, "_shallowflow_scope"):
     sys._shallowflow_scope = {"np": np}
+
+sys._shallowflow_scope["display"] = display
+sys._shallowflow_scope["_results"] = getattr(sys, "_zoomy_results", {})
+if not hasattr(sys, "_zoomy_results"):
+    sys._zoomy_results = sys._shallowflow_scope["_results"]
 
 def process_code(code_string):
     new_stdout = io.StringIO()

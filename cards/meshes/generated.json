@@ -5,7 +5,7 @@
     "source": "generated",
     "category": "Square",
     "description": "Square: Square / Mesh",
-    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/standalone/../../../meshes/square/mesh.msh",
+    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/../../meshes/square/mesh.msh",
     "preview": "previews/mesh-gen-square-mesh.svg"
   },
   {
@@ -14,7 +14,7 @@
     "source": "generated",
     "category": "Square",
     "description": "Square: Square / Mesh3D",
-    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/standalone/../../../meshes/square/mesh3d.msh",
+    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/../../meshes/square/mesh3d.msh",
     "preview": "previews/mesh-gen-square-mesh3d.svg"
   },
   {
@@ -23,7 +23,7 @@
     "source": "generated",
     "category": "Square",
     "description": "Square: Square / Mesh Triangular",
-    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/standalone/../../../meshes/square/mesh_triangular.msh",
+    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/../../meshes/square/mesh_triangular.msh",
     "preview": "previews/mesh-gen-square-mesh_triangular.svg"
   }
 ]

@@ -1,0 +1,28 @@
+{
+  "tutorials": [
+    {
+      "id": "getting-started",
+      "title": "Getting Started",
+      "description": "Three test cases: 1D dam break, 2D dam break, and scalar advection. Demonstrates multi-session workflow.",
+      "file": "tutorials/getting-started.zip",
+      "difficulty": "beginner",
+      "tags": ["swe", "advection", "1d", "2d", "numpy"]
+    },
+    {
+      "id": "dam-break-1d",
+      "title": "1D Dam Break (SWE)",
+      "description": "Classic Riemann problem for shallow water equations on a 1D domain.",
+      "file": "tutorials/dam-break-1d.zip",
+      "difficulty": "beginner",
+      "tags": ["swe", "1d", "numpy"]
+    },
+    {
+      "id": "dam-break-2d",
+      "title": "2D Dam Break (SWE)",
+      "description": "Two-dimensional dam break simulation with shallow water equations.",
+      "file": "tutorials/dam-break-2d.zip",
+      "difficulty": "intermediate",
+      "tags": ["swe", "2d", "numpy"]
+    }
+  ]
+}
