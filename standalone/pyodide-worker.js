@@ -43,6 +43,7 @@ var paramCache = {};
 
 onmessage = async function (e) {
     var msg = e.data;
+    postMessage({ type: "log", level: "info", msg: "Worker received: cmd=" + msg.cmd + " id=" + msg.id });
     try {
         if (msg.cmd === "init") {
             await initPyodide();
