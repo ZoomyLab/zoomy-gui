@@ -138,60 +138,186 @@ def plot_mesh(mesh_path, output_path):
         plot_mesh_2d(mesh_path, output_path)
 
 
-def main():
-    from zoomy_core.mesh.mesh_catalog import MeshCatalog
+MESHES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "meshes")
+BLACKLIST = {"old", "test"}
 
-    print("Fetching mesh catalog...")
-    catalog = MeshCatalog(auto_fetch=True)
+# Pretty category names
+CATEGORY_NAMES = {
+    "basic_shapes": "Basic Shapes",
+    "channels": "Channels",
+    "curved": "Curved Geometries",
+    "structural": "Structural",
+    "volumes": "3-D Volumes",
+    "complex": "Complex Assemblies",
+    "square": "Square",
+}
+
+
+def _generate_msh_from_geo(geo_path):
+    """Generate .msh from .geo using gmsh. Returns .msh path or None."""
+    import subprocess
+    msh_path = geo_path.replace(".geo", ".msh")
+    if os.path.exists(msh_path):
+        return msh_path
+    # Detect 2D vs 3D from filename
+    dim_flag = "-3" if "3d" in os.path.basename(geo_path).lower() else "-2"
+    try:
+        subprocess.run(
+            ["gmsh", dim_flag, geo_path, "-o", msh_path, "-format", "msh4"],
+            capture_output=True, timeout=60, check=True,
+        )
+        return msh_path
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"    gmsh failed: {e}")
+        return None
+
+
+def _scan_local_meshes():
+    """Walk the meshes/ directory, find all .geo/.msh files, return card entries."""
+    meshes_dir = os.path.normpath(MESHES_DIR)
+    if not os.path.isdir(meshes_dir):
+        print(f"Meshes directory not found: {meshes_dir}")
+        return []
+
+    entries = []  # (category, variant, msh_path)
+
+    for root, dirs, files in os.walk(meshes_dir):
+        # Skip blacklisted directories
+        dirs[:] = [d for d in dirs if d not in BLACKLIST]
+
+        for f in sorted(files):
+            if not f.endswith(".geo"):
+                continue
+
+            geo_path = os.path.join(root, f)
+            rel = os.path.relpath(root, meshes_dir)
+            parts = rel.split(os.sep)
+
+            # Top-level category is first directory
+            category = parts[0] if parts[0] != "." else ""
+            # Variant is the sub-path + filename
+            variant_parts = parts[1:] if len(parts) > 1 else []
+            variant_parts.append(f.replace(".geo", ""))
+            variant = "/".join(variant_parts)
+
+            # Try to find or generate .msh
+            msh_path = geo_path.replace(".geo", ".msh")
+            if not os.path.exists(msh_path):
+                print(f"  Generating {os.path.relpath(geo_path, meshes_dir)}...", end=" ")
+                msh_path = _generate_msh_from_geo(geo_path)
+                if msh_path:
+                    print("OK")
+                else:
+                    print("SKIP")
+                    continue
+            entries.append((category, variant, msh_path))
+
+    return entries
+
+
+def main():
     cards = []
 
-    for name in catalog.names():
-        entry = catalog.get(name)
-        parts = name.split("__")
-        title = parts[-1].replace("_", " ").title() if len(parts) > 1 else name.replace("_", " ").title()
-        category = parts[0].replace("_", " ").title() if len(parts) > 1 else ""
+    # --- Phase 1: Scan local meshes directory ---
+    print("Scanning local meshes directory...")
+    local_entries = _scan_local_meshes()
+    seen_ids = set()
 
-        card_id = f"catalog-{name}"
+    for category, variant, msh_path in local_entries:
+        cat_label = CATEGORY_NAMES.get(category, category.replace("_", " ").title())
+        variant_label = variant.replace("_", " ").replace("/", " / ").title()
+        title = f"{variant_label}" if not category else f"{variant_label}"
+
+        card_id = f"mesh-gen-{category}-{variant}".replace("/", "-").replace(" ", "-").lower()
+        card_id = card_id.replace("--", "-").strip("-")
+        if card_id in seen_ids:
+            continue
+        seen_ids.add(card_id)
+
         preview_name = f"{card_id}.svg"
         preview_path = os.path.join(PREVIEW_DIR, preview_name)
 
-        # Template uses MeshCatalog — single source of truth
-        template = (
-            f'from zoomy_core.mesh.mesh_catalog import MeshCatalog\n'
-            f'\n'
-            f'mesh = MeshCatalog().load("{name}")\n'
-        )
-
-        # Try to download and generate preview
+        # Generate preview SVG
         has_preview = False
-        for fmt in ["msh", "h5"]:
-            if fmt in entry.types:
-                try:
-                    print(f"  {name} ({fmt})...", end=" ")
-                    mesh_path = catalog.download(name, filetype=fmt)
-                    if fmt == "msh":
-                        plot_mesh(str(mesh_path), preview_path)
-                        has_preview = True
-                        print("OK")
-                    else:
-                        print("skip (h5, no preview)")
-                    break
-                except Exception as e:
-                    print(f"SKIP ({e})")
+        try:
+            print(f"  Preview: {card_id}...", end=" ")
+            plot_mesh(msh_path, preview_path)
+            has_preview = True
+            print("OK")
+        except Exception as e:
+            print(f"SKIP ({e})")
 
+        # Template loads mesh from file path
+        rel_msh = os.path.relpath(msh_path, os.path.dirname(__file__))
         card = {
             "id": card_id,
             "title": title,
-            "source": "catalog",
-            "category": category,
-            "mesh_name": name,
-            "mesh_sizes": entry.sizes or [],
-            "description": f"{category}: {title}" if category else title,
-            "template": template,
+            "source": "generated",
+            "category": cat_label,
+            "description": f"{cat_label}: {title}" if cat_label else title,
+            "mesh_file": os.path.abspath(msh_path),
         }
         if has_preview:
             card["preview"] = "previews/" + preview_name
         cards.append(card)
+
+    # --- Phase 2: Also try remote catalog (for meshes not on disk) ---
+    try:
+        from zoomy_core.mesh.mesh_catalog import MeshCatalog
+        print("\nFetching remote mesh catalog...")
+        catalog = MeshCatalog(auto_fetch=True)
+
+        for name in catalog.names():
+            entry = catalog.get(name)
+            parts = name.split("__")
+            title = parts[-1].replace("_", " ").title() if len(parts) > 1 else name.replace("_", " ").title()
+            category = parts[0].replace("_", " ").title() if len(parts) > 1 else ""
+
+            card_id = f"catalog-{name}"
+            if card_id in seen_ids:
+                continue
+            seen_ids.add(card_id)
+
+            preview_name = f"{card_id}.svg"
+            preview_path = os.path.join(PREVIEW_DIR, preview_name)
+
+            template = (
+                f'from zoomy_core.mesh.mesh_catalog import MeshCatalog\n'
+                f'\n'
+                f'mesh = MeshCatalog().load("{name}")\n'
+            )
+
+            has_preview = False
+            for fmt in ["msh", "h5"]:
+                if fmt in entry.types:
+                    try:
+                        print(f"  {name} ({fmt})...", end=" ")
+                        mesh_path = catalog.download(name, filetype=fmt)
+                        if fmt == "msh":
+                            plot_mesh(str(mesh_path), preview_path)
+                            has_preview = True
+                            print("OK")
+                        else:
+                            print("skip (h5)")
+                        break
+                    except Exception as e:
+                        print(f"SKIP ({e})")
+
+            card = {
+                "id": card_id,
+                "title": title,
+                "source": "catalog",
+                "category": category,
+                "mesh_name": name,
+                "mesh_sizes": entry.sizes or [],
+                "description": f"{category}: {title}" if category else title,
+                "template": template,
+            }
+            if has_preview:
+                card["preview"] = "previews/" + preview_name
+            cards.append(card)
+    except Exception as e:
+        print(f"Remote catalog unavailable: {e}")
 
     with open(GENERATED_JSON, "w") as f:
         json.dump(cards, f, indent=2)

@@ -846,7 +846,20 @@ function createCard(targetId, card, mgr, cardType) {
     if (hasTimeline) {
         var sl = document.getElementById(targetId + "-tl");
         var lb = document.getElementById(targetId + "-ts");
-        if (sl) sl.oninput = function () { lb.textContent = sl.value; };
+        if (sl) {
+            sl.oninput = function () { lb.textContent = sl.value; };
+            /* Auto-refresh visualization on slider change (debounced) */
+            if (hasRefresh) {
+                var _tlDebounce = null;
+                sl.addEventListener("change", function () {
+                    if (_tlDebounce) clearTimeout(_tlDebounce);
+                    _tlDebounce = setTimeout(function () {
+                        var refreshBtn = document.getElementById(targetId + "-refresh");
+                        if (refreshBtn && !refreshBtn.disabled) refreshBtn.click();
+                    }, 300);
+                });
+            }
+        }
     }
 
     /* Gear + Edit */
@@ -1004,6 +1017,11 @@ function createCard(targetId, card, mgr, cardType) {
                     if (card.snippet) code = await fetch(card.snippet).then(function (r) { return r.text(); });
                     else { code = card.template || ""; if (card.init) Object.keys(card.init).forEach(function (k) { code = code.split("{" + k + "}").join(String(card.init[k])); }); }
                     container._code = code;
+                }
+                /* Inject timeline slider value as time_step variable */
+                var tlSlider = document.getElementById(targetId + "-tl");
+                if (tlSlider) {
+                    code = "time_step = " + tlSlider.value + "\n" + code;
                 }
                 var resultJson = await runCode(code);
                 var result = JSON.parse(resultJson);
