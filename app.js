@@ -847,7 +847,7 @@ function createCard(targetId, card, mgr, cardType) {
         var sl = document.getElementById(targetId + "-tl");
         var lb = document.getElementById(targetId + "-ts");
         if (sl) {
-            sl.oninput = function () { lb.textContent = sl.value; };
+            sl.oninput = function () { lb.textContent = sl.value + "/" + sl.max; };
             /* Auto-refresh visualization on slider change (debounced) */
             if (hasRefresh) {
                 var _tlDebounce = null;
@@ -1040,6 +1040,16 @@ function createCard(targetId, card, mgr, cardType) {
                 }
                 if (preview) preview.style.display = "none";
                 inter.classList.add("active");
+
+                /* Update slider range from store metadata */
+                if (result.store_meta && tlSlider) {
+                    var nSnaps = result.store_meta.n_snapshots;
+                    if (nSnaps > 0) {
+                        tlSlider.max = nSnaps - 1;
+                        var tsLabel = document.getElementById(targetId + "-ts");
+                        if (tsLabel) tsLabel.textContent = tlSlider.value + "/" + (nSnaps - 1);
+                    }
+                }
             } catch (err) { console.error("Runtime error:", err); }
             finally { btn.disabled = false; }
         };
