@@ -15,8 +15,7 @@
     "title": "Mesh",
     "type": "cards",
     "cardType": "mesh",
-    "layout": "grid",
-    "columns": 2
+    "autoSubtabs": true
   },
   "solver": {
     "id": "solver",
