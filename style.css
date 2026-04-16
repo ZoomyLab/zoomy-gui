@@ -192,8 +192,8 @@ button { margin-bottom: 0; }
 .card.maximized .editor-layout { flex-direction: row; flex: 1; height: calc(100vh - 60px); }
 .card.maximized .editor-pane { flex: 1; min-width: 0; }
 .card.maximized .editor-pane .inline-editor { height: 100%; }
-.card.maximized .output-pane { flex: 1; min-width: 0; border-left: var(--bw) solid var(--c-border); overflow-y: auto; }
-.card.maximized .output-pane .output-cells { max-height: none; }
+.card.maximized .output-pane { flex: 1; min-width: 0; border-left: var(--bw) solid var(--c-border); overflow-y: auto; height: 100%; }
+.card.maximized .output-pane .output-cells { max-height: none; overflow-y: visible; }
 
 /* --- Gear description editor --- */
 .gear-desc-section { margin: 0.4rem 0; grid-column: 1 / -1; }

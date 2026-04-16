@@ -1317,10 +1317,12 @@ async function _loadAllCards() {
     /* Dashboard always first */
     tabs.push(tabsMeta.dashboard || { id: "dashboard", title: "Dashboard", type: "dashboard" });
 
-    /* Load each card category */
+    /* Load all card categories in parallel */
+    var allCards = await Promise.all(CARD_CATEGORIES.map(function (cat) { return _loadCategoryCards(cat.dir); }));
+
     for (var i = 0; i < CARD_CATEGORIES.length; i++) {
         var cat = CARD_CATEGORIES[i];
-        var cards = await _loadCategoryCards(cat.dir);
+        var cards = allCards[i];
         var meta = tabsMeta[cat.tabId] || { id: cat.tabId, title: cat.dir, type: "cards" };
         meta.cards = cards;
 
@@ -1485,6 +1487,7 @@ document.addEventListener("DOMContentLoaded", function () {
             logDebug("info", "Running locally via Pyodide...");
             logDebug("info", "Code:\n" + code.substring(0, 500));
             showToast("Running via Pyodide...");
+            updateDashboardJob({ job_id: "pyodide", status: "running" });
             var msgId = "run-" + Date.now();
             var runHandler = function (ev) {
                 if (ev.data.id !== msgId) return;
@@ -1492,16 +1495,15 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (ev.data.type === "result") {
                     logDebug("info", "Pyodide result received");
                     showToast("Simulation complete!"); setTimeout(hideToast, 3000);
+                    updateDashboardJob({ job_id: "pyodide", status: "complete" });
                     try {
                         var result = JSON.parse(ev.data.data);
-                        if (result.plot_data) {
-                            updateDashboardJob({ job_id: "pyodide", status: "complete", result: result });
-                        }
                         if (result.output) logDebug("info", result.output);
                     } catch (e) { logDebug("info", String(ev.data.data)); }
                 } else if (ev.data.type === "error") {
                     logDebug("error", "Pyodide error: " + ev.data.error);
                     showToast("Error — see Log"); setTimeout(hideToast, 3000);
+                    updateDashboardJob({ job_id: "pyodide", status: "failed" });
                 }
             };
             _pyWorker.addEventListener("message", runHandler);
