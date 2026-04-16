@@ -835,6 +835,10 @@ function createCard(targetId, card, mgr, cardType) {
             if (plotEl && window.Plotly) {
                 setTimeout(function () { Plotly.Plots.resize(plotEl); }, 100);
             }
+            /* Resize Ace editor to fit new layout */
+            if (container._editor) {
+                setTimeout(function () { container._editor.resize(); }, 100);
+            }
         };
     }
 
@@ -959,7 +963,7 @@ function createCard(targetId, card, mgr, cardType) {
         exclusiveToggle(editBtn, editorWrap, gearBtn, paramsDiv, async function () {
             if (editorLoaded) return;
             await ensureAce();
-            editorWrap.innerHTML = '<div class="inline-editor" id="' + targetId + '-ace"></div>';
+            editorWrap.innerHTML = '<div class="editor-layout"><div class="editor-pane"><div class="inline-editor" id="' + targetId + '-ace"></div></div><div class="output-pane"></div></div>';
             var defCode = cardDefaults[targetId] ? cardDefaults[targetId].code : "";
             var code = "";
             if (cState.code && cState.code !== defCode) {
@@ -981,8 +985,9 @@ function createCard(targetId, card, mgr, cardType) {
             container._code = code;
             cState.code = code;
             container._editor.session.on("change", function () { cState.code = container._editor.getValue(); });
-            /* Attach output cells panel below editor */
-            setupOutputPanel(targetId, editorWrap);
+            /* Attach output cells panel beside editor (or below when not maximized) */
+            var outputPane = editorWrap.querySelector(".output-pane");
+            setupOutputPanel(targetId, outputPane || editorWrap);
             editorLoaded = true;
         });
     }
@@ -1047,20 +1052,42 @@ function updateDashboardSummary() {
 /* === Dashboard job tracking === */
 
 var _activeJob = null;
+var _simStatus = { state: "idle", lastFinished: null, lastJobId: null, runCount: 0 };
 
-function updateDashboardJob(status) {
+function updateDashboardStatus() {
     var el = document.querySelector("#card-dash-run .card-description");
     if (!el) return;
-
-    if (!status) {
-        el.innerHTML = "\u2014";
-        return;
+    var s = _simStatus;
+    if (s.state === "idle" && !s.lastFinished) {
+        el.innerHTML = '<span class="status-dot status-idle"></span> Idle &mdash; no simulations run yet';
+    } else if (s.state === "idle" && s.lastFinished) {
+        el.innerHTML = '<span class="status-dot status-idle"></span> Idle' +
+            '<br><span style="font-size:var(--fs-s);color:var(--c-muted)">Last finished: ' + s.lastFinished +
+            (s.lastJobId ? ' (' + s.lastJobId + ')' : '') +
+            ' &middot; ' + s.runCount + ' run' + (s.runCount !== 1 ? 's' : '') + ' total</span>';
+    } else if (s.state === "running") {
+        el.innerHTML = '<span class="status-dot status-running"></span> Running' +
+            (s.currentJobId ? ' <b>' + s.currentJobId + '</b>' : '') +
+            (s.progressHtml || '');
+    } else if (s.state === "queued") {
+        el.innerHTML = '<span class="status-dot status-running"></span> Queued' +
+            (s.currentJobId ? ' <b>' + s.currentJobId + '</b>' : '') + '...';
+    } else if (s.state === "failed") {
+        el.innerHTML = '<span class="status-dot status-failed"></span> Failed' +
+            (s.currentJobId ? ' <b>' + s.currentJobId + '</b>' : '') +
+            '<br><span style="font-size:var(--fs-s);color:var(--c-muted)">Check Log for details</span>';
     }
+}
+
+function updateDashboardJob(status) {
+    if (!status) { _simStatus.state = "idle"; updateDashboardStatus(); return; }
 
     var jobId = status.job_id || "?";
     var s = status.status || "?";
+    _simStatus.currentJobId = jobId;
 
     if (s === "running" && status.progress) {
+        _simStatus.state = "running";
         var p = status.progress;
         var t = p.time || 0;
         var tend = p.time_end || 1;
@@ -1071,17 +1098,30 @@ function updateDashboardJob(status) {
             var rate = t / elapsed;
             if (rate > 0) eta = " \u2248 " + ((tend - t) / rate).toFixed(0) + "s left";
         }
-        el.innerHTML = '<b>' + jobId + '</b> running ' + pct + '%' + eta +
+        _simStatus.progressHtml = ' ' + pct + '%' + eta +
             '<div class="progress-bar"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
+    } else if (s === "running") {
+        _simStatus.state = "running";
+        _simStatus.progressHtml = '';
     } else if (s === "complete") {
-        el.innerHTML = '<b>' + jobId + '</b> \u2714 complete';
+        _simStatus.state = "idle";
+        _simStatus.lastFinished = new Date().toLocaleString();
+        _simStatus.lastJobId = jobId;
+        _simStatus.runCount++;
+        _simStatus.progressHtml = '';
     } else if (s === "failed") {
-        el.innerHTML = '<b>' + jobId + '</b> \u2718 failed';
+        _simStatus.state = "failed";
+        _simStatus.progressHtml = '';
+        /* Auto-reset to idle after 10s */
+        setTimeout(function () {
+            if (_simStatus.state === "failed") { _simStatus.state = "idle"; updateDashboardStatus(); }
+        }, 10000);
     } else if (s === "queued") {
-        el.innerHTML = '<b>' + jobId + '</b> queued...';
+        _simStatus.state = "queued";
     } else {
-        el.innerHTML = '<b>' + jobId + '</b> ' + s;
+        _simStatus.state = s;
     }
+    updateDashboardStatus();
 }
 
 /* === Dashboard === */
@@ -1091,7 +1131,7 @@ function createDashboard(panel) {
     gridMgr.add({ id: "dash-model", title: "Model", text: "No model selected." });
     gridMgr.add({ id: "dash-mesh", title: "Mesh", text: "No mesh loaded." });
     gridMgr.add({ id: "dash-status", title: "Solver", text: "No solver selected." });
-    gridMgr.add({ id: "dash-run", title: "Last Run", text: "\u2014" });
+    gridMgr.add({ id: "dash-run", title: "Status", text: "Idle" });
 
     var gridWrap = gridMgr.render(panel);
     gridMgr.cards.forEach(function (c) {
@@ -1134,7 +1174,28 @@ function createDashboard(panel) {
         slots: [{ type: "log", id: "debug-log" }]
     }, null);
 
+    /* Drag-to-resize for log panel */
+    (function () {
+        var logEl = document.getElementById("debug-log");
+        if (!logEl) return;
+        var handle = document.createElement("div");
+        handle.className = "log-drag-handle";
+        handle.title = "Drag to resize";
+        logEl.parentElement.appendChild(handle);
+        var startY, startH;
+        handle.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+            startY = e.clientY;
+            startH = logEl.offsetHeight;
+            function onMove(ev) { logEl.style.height = Math.max(100, startH + ev.clientY - startY) + "px"; }
+            function onUp() { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
+            document.addEventListener("mousemove", onMove);
+            document.addEventListener("mouseup", onUp);
+        });
+    })();
+
     renderDashboardConnections();
+    updateDashboardStatus();
     logDebug("info", "Dashboard initialized");
 }
 
@@ -1262,6 +1323,26 @@ async function _loadAllCards() {
         var cards = await _loadCategoryCards(cat.dir);
         var meta = tabsMeta[cat.tabId] || { id: cat.tabId, title: cat.dir, type: "cards" };
         meta.cards = cards;
+
+        /* Auto-generate subtabs from card categories (for mesh tab) */
+        if (meta.autoSubtabs && cards.length > 0) {
+            var seenCats = {};
+            var subtabs = [{ id: "create", title: "Create" }];
+            cards.forEach(function (c) {
+                if (c.source === "builtin" || !c.category) {
+                    c.subtab = "create";
+                } else {
+                    var catId = c.category.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+                    if (!seenCats[catId]) {
+                        seenCats[catId] = true;
+                        subtabs.push({ id: catId, title: c.category });
+                    }
+                    c.subtab = catId;
+                }
+            });
+            if (subtabs.length > 1) meta.subtabs = subtabs;
+        }
+
         tabs.push(meta);
     }
 
