@@ -1,11 +1,15 @@
 """Generate mesh preview SVGs and cards/meshes/generated.json.
 
-Uses the MeshCatalog to discover meshes — the same source of truth
-that the GUI uses at runtime. Downloads meshes, generates 2D SVGs,
-and writes card entries with templates that use MeshCatalog.load().
+Scans the meshes/ directory for .msh files produced by run.sh,
+generates SVG previews (2D or 3D), and writes GUI card entries.
+
+Prerequisites:
+    - Run meshes/run.sh first to generate .msh files from .geo sources
+    - Requires: meshio, matplotlib, numpy
 
 Usage:
-    python generate_mesh_previews.py
+    python generate_mesh_previews.py            # incremental (skip up-to-date)
+    python generate_mesh_previews.py --force    # rebuild all previews
 """
 
 import os
@@ -150,83 +154,72 @@ CATEGORY_NAMES = {
     "volumes": "3-D Volumes",
     "complex": "Complex Assemblies",
     "square": "Square",
+    "channel_quad_2d": "Channel Quad 2D",
 }
 
 
-def _generate_msh_from_geo(geo_path):
-    """Generate .msh from .geo using gmsh. Returns .msh path or None."""
-    import subprocess
-    msh_path = geo_path.replace(".geo", ".msh")
-    if os.path.exists(msh_path):
-        return msh_path
-    # Detect 2D vs 3D from filename
-    dim_flag = "-3" if "3d" in os.path.basename(geo_path).lower() else "-2"
-    try:
-        subprocess.run(
-            ["gmsh", dim_flag, geo_path, "-o", msh_path, "-format", "msh4"],
-            capture_output=True, timeout=60, check=True,
-        )
-        return msh_path
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-        print(f"    gmsh failed: {e}")
-        return None
+def _scan_msh_files():
+    """Walk the meshes/ directory tree and collect all .msh files.
 
-
-def _scan_local_meshes():
-    """Walk the meshes/ directory, find all .geo/.msh files, return card entries."""
+    Returns list of (category, variant, msh_path) tuples.
+    The structure mirrors run.sh: top-level dirs are categories,
+    sub-dirs are geometry variants, .msh files are the meshes.
+    """
     meshes_dir = os.path.normpath(MESHES_DIR)
     if not os.path.isdir(meshes_dir):
         print(f"Meshes directory not found: {meshes_dir}")
         return []
 
-    entries = []  # (category, variant, msh_path)
+    entries = []
 
     for root, dirs, files in os.walk(meshes_dir):
-        # Skip blacklisted directories
-        dirs[:] = [d for d in dirs if d not in BLACKLIST]
+        # Skip blacklisted directories (matches run.sh behaviour)
+        dirs[:] = sorted(d for d in dirs if d not in BLACKLIST)
 
         for f in sorted(files):
-            if not f.endswith(".geo"):
+            if not f.endswith(".msh"):
                 continue
 
-            geo_path = os.path.join(root, f)
+            msh_path = os.path.join(root, f)
             rel = os.path.relpath(root, meshes_dir)
             parts = rel.split(os.sep)
 
             # Top-level category is first directory
             category = parts[0] if parts[0] != "." else ""
-            # Variant is the sub-path + filename
+            # Variant is the sub-path + filename (without extension)
             variant_parts = parts[1:] if len(parts) > 1 else []
-            variant_parts.append(f.replace(".geo", ""))
+            variant_parts.append(f.replace(".msh", ""))
             variant = "/".join(variant_parts)
 
-            # Try to find or generate .msh
-            msh_path = geo_path.replace(".geo", ".msh")
-            if not os.path.exists(msh_path):
-                print(f"  Generating {os.path.relpath(geo_path, meshes_dir)}...", end=" ")
-                msh_path = _generate_msh_from_geo(geo_path)
-                if msh_path:
-                    print("OK")
-                else:
-                    print("SKIP")
-                    continue
             entries.append((category, variant, msh_path))
 
     return entries
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate mesh preview SVGs")
+    parser.add_argument("--force", action="store_true",
+                        help="Force rebuild all previews (default: incremental)")
+    args = parser.parse_args()
+
+    print("Scanning meshes/ for .msh files...")
+    print("  (Run meshes/run.sh first if you need to regenerate from .geo sources)\n")
+
+    entries = _scan_msh_files()
+    if not entries:
+        print("No .msh files found. Run meshes/run.sh to generate them.")
+        return
+
     cards = []
-
-    # --- Phase 1: Scan local meshes directory ---
-    print("Scanning local meshes directory...")
-    local_entries = _scan_local_meshes()
     seen_ids = set()
+    n_skipped = 0
+    n_generated = 0
 
-    for category, variant, msh_path in local_entries:
+    for category, variant, msh_path in entries:
         cat_label = CATEGORY_NAMES.get(category, category.replace("_", " ").title())
         variant_label = variant.replace("_", " ").replace("/", " / ").title()
-        title = f"{variant_label}" if not category else f"{variant_label}"
+        title = variant_label
 
         card_id = f"mesh-gen-{category}-{variant}".replace("/", "-").replace(" ", "-").lower()
         card_id = card_id.replace("--", "-").strip("-")
@@ -237,18 +230,25 @@ def main():
         preview_name = f"{card_id}.svg"
         preview_path = os.path.join(PREVIEW_DIR, preview_name)
 
-        # Generate preview SVG
-        has_preview = False
-        try:
-            print(f"  Preview: {card_id}...", end=" ")
-            plot_mesh(msh_path, preview_path)
-            has_preview = True
-            print("OK")
-        except Exception as e:
-            print(f"SKIP ({e})")
+        # Incremental: skip if preview exists and is newer than the .msh file
+        has_preview = os.path.exists(preview_path)
+        if has_preview and not args.force:
+            if os.path.getmtime(preview_path) >= os.path.getmtime(msh_path):
+                n_skipped += 1
+            else:
+                has_preview = False  # stale, regenerate
 
-        # Template loads mesh from file path
-        rel_msh = os.path.relpath(msh_path, os.path.dirname(__file__))
+        if not has_preview or args.force:
+            try:
+                print(f"  {card_id}...", end=" ")
+                plot_mesh(msh_path, preview_path)
+                has_preview = True
+                n_generated += 1
+                print("OK")
+            except Exception as e:
+                has_preview = False
+                print(f"SKIP ({e})")
+
         card = {
             "id": card_id,
             "title": title,
@@ -261,68 +261,11 @@ def main():
             card["preview"] = "previews/" + preview_name
         cards.append(card)
 
-    # --- Phase 2: Also try remote catalog (for meshes not on disk) ---
-    try:
-        from zoomy_core.mesh.mesh_catalog import MeshCatalog
-        print("\nFetching remote mesh catalog...")
-        catalog = MeshCatalog(auto_fetch=True)
-
-        for name in catalog.names():
-            entry = catalog.get(name)
-            parts = name.split("__")
-            title = parts[-1].replace("_", " ").title() if len(parts) > 1 else name.replace("_", " ").title()
-            category = parts[0].replace("_", " ").title() if len(parts) > 1 else ""
-
-            card_id = f"catalog-{name}"
-            if card_id in seen_ids:
-                continue
-            seen_ids.add(card_id)
-
-            preview_name = f"{card_id}.svg"
-            preview_path = os.path.join(PREVIEW_DIR, preview_name)
-
-            template = (
-                f'from zoomy_core.mesh.mesh_catalog import MeshCatalog\n'
-                f'\n'
-                f'mesh = MeshCatalog().load("{name}")\n'
-            )
-
-            has_preview = False
-            for fmt in ["msh", "h5"]:
-                if fmt in entry.types:
-                    try:
-                        print(f"  {name} ({fmt})...", end=" ")
-                        mesh_path = catalog.download(name, filetype=fmt)
-                        if fmt == "msh":
-                            plot_mesh(str(mesh_path), preview_path)
-                            has_preview = True
-                            print("OK")
-                        else:
-                            print("skip (h5)")
-                        break
-                    except Exception as e:
-                        print(f"SKIP ({e})")
-
-            card = {
-                "id": card_id,
-                "title": title,
-                "source": "catalog",
-                "category": category,
-                "mesh_name": name,
-                "mesh_sizes": entry.sizes or [],
-                "description": f"{category}: {title}" if category else title,
-                "template": template,
-            }
-            if has_preview:
-                card["preview"] = "previews/" + preview_name
-            cards.append(card)
-    except Exception as e:
-        print(f"Remote catalog unavailable: {e}")
-
     with open(GENERATED_JSON, "w") as f:
         json.dump(cards, f, indent=2)
 
-    print(f"\nWrote {len(cards)} cards to {GENERATED_JSON}")
+    print(f"\n{len(cards)} cards written to generated.json")
+    print(f"  {n_generated} previews generated, {n_skipped} up-to-date (skipped)")
 
 
 if __name__ == "__main__":
