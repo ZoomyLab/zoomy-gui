@@ -1,10 +1,26 @@
 [
   {
+    "id": "vis-mesh-2d",
+    "subtab": "matplotlib",
+    "title": "2D Mesh Viewer",
+    "snippet": "snippets/mesh_2d_mpl.py",
+    "description": "Display a 2D mesh with cell-colored fields. Edit **field_name** and **time_step** in the code to switch between fields and snapshots.",
+    "has_timeline": true
+  },
+  {
     "id": "vis-empty-mpl",
     "subtab": "matplotlib",
     "title": "Empty Figure",
     "template": "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(1, 1, figsize=(6, 4))\nax.set_title('Empty View')",
     "description": "Empty matplotlib subplots."
+  },
+  {
+    "id": "vis-mesh-3d",
+    "subtab": "pyvista",
+    "title": "3D Mesh Viewer",
+    "snippet": "snippets/mesh_3d_plotly.py",
+    "description": "Interactive 3D mesh with cell coloring and camera navigation. Rotate, pan, zoom with mouse. Edit **field_name** and **colormap** in the code.",
+    "has_timeline": true
   },
   {
     "id": "vis-sine",
