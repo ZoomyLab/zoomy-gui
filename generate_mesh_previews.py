@@ -16,9 +16,6 @@ import os
 import json
 import sys
 
-# Add zoomy_core to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "library", "zoomy_core"))
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -142,7 +139,7 @@ def plot_mesh(mesh_path, output_path):
         plot_mesh_2d(mesh_path, output_path)
 
 
-MESHES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "meshes")
+MESHES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "meshes")
 BLACKLIST = {"old", "test"}
 
 # Pretty category names
@@ -218,8 +215,9 @@ def main():
 
     for category, variant, msh_path in entries:
         cat_label = CATEGORY_NAMES.get(category, category.replace("_", " ").title())
-        variant_label = variant.replace("_", " ").replace("/", " / ").title()
-        title = variant_label
+        # Title is just the leaf name (no path), since categories become tabs
+        leaf_name = variant.split("/")[-1]
+        title = leaf_name.replace("_", " ").title()
 
         card_id = f"mesh-gen-{category}-{variant}".replace("/", "-").replace(" ", "-").lower()
         card_id = card_id.replace("--", "-").strip("-")
@@ -254,7 +252,7 @@ def main():
             "title": title,
             "source": "generated",
             "category": cat_label,
-            "description": f"{cat_label}: {title}" if cat_label else title,
+            "description": title,
             "mesh_file": os.path.abspath(msh_path),
         }
         if has_preview:

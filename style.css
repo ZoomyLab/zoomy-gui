@@ -84,13 +84,14 @@ button { margin-bottom: 0; }
 .main-content { padding: 1.2rem 1.5rem; }
 
 /* --- Tabs + subtabs --- */
-.tabs, .subtabs { display: flex; gap: 0; border-bottom: var(--bw2) solid var(--c-border); margin-bottom: 1rem; }
+.tabs, .subtabs { display: flex; gap: 0; border-bottom: var(--bw2) solid var(--c-border); margin-bottom: 1rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
 .tab-btn, .subtab-btn {
     padding: 0.5rem 1rem; border: none; background: none;
     font-family: var(--f-sans); font-size: var(--fs-m); font-weight: 500;
     color: var(--c-muted); cursor: pointer;
     border-bottom: var(--bw2) solid transparent; margin-bottom: calc(-1 * var(--bw2));
     transition: color 0.15s, border-color 0.15s, background 0.15s;
+    white-space: nowrap; flex-shrink: 0;
 }
 .subtab-btn { font-size: var(--fs-s); padding: 0.35rem 0.8rem; }
 .subtabs { border-bottom-width: var(--bw); margin-bottom: 0.8rem; }
