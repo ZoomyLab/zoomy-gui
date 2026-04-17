@@ -2,7 +2,7 @@
  * Zoomy Service Worker — cache-first for static assets.
  * Bump CACHE_VERSION to force re-download on next visit.
  */
-var CACHE_VERSION = "zoomy-v3";  // bump this to force clients to re-fetch assets
+var CACHE_VERSION = "zoomy-v4";  // bump this to force clients to re-fetch assets
 
 var PRECACHE_URLS = [
     "./",

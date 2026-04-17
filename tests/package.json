@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "node test_viz_pipeline.js",
-    "test:syntax": "node test_syntax.js"
+    "test": "node test_syntax.js && node test_e2e_browser.js",
+    "test:syntax": "node test_syntax.js",
+    "test:pipeline": "node test_viz_pipeline.js",
+    "test:e2e": "node test_e2e_browser.js"
   },
   "dependencies": {
+    "puppeteer": "^24.41.0",
     "pyodide": "^0.29.0"
   }
 }

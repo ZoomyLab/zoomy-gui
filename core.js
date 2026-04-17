@@ -13,7 +13,10 @@ function CardState() {
 }
 
 CardState.prototype.init = function (cardId, defaults, tabId, subtab) {
-    var defCode = defaults.template || defaults.snippet || "";
+    // NOTE: defaults.snippet is a FILE PATH (e.g. "snippets/foo.py"), not code.
+    // Only defaults.template is actual code. Leave code empty for snippet cards;
+    // the refresh handler fetches the file contents on demand.
+    var defCode = defaults.template || "";
     if (!this.defaults[cardId]) {
         this.defaults[cardId] = {
             tab: tabId || "", subtab: subtab || "",

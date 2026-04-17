@@ -36,6 +36,13 @@ async function installExec() {
     } catch (e) {
         postMessage({ type: "log", level: "warn", msg: "matplotlib load failed: " + (e.message || e) });
     }
+    postMessage({ type: "log", level: "info", msg: "Installing plotly..." });
+    try {
+        var mp = py.pyimport("micropip");
+        await mp.install(["plotly"]);
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "plotly install failed: " + (e.message || e) });
+    }
     postMessage({ type: "log", level: "info", msg: "Loading execution engine..." });
     var code = await fetch("engine.py").then(function (r) { return r.text(); });
     await py.runPythonAsync(code);
