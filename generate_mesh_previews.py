@@ -155,19 +155,64 @@ CATEGORY_NAMES = {
 }
 
 
+import re
+_SIZE_RE = re.compile(r"^(.+)__(coarse|medium|fine)$")
+
+
+def _parse_mesh_identity(category, variant):
+    """Parse a (category, variant) into (category, base_name, size_label).
+
+    Handles size suffixes: e.g. variant='mesh__fine' -> base='mesh', size='fine'.
+    Also handles __ category encoding for flat files at root level.
+    """
+    # Strip size suffix if present
+    m = _SIZE_RE.match(variant)
+    if m:
+        base, size = m.group(1), m.group(2)
+    else:
+        base, size = variant, None
+
+    # For flat files at root (no category from directory), try to extract category
+    if not category:
+        # First try __ convention (e.g. square__mesh)
+        if "__" in base:
+            parts = base.split("__", 1)
+            category = parts[0]
+            base = parts[1]
+        else:
+            # Heuristic: try splitting on _ and check if first segment is a known category
+            # e.g. square_mesh -> category=square, base=mesh
+            # e.g. channel_quad_2d_mesh -> category=channel_quad_2d, base=mesh
+            _all_cats = set(CATEGORY_NAMES.keys())
+            # Try longest matching prefix first
+            parts = base.split("_")
+            for i in range(len(parts), 0, -1):
+                prefix = "_".join(parts[:i])
+                if prefix in _all_cats:
+                    category = prefix
+                    base = "_".join(parts[i:]) if i < len(parts) else base
+                    break
+
+    return category, base, size
+
+
 def _scan_msh_files():
     """Walk the meshes/ directory tree and collect all .msh files.
 
-    Returns list of (category, variant, msh_path) tuples.
+    Returns list of dicts with keys: category, name, size, msh_path.
+    Groups coarse/medium/fine variants of the same mesh.
+
     The structure mirrors run.sh: top-level dirs are categories,
     sub-dirs are geometry variants, .msh files are the meshes.
+    Also handles flat files with __ naming at the root level.
     """
     meshes_dir = os.path.normpath(MESHES_DIR)
     if not os.path.isdir(meshes_dir):
         print(f"Meshes directory not found: {meshes_dir}")
-        return []
+        return {}
 
-    entries = []
+    # key: (category, base_name) -> {sizes: {size: path}, default_path: path}
+    mesh_groups = {}
 
     for root, dirs, files in os.walk(meshes_dir):
         # Skip blacklisted directories (matches run.sh behaviour)
@@ -181,16 +226,25 @@ def _scan_msh_files():
             rel = os.path.relpath(root, meshes_dir)
             parts = rel.split(os.sep)
 
-            # Top-level category is first directory
-            category = parts[0] if parts[0] != "." else ""
+            # Top-level category from directory structure
+            dir_category = parts[0] if parts[0] != "." else ""
             # Variant is the sub-path + filename (without extension)
             variant_parts = parts[1:] if len(parts) > 1 else []
             variant_parts.append(f.replace(".msh", ""))
             variant = "/".join(variant_parts)
 
-            entries.append((category, variant, msh_path))
+            category, base_name, size = _parse_mesh_identity(dir_category, variant)
 
-    return entries
+            key = (category, base_name)
+            if key not in mesh_groups:
+                mesh_groups[key] = {"sizes": {}, "default_path": None}
+
+            if size:
+                mesh_groups[key]["sizes"][size] = msh_path
+            else:
+                mesh_groups[key]["default_path"] = msh_path
+
+    return mesh_groups
 
 
 def main():
@@ -203,27 +257,30 @@ def main():
     print("Scanning meshes/ for .msh files...")
     print("  (Run meshes/run.sh first if you need to regenerate from .geo sources)\n")
 
-    entries = _scan_msh_files()
-    if not entries:
+    mesh_groups = _scan_msh_files()
+    if not mesh_groups:
         print("No .msh files found. Run meshes/run.sh to generate them.")
         return
 
     cards = []
-    seen_ids = set()
     n_skipped = 0
     n_generated = 0
 
-    for category, variant, msh_path in entries:
+    for (category, base_name), group in sorted(mesh_groups.items()):
         cat_label = CATEGORY_NAMES.get(category, category.replace("_", " ").title())
-        # Title is just the leaf name (no path), since categories become tabs
-        leaf_name = variant.split("/")[-1]
-        title = leaf_name.replace("_", " ").title()
+        title = base_name.replace("_", " ").replace("/", " / ").title()
 
-        card_id = f"mesh-gen-{category}-{variant}".replace("/", "-").replace(" ", "-").lower()
+        card_id = f"mesh-gen-{category}-{base_name}".replace("/", "-").replace(" ", "-").lower()
         card_id = card_id.replace("--", "-").strip("-")
-        if card_id in seen_ids:
+
+        # Pick the best .msh path for preview: default (unsuffixed) > medium > first available
+        msh_path = group["default_path"]
+        if not msh_path and "medium" in group["sizes"]:
+            msh_path = group["sizes"]["medium"]
+        if not msh_path and group["sizes"]:
+            msh_path = next(iter(group["sizes"].values()))
+        if not msh_path:
             continue
-        seen_ids.add(card_id)
 
         preview_name = f"{card_id}.svg"
         preview_path = os.path.join(PREVIEW_DIR, preview_name)
@@ -247,6 +304,9 @@ def main():
                 has_preview = False
                 print(f"SKIP ({e})")
 
+        # Build size list for the card (for the GUI size dropdown)
+        sizes = sorted(group["sizes"].keys())
+
         card = {
             "id": card_id,
             "title": title,
@@ -255,6 +315,8 @@ def main():
             "description": title,
             "mesh_file": os.path.abspath(msh_path),
         }
+        if sizes:
+            card["mesh_sizes"] = sizes
         if has_preview:
             card["preview"] = "previews/" + preview_name
         cards.append(card)
