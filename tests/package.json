@@ -1,0 +1,12 @@
+{
+  "name": "zoomy-gui-tests",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node test_viz_pipeline.js",
+    "test:syntax": "node test_syntax.js"
+  },
+  "dependencies": {
+    "pyodide": "^0.29.0"
+  }
+}

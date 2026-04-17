@@ -30,6 +30,12 @@ async function installParam() {
 async function installExec() {
     if (execReady) return;
     await installParam();  /* ensures zoomy-core + numpy + scipy are installed */
+    postMessage({ type: "log", level: "info", msg: "Loading matplotlib..." });
+    try {
+        await py.loadPackage(["matplotlib"]);
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "matplotlib load failed: " + (e.message || e) });
+    }
     postMessage({ type: "log", level: "info", msg: "Loading execution engine..." });
     var code = await fetch("engine.py").then(function (r) { return r.text(); });
     await py.runPythonAsync(code);

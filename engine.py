@@ -245,21 +245,27 @@ def process_code(code_string):
         # Execute user code
         exec(code_string, scope)
 
-        # --- 3. Handle Plotly (only if plotly was imported by user code) ---
-        if "fig" in scope:
-            try:
-                go = _get_go()
-                fig_obj = scope["fig"]
-                res["plot_type"] = "plotly"
-                fig_data = fig_obj.to_dict() if hasattr(fig_obj, "to_dict") else fig_obj
-                res["plot_data"] = json.dumps(fig_data, cls=NumpyEncoder)
-            except ImportError:
-                res["output"] += "\n(plotly not installed — cannot render figure)"
+        # --- Detect which plotting library the user's fig belongs to ---
+        fig_obj = scope.get("fig")
+        is_plotly_fig = fig_obj is not None and hasattr(fig_obj, "to_dict") and not hasattr(fig_obj, "savefig")
+        is_mpl_fig = fig_obj is not None and hasattr(fig_obj, "savefig")
 
-        # --- 4. Handle Matplotlib (only if matplotlib was imported by user code) ---
-        elif _plt is not None and _plt.get_fignums():
+        # Prefer user's imported plt; fallback to engine's _plt
+        user_plt = scope.get("plt") or _plt
+
+        if is_plotly_fig:
+            res["plot_type"] = "plotly"
+            res["plot_data"] = json.dumps(fig_obj.to_dict(), cls=NumpyEncoder)
+        elif is_mpl_fig:
             buf = io.BytesIO()
-            _plt.gcf().savefig(buf, format="svg", bbox_inches="tight")
+            fig_obj.savefig(buf, format="svg", bbox_inches="tight")
+            buf.seek(0)
+            res["plot_type"] = "matplotlib"
+            res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
+        elif user_plt is not None and user_plt.get_fignums():
+            buf = io.BytesIO()
+            user_plt.gcf().savefig(buf, format="svg", bbox_inches="tight")
+            buf.seek(0)
             res["plot_type"] = "matplotlib"
             res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 
