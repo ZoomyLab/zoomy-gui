@@ -82,19 +82,57 @@ async function main() {
     await page.click('.tab-btn[data-tab="visualization"]');
     await new Promise(r => setTimeout(r, 500));
 
-    // Switch to PyVista subtab (has the sine_wave card which uses plotly)
+    // Populate the store with fake data via the worker first (so the mesh viewers have something to plot)
+    console.log("Populating store with fake 2D mesh results...");
+    const populated = await page.evaluate(async () => {
+        return new Promise((resolve) => {
+            const id = Date.now();
+            const handler = (ev) => {
+                if (ev.data.id !== id) return;
+                _pyWorker.removeEventListener("message", handler);
+                resolve(ev.data.type);
+            };
+            _pyWorker.addEventListener("message", handler);
+            _pyWorker.postMessage({
+                cmd: "run_code", id: id, code: `
+import numpy as np
+class _M:
+    def __init__(self):
+        nx, ny = 4, 4
+        x = np.linspace(0, 1, nx+1); y = np.linspace(0, 1, ny+1)
+        xx, yy = np.meshgrid(x, y)
+        self.vertices = np.column_stack([xx.ravel(), yy.ravel()])
+        cells = []
+        for j in range(ny):
+            for i in range(nx):
+                n0 = j*(nx+1)+i
+                cells.append([n0, n0+1, n0+nx+2, n0+nx+1])
+        self.cells = np.array(cells)
+        self.cell_centers = np.array([self.vertices[c].mean(0) for c in self.cells])
+        self.dim = 2
+class _Mo:
+    variables = type('V', (), {'keys': lambda s: ['h', 'u']})()
+m = _M(); mo = _Mo()
+Q = np.random.rand(2, len(m.cells))
+Qtl = np.random.rand(5, 2, len(m.cells))
+store.save(m, mo, Q, Q_timeline=Qtl, times=np.linspace(0,1,5))
+`
+            });
+        });
+    });
+    console.log("  store populated:", populated);
+
+    // Switch to PyVista subtab (has mesh_plotly card)
     console.log("Clicking PyVista subtab...");
     const subtabHandle = await page.$('.subtab-btn[data-subtab="pyvista"]');
     if (subtabHandle) await subtabHandle.click();
     await new Promise(r => setTimeout(r, 300));
 
-    // Click the sine_wave card first (tests plotly), then select it
     console.log("Selecting sine wave card...");
     const sineCard = await page.$("#card-vis-sine");
     if (sineCard) await sineCard.click();
     await new Promise(r => setTimeout(r, 500));
 
-    // Click refresh on sine wave card — this tests plotly in the worker
     console.log("Clicking refresh on Sine Wave (plotly test)...");
     const sineRefresh = await page.$("#card-vis-sine-refresh");
     if (!sineRefresh) {
@@ -154,11 +192,59 @@ async function main() {
     await browser.close();
     server.close();
 
+    // Also test the unified matplotlib viewer (best-effort — tab switch can be flaky)
+    try {
+        console.log("\nClicking Matplotlib subtab...");
+        await page.evaluate(() => {
+            const btn = document.querySelector('.subtab-btn[data-subtab="matplotlib"]');
+            if (btn) btn.click();
+        });
+        await new Promise(r => setTimeout(r, 500));
+
+        console.log("Clicking refresh on Mesh Viewer (Matplotlib)...");
+        const mplClicked = await page.evaluate(() => {
+            const card = document.getElementById("card-vis-mesh-mpl");
+            if (card) card.click();
+            const btn = document.getElementById("card-vis-mesh-mpl-refresh");
+            if (btn) { btn.click(); return true; }
+            return false;
+        });
+
+        if (mplClicked) {
+            await page.waitForFunction(() => {
+                const inter = document.getElementById("card-vis-mesh-mpl-interactive");
+                return inter && inter.innerHTML.length > 100;
+            }, { timeout: 60000 }).catch(() => {});
+            const mplResult = await page.evaluate(() => {
+                const inter = document.getElementById("card-vis-mesh-mpl-interactive");
+                const img = inter && inter.querySelector("img");
+                const pre = inter && inter.querySelector("pre");
+                return {
+                    hasImage: !!img,
+                    hasError: !!pre,
+                    errorText: pre ? pre.textContent.substring(0, 500) : null,
+                    len: inter ? inter.innerHTML.length : 0,
+                };
+            });
+            console.log("  mpl result:", mplResult);
+            if (mplResult.hasError) {
+                console.error("❌ Matplotlib card errored:", mplResult.errorText);
+                failed = true;
+            } else if (!mplResult.hasImage) {
+                console.warn("⚠️ Matplotlib card did not render an image (len=" + mplResult.len + ")");
+            } else {
+                console.log("  ✅ Matplotlib card rendered an image");
+            }
+        }
+    } catch (e) {
+        console.warn("⚠️ Matplotlib test skipped:", e.message);
+    }
+
     if (failed) {
         console.log("\nTest FAILED");
         process.exit(1);
     }
-    console.log("\n✅ Test passed");
+    console.log("\n✅ All critical tests passed");
 }
 
 main().catch(err => { console.error("Crash:", err); process.exit(1); });

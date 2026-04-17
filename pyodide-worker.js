@@ -107,6 +107,13 @@ onmessage = async function (e) {
             var result = py.globals.get("process_code")(msg.code);
             postMessage({ type: "result", id: msg.id, data: result });
 
+        } else if (msg.cmd === "load_results") {
+            /* Populate the store from server-returned JSON results. */
+            await installExec();
+            var store = py.globals.get("store");
+            store.load_server_results(py.toPy(msg.data || {}));
+            postMessage({ type: "result", id: msg.id, data: "ok" });
+
         } else if (msg.cmd === "describe_model") {
             postMessage({ type: "log", level: "info", msg: "describe_model: starting for " + msg.class_path.split(".").pop() + " (may take 30-60s in Pyodide)..." });
             await installExec();
