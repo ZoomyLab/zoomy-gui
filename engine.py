@@ -305,8 +305,36 @@ sys._shallowflow_scope["_results"] = getattr(sys, "_zoomy_results", {})
 if not hasattr(sys, "_zoomy_results"):
     sys._zoomy_results = sys._shallowflow_scope["_results"]
 
+class _LiveStdout(io.StringIO):
+    """Forwards each flushed line to the GUI log via the display bridge.
+
+    Keeps the original capture behaviour (getvalue() still works) so the
+    final result's ``output`` field still contains everything.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._buf = ""
+
+    def write(self, s):
+        super().write(s)
+        if hasattr(sys, "_zoomy_display_callback"):
+            self._buf += s
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                if line.strip():
+                    try:
+                        sys._zoomy_display_callback({
+                            "mime": "text/x-log",
+                            "content": line,
+                        })
+                    except Exception:
+                        pass
+        return len(s)
+
+
 def process_code(code_string):
-    new_stdout = io.StringIO()
+    new_stdout = _LiveStdout()
     old_stdout = sys.stdout
     sys.stdout = new_stdout
 

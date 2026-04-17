@@ -6,44 +6,44 @@ var execReady = false;
 
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js");
 
+/* Silence the chatty "Loading <pkg> from CDN" stdout that Pyodide emits
+   during loadPackage. We still capture unexpected stderr. */
+var _origConsoleLog = self.console.log;
+self.console.log = function () { /* drop pyodide package-download chatter */ };
+
 async function initPyodide() {
     if (py) return py;
-    postMessage({ type: "log", level: "info", msg: "Loading Pyodide runtime..." });
-    py = await loadPyodide();
+    postMessage({ type: "log", level: "info", msg: "Booting Pyodide…" });
+    py = await loadPyodide({ stdout: function () {}, stderr: function () {} });
     await py.loadPackage("micropip");
-    postMessage({ type: "log", level: "info", msg: "Pyodide ready" });
     return py;
 }
 
 async function installParam() {
     if (paramReady) return;
     await initPyodide();
-    postMessage({ type: "log", level: "info", msg: "Installing param + zoomy-core..." });
     var mp = py.pyimport("micropip");
     await mp.install(["param", "zoomy-core"]);
     var code = await fetch("param_extract.py").then(function (r) { return r.text(); });
     await py.runPythonAsync(code);
     paramReady = true;
-    postMessage({ type: "log", level: "info", msg: "Param extraction ready" });
 }
 
 async function installExec() {
     if (execReady) return;
-    await installParam();  /* ensures zoomy-core + numpy + scipy are installed */
-    postMessage({ type: "log", level: "info", msg: "Loading matplotlib..." });
+    await installParam();
+    postMessage({ type: "log", level: "info", msg: "Installing plotting packages…" });
     try {
         await py.loadPackage(["matplotlib"]);
     } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "matplotlib load failed: " + (e.message || e) });
+        postMessage({ type: "log", level: "warn", msg: "matplotlib failed: " + (e.message || e) });
     }
-    postMessage({ type: "log", level: "info", msg: "Installing plotly..." });
     try {
         var mp = py.pyimport("micropip");
         await mp.install(["plotly"]);
     } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "plotly install failed: " + (e.message || e) });
+        postMessage({ type: "log", level: "warn", msg: "plotly failed: " + (e.message || e) });
     }
-    postMessage({ type: "log", level: "info", msg: "Loading execution engine..." });
     var code = await fetch("engine.py").then(function (r) { return r.text(); });
     await py.runPythonAsync(code);
 
@@ -60,14 +60,17 @@ async function installExec() {
     ].join("\n"));
 
     execReady = true;
-    postMessage({ type: "log", level: "info", msg: "Execution stack ready (display enabled)" });
 }
 
 var paramCache = {};
 
 onmessage = async function (e) {
     var msg = e.data;
-    postMessage({ type: "log", level: "info", msg: "Worker received: cmd=" + msg.cmd + " id=" + msg.id });
+    /* Only log user-visible commands (run_code, describe_model); cache hits
+       and param extraction are invisible plumbing. */
+    if (msg.cmd === "run_code" || msg.cmd === "describe_model") {
+        postMessage({ type: "log", level: "info", msg: msg.cmd + " (id=" + msg.id + ")" });
+    }
     try {
         if (msg.cmd === "init") {
             await initPyodide();
@@ -115,7 +118,7 @@ onmessage = async function (e) {
             postMessage({ type: "result", id: msg.id, data: "ok" });
 
         } else if (msg.cmd === "describe_model") {
-            postMessage({ type: "log", level: "info", msg: "describe_model: starting for " + msg.class_path.split(".").pop() + " (may take 30-60s in Pyodide)..." });
+            postMessage({ type: "log", level: "info", msg: "describe_model for " + msg.class_path.split(".").pop() + " (may take 30-60s)" });
             await installExec();
             /* Use runPythonAsync so the event loop can breathe */
             var descCode = [
@@ -136,11 +139,11 @@ onmessage = async function (e) {
                 "        import traceback; return traceback.format_exc()",
             ].join("\n");
             await py.runPythonAsync(descCode);
-            postMessage({ type: "log", level: "info", msg: "describe_model: calling Python..." });
+            /* (calling Python — silent) */
             var desc = await py.runPythonAsync(
                 "_describe_model('" + msg.class_path + "', " + JSON.stringify(msg.init || {}) + ")"
             );
-            postMessage({ type: "log", level: "info", msg: "describe_model: done (" + (desc ? desc.length : 0) + " chars)" });
+            postMessage({ type: "log", level: "info", msg: "describe_model done (" + (desc ? desc.length : 0) + " chars)" });
             postMessage({ type: "result", id: msg.id, data: desc });
         }
     } catch (err) {
@@ -178,11 +181,9 @@ onmessage = async function (e) {
                 }
             }
         }
-        if (count > 0) postMessage({ type: "log", level: "info", msg: "Pre-extracted params for " + count + " models" });
     } catch (e) {}
 
-    postMessage({ type: "log", level: "info", msg: "Startup: installing exec stack..." });
     await installExec();
-    postMessage({ type: "log", level: "info", msg: "Startup: IIFE complete — worker ready for commands" });
+    postMessage({ type: "log", level: "info", msg: "Python runtime ready" });
     postMessage({ type: "fully_ready" });
 })();

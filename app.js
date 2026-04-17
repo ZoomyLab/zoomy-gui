@@ -72,7 +72,7 @@ function pyCall(cmd, params) {
         _pyCallbacks[id] = { resolve: resolve, reject: reject };
         var msg = { cmd: cmd, id: id };
         Object.keys(params || {}).forEach(function (k) { msg[k] = params[k]; });
-        logDebug("info", "pyCall → worker: cmd=" + cmd + " id=" + id);
+        /* pyCall chatter suppressed — the worker logs user-visible commands itself. */
         _pyWorker.postMessage(msg);
     });
 }
@@ -268,6 +268,13 @@ if (_pyWorker) {
     _pyWorker.addEventListener("message", function (ev) {
         if (ev.data.type === "display" && ev.data.cell) {
             var cell = JSON.parse(ev.data.cell);
+            /* Live stdout streaming from engine._LiveStdout — route to the
+               dashboard debug log instead of a notebook cell so users see
+               solver iteration progress while a long simulation is running. */
+            if (cell.mime === "text/x-log") {
+                logDebug("info", "[py] " + cell.content);
+                return;
+            }
             var target = _activeOutputTarget ? document.getElementById(_activeOutputTarget) : null;
             if (target) renderOutputCell(cell, target);
         }
@@ -998,9 +1005,13 @@ function createCard(targetId, card, mgr, cardType) {
             container._code = code;
             cState.code = code;
             container._editor.session.on("change", function () { cState.code = container._editor.getValue(); });
-            /* Attach output cells panel beside editor (or below when not maximized) */
-            var outputPane = editorWrap.querySelector(".output-pane");
-            setupOutputPanel(targetId, outputPane || editorWrap);
+            /* Visualization cards use the interactive preview area for output
+               (via the refresh button). All other card types get the
+               notebook-style output panel next to / below the editor. */
+            if (cardType !== "vis") {
+                var outputPane = editorWrap.querySelector(".output-pane");
+                setupOutputPanel(targetId, outputPane || editorWrap);
+            }
             editorLoaded = true;
         });
     }
@@ -1234,7 +1245,9 @@ function buildCardsTab(panel, tab) {
     var mgr = new CardManager(tab.id, {
         layout: tab.layout || (isVis ? "stack" : "stack"),
         columns: tab.columns || 2,
-        collapseUnselected: isVis,
+        /* Viz cards stay expanded so users can compare multiple plots
+           side-by-side. Mesh/model/solver tabs keep single-selection behaviour. */
+        collapseUnselected: false,
         onSelect: function () { mgr.updateUI(); updateDashboardSummary(); }
     });
     managers[tab.id] = mgr;
