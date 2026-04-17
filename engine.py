@@ -190,6 +190,81 @@ class SimulationStore:
         }
         print(f"[store] Loaded HDF5: {self.data['n_snapshots']} snapshots, {self.data['n_cells']} cells")
 
+    def load_server_results(self, server_data):
+        """Populate store from JSON response of GET /api/v1/jobs/{id}/results.
+
+        Accepts the dict returned by the server's get_results endpoint. Handles
+        both the final-snapshot (no Q_timeline) and full-timeline formats.
+        """
+        d = server_data or {}
+        if "Q" not in d:
+            print("[store] Server response missing Q; nothing to load.")
+            return
+
+        Q = np.asarray(d["Q"])
+        n_vars = Q.shape[0] if Q.ndim > 1 else 1
+        n_cells = Q.shape[-1]
+
+        # Server doesn't know field names yet → name them q0, q1, ...
+        fields = d.get("fields") or [f"q{i}" for i in range(n_vars)]
+        aux_fields = d.get("aux_fields") or []
+        if "Qaux" in d and d["Qaux"] is not None:
+            Qaux_arr = np.asarray(d["Qaux"])
+            n_aux = Qaux_arr.shape[0] if Qaux_arr.ndim > 1 else (1 if Qaux_arr.size else 0)
+            if not aux_fields and n_aux:
+                aux_fields = [f"aux{i}" for i in range(n_aux)]
+        else:
+            Qaux_arr = None
+
+        coords = np.asarray(d["coords"]) if d.get("coords") is not None else None
+        vertices = np.asarray(d["vertices"]) if d.get("vertices") is not None else None
+        cells = np.asarray(d["cells"]) if d.get("cells") is not None else None
+
+        self.data = {
+            "Q": Q,
+            "Qaux": Qaux_arr,
+            "fields": fields,
+            "aux_fields": aux_fields,
+            "coords": coords,
+            "vertices": vertices,
+            "cells": cells,
+            "dim": d.get("dim", 1 if coords is None or coords.ndim == 1 else coords.shape[-1]),
+            "n_cells": n_cells,
+        }
+
+        if "Q_timeline" in d and d["Q_timeline"] is not None:
+            Q_tl = np.asarray(d["Q_timeline"])
+            self.data["Q_timeline"] = Q_tl
+            self.data["n_snapshots"] = Q_tl.shape[0]
+            if "times" in d and d["times"] is not None:
+                self.data["times"] = np.asarray(d["times"])
+            else:
+                self.data["times"] = np.arange(Q_tl.shape[0], dtype=float)
+        if "Qaux_timeline" in d and d["Qaux_timeline"] is not None:
+            self.data["Qaux_timeline"] = np.asarray(d["Qaux_timeline"])
+
+        print(f"[store] Loaded server results: {len(fields)} fields, {n_cells} cells" +
+              (f", {self.data.get('n_snapshots', 0)} snapshots" if "Q_timeline" in self.data else ""))
+
+    def auto_save_from_scope(self, scope):
+        """Auto-populate store from exec-scope variables (Pyodide local runs).
+
+        Looks for Q, Qaux, mesh, model in the scope and saves them if present.
+        Returns True if anything was saved.
+        """
+        Q = scope.get("Q")
+        mesh = scope.get("mesh")
+        model = scope.get("model")
+        if Q is None or mesh is None:
+            return False
+        try:
+            self.save(mesh, model, np.asarray(Q),
+                      Qaux=scope.get("Qaux"))
+            return True
+        except Exception as e:
+            print(f"[store] auto_save failed: {e}")
+            return False
+
     @property
     def fields(self):
         """All available field names (primary + auxiliary)."""
@@ -244,6 +319,11 @@ def process_code(code_string):
 
         # Execute user code
         exec(code_string, scope)
+
+        # --- Auto-populate store from scope (Pyodide local runs) ---
+        # If the user code left Q, mesh, model in scope, save them automatically
+        # so visualization cards can find the data without manual store.save().
+        store.auto_save_from_scope(scope)
 
         # --- Detect which plotting library the user's fig belongs to ---
         fig_obj = scope.get("fig")

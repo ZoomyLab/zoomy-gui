@@ -1561,7 +1561,18 @@ document.addEventListener("DOMContentLoaded", function () {
                 updateDashboardJob(status);
                 if (status.status === "complete") {
                     logDebug("info", "Job " + resp.job_id + " complete");
-                    showToast("Job complete!"); setTimeout(hideToast, 3000);
+                    showToast("Job complete — fetching results...");
+                    /* Query results from server and populate the store */
+                    ZoomyBackend.getResults(tag, resp.job_id, true).then(function (data) {
+                        logDebug("info", "Fetched results: " + data.n_cells + " cells, " +
+                            (data.n_snapshots || 1) + " snapshot(s)");
+                        return pyCall("load_results", { data: data });
+                    }).then(function () {
+                        showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
+                    }).catch(function (err) {
+                        logDebug("error", "Failed to fetch results: " + err);
+                        showToast("Results fetch failed — see Log"); setTimeout(hideToast, 3000);
+                    });
                     _activeJob = null;
                 } else if (status.status === "failed") {
                     logDebug("error", "Job " + resp.job_id + " failed:\n" + (status.error || "unknown"));

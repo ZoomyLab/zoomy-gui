@@ -79,6 +79,17 @@ var ZoomyBackend = {
         }).then(function (r) { return r.json(); });
     },
 
+    getResults: function (tag, jobId, timeline) {
+        var url = this.getUrlForTag(tag);
+        if (!url) return Promise.reject("No backend for tag: " + tag);
+        var qs = timeline ? "?timeline=true" : "";
+        return fetch(url + "/api/v1/jobs/" + jobId + "/results" + qs)
+            .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            });
+    },
+
     poll: function (tag, jobId, onUpdate, intervalMs) {
         var self = this;
         var url = this.getUrlForTag(tag);

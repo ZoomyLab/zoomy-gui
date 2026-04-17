@@ -1,10 +1,10 @@
 [
   {
-    "id": "vis-mesh-2d",
+    "id": "vis-mesh-mpl",
     "subtab": "matplotlib",
-    "title": "2D Mesh Viewer",
-    "snippet": "snippets/mesh_2d_mpl.py",
-    "description": "Display a 2D mesh with cell-colored fields. Edit **field_name** and **time_step** in the code to switch between fields and snapshots.",
+    "title": "Mesh Viewer (Matplotlib)",
+    "snippet": "snippets/mesh_mpl.py",
+    "description": "Unified 1D/2D/3D mesh visualization using matplotlib. Automatically dispatches based on mesh dimension. Edit `field_name` and `colormap`, use the timeline slider for snapshots.",
     "has_timeline": true
   },
   {
@@ -12,31 +12,22 @@
     "subtab": "matplotlib",
     "title": "Empty Figure",
     "template": "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(1, 1, figsize=(6, 4))\nax.set_title('Empty View')",
-    "description": "Empty matplotlib subplots."
+    "description": "Empty matplotlib canvas for custom plots."
   },
   {
-    "id": "vis-mesh-3d",
+    "id": "vis-mesh-plotly",
     "subtab": "pyvista",
-    "title": "3D Mesh Viewer",
-    "snippet": "snippets/mesh_3d_plotly.py",
-    "description": "Interactive 3D mesh with cell coloring and camera navigation. Rotate, pan, zoom with mouse. Edit **field_name** and **colormap** in the code.",
+    "title": "Mesh Viewer (Plotly)",
+    "snippet": "snippets/mesh_plotly.py",
+    "description": "Unified 1D/2D/3D interactive mesh visualization using Plotly. Rotate, pan, zoom with mouse. Edit `field_name` and `colormap`, use the timeline slider for snapshots.",
     "has_timeline": true
   },
   {
     "id": "vis-sine",
     "subtab": "pyvista",
-    "title": "Sine Wave",
+    "title": "Sine Wave (demo)",
     "snippet": "snippets/sine_wave.py",
     "preview": "previews/sine_wave.svg",
-    "description": "Interactive sine wave plot."
-  },
-  {
-    "id": "vis-topo",
-    "subtab": "pyvista",
-    "title": "Topography",
-    "snippet": "snippets/topo.py",
-    "preview": "previews/topo.svg",
-    "description": "3D topography mesh.",
-    "has_timeline": true
+    "description": "Standalone interactive plotly demo (no simulation data needed)."
   }
 ]
