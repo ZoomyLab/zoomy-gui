@@ -55,10 +55,9 @@
     </div>
 
     <footer class="footer">
-        <a href="#">About</a>
-        <a href="#">Legal</a>
-        <a href="#">Privacy</a>
+        <a href="https://zoomylab.github.io/Zoomy/" target="_blank" rel="noopener">Homepage</a>
         <span>&copy; 2026 Zoomy</span>
+        <span id="gui-version" class="gui-version" title="Build version"></span>
     </footer>
 
     <div id="loading-toast"></div>
@@ -67,6 +66,14 @@
     if ("serviceWorker" in navigator) {
         navigator.serviceWorker.register("sw.js").catch(function () {});
     }
+    // Display build version in footer
+    fetch("version.json?t=" + Date.now()).then(function (r) { return r.json(); }).then(function (v) {
+        var el = document.getElementById("gui-version");
+        if (el) {
+            el.textContent = "v" + (v.commit || "dev").substring(0, 7);
+            el.title = "Build: " + (v.built || "local") + " — " + (v.commit || "");
+        }
+    }).catch(function () {});
     </script>
 </body>
 </html>
