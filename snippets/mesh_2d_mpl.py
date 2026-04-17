@@ -61,7 +61,6 @@ else:
         sm = ScalarMappable(cmap=colormap, norm=norm)
         sm.set_array([])
         fig.colorbar(sm, ax=ax, shrink=0.8, label=field_name)
-        display(fig)
     else:
         # 1D line plot fallback
         x = coords[:, 0] if coords.ndim > 1 else np.arange(len(values))
@@ -70,7 +69,6 @@ else:
         ax.set_title(f"{field_name}  —  {t_label}")
         ax.set_xlabel("x")
         ax.set_ylabel(field_name)
-        display(fig)
 
     print(f"Fields: {fields_list}")
     if n_snaps > 0:

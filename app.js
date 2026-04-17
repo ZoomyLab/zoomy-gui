@@ -793,7 +793,7 @@ function createCard(targetId, card, mgr, cardType) {
     if (hasPreview || hasRefresh) {
         var previewSrc = card.preview || card._autoPreview;
         html += '<div class="card-preview" id="' + targetId + '-pw">';
-        if (previewSrc) html += '<img id="' + targetId + '-preview" src="' + previewSrc + '" onerror="this.parentElement.style.display=\'none\'">';
+        if (previewSrc) html += '<img id="' + targetId + '-preview" src="' + previewSrc + '" onerror="this.style.display=\'none\'">';
         html += '<div class="card-preview-interactive" id="' + targetId + '-interactive"></div>';
         html += '</div>';
     }
