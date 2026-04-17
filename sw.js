@@ -1,84 +1,122 @@
 /**
- * Zoomy Service Worker — cache-first for static assets.
- * Bump CACHE_VERSION to force re-download on next visit.
+ * Zoomy Service Worker — version-gated cache.
+ *
+ * Strategy:
+ *  - Determine the current build version once (cached in SW memory, refreshed
+ *    every VERSION_TTL_MS).
+ *  - Same-origin requests: serve from the cache scoped to that version.
+ *    On cache miss, fetch from network and store under the versioned cache.
+ *    When the version changes, older versions' caches are pruned and the
+ *    new cache populates naturally as files are requested.
+ *  - version.json itself is always fetched from the network, never cached.
+ *  - Cross-origin (CDN) requests: stale-while-revalidate in a shared CDN cache.
+ *
+ * Result: fast loads when the build is unchanged (cache hits), automatic
+ * freshness after deploys (version mismatch triggers refetch), one extra
+ * tiny fetch every VERSION_TTL_MS to poll the version.
  */
-var CACHE_VERSION = "zoomy-v5";  // bump this to force clients to re-fetch assets
 
-var PRECACHE_URLS = [
-    "./",
-    "index.html",
-    "style.css",
-    "core.js",
-    "param_widgets.js",
-    "backend.js",
-    "app.js",
-    "cards/tabs.json",
-    "cards/models/default.json",
-    "cards/solvers/default.json",
-    "cards/meshes/default.json",
-    "cards/meshes/generated.json",
-    "cards/visualizations/default.json",
-    "cards/visualizations/generated.json"
-];
+var CACHE_PREFIX = "zoomy-";
+var CDN_CACHE = "zoomy-cdn";
+var VERSION_TTL_MS = 60 * 1000;   // re-check version at most every minute
 
-/* Install: precache core assets */
+var _currentVersion = null;
+var _versionCheckedAt = 0;
+
+async function getCurrentVersion() {
+    var now = Date.now();
+    if (_currentVersion && now - _versionCheckedAt < VERSION_TTL_MS) {
+        return _currentVersion;
+    }
+    try {
+        var resp = await fetch("version.json?t=" + now, { cache: "no-store" });
+        if (resp.ok) {
+            var data = await resp.json();
+            _currentVersion = (data.commit || data.version || "unknown").substring(0, 12);
+        }
+    } catch (e) {
+        /* offline: keep existing _currentVersion if any */
+        if (!_currentVersion) _currentVersion = "offline";
+    }
+    _versionCheckedAt = now;
+    return _currentVersion;
+}
+
+async function pruneStaleCaches(currentCacheName) {
+    var names = await caches.keys();
+    await Promise.all(names.map(function (n) {
+        if (n.startsWith(CACHE_PREFIX) && n !== currentCacheName && n !== CDN_CACHE) {
+            return caches.delete(n);
+        }
+    }));
+}
+
 self.addEventListener("install", function (event) {
-    event.waitUntil(
-        caches.open(CACHE_VERSION).then(function (cache) {
-            return cache.addAll(PRECACHE_URLS);
-        }).then(function () {
-            return self.skipWaiting();
-        })
-    );
+    event.waitUntil(self.skipWaiting());
 });
 
-/* Activate: clean old caches */
 self.addEventListener("activate", function (event) {
-    event.waitUntil(
-        caches.keys().then(function (names) {
-            return Promise.all(
-                names.filter(function (n) { return n !== CACHE_VERSION; })
-                     .map(function (n) { return caches.delete(n); })
-            );
-        }).then(function () {
-            return self.clients.claim();
-        })
-    );
+    event.waitUntil((async function () {
+        var v = await getCurrentVersion();
+        await pruneStaleCaches(CACHE_PREFIX + v);
+        await self.clients.claim();
+    })());
 });
 
-/* Fetch: cache-first for same-origin, network-first for CDN */
 self.addEventListener("fetch", function (event) {
-    var url = new URL(event.request.url);
+    var req = event.request;
+    if (req.method !== "GET") return;
+    var url = new URL(req.url);
 
-    /* Skip non-GET and cross-origin API calls */
-    if (event.request.method !== "GET") return;
-
-    /* CDN resources (milligram, katex, ace, plotly, mermaid, pyodide): stale-while-revalidate */
-    if (url.origin !== self.location.origin) {
-        event.respondWith(
-            caches.open(CACHE_VERSION).then(function (cache) {
-                return cache.match(event.request).then(function (cached) {
-                    var fetched = fetch(event.request).then(function (response) {
-                        if (response.ok) cache.put(event.request, response.clone());
-                        return response;
-                    }).catch(function () { return cached; });
-                    return cached || fetched;
-                });
-            })
-        );
+    /* version.json: always network, never cached — this is the freshness signal */
+    if (url.origin === self.location.origin && url.pathname.endsWith("/version.json")) {
+        event.respondWith(fetch(req, { cache: "no-store" }).catch(function () {
+            return new Response('{"version":"offline","commit":"offline"}',
+                                { headers: { "Content-Type": "application/json" } });
+        }));
         return;
     }
 
-    /* Same-origin: network-first (always fetch fresh code; cache only as
-       offline fallback). This avoids stale-JS/Python issues after deploys. */
-    event.respondWith(
-        caches.open(CACHE_VERSION).then(function (cache) {
-            return fetch(event.request).then(function (response) {
-                if (response.ok) cache.put(event.request, response.clone());
-                return response;
-            }).catch(function () {
-                return cache.match(event.request);
+    /* Cross-origin (CDN): stale-while-revalidate */
+    if (url.origin !== self.location.origin) {
+        event.respondWith(caches.open(CDN_CACHE).then(function (cache) {
+            return cache.match(req).then(function (cached) {
+                var fetched = fetch(req).then(function (response) {
+                    if (response.ok) cache.put(req, response.clone());
+                    return response;
+                }).catch(function () { return cached; });
+                return cached || fetched;
             });
-        })
-    );
+        }));
+        return;
+    }
+
+    /* Same-origin: cache-first, cache scoped to current build version. */
+    event.respondWith((async function () {
+        var v = await getCurrentVersion();
+        var cacheName = CACHE_PREFIX + v;
+        var cache = await caches.open(cacheName);
+        var cached = await cache.match(req);
+        if (cached) return cached;
+        try {
+            var response = await fetch(req);
+            if (response.ok) {
+                cache.put(req, response.clone());
+                /* Prune old-version caches opportunistically */
+                pruneStaleCaches(cacheName);
+            }
+            return response;
+        } catch (err) {
+            /* Offline fallback: try any other cached version */
+            var names = await caches.keys();
+            for (var i = 0; i < names.length; i++) {
+                if (names[i].startsWith(CACHE_PREFIX) && names[i] !== cacheName) {
+                    var c = await caches.open(names[i]);
+                    var fb = await c.match(req);
+                    if (fb) return fb;
+                }
+            }
+            throw err;
+        }
+    })());
 });
