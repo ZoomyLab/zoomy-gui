@@ -255,14 +255,19 @@ class SimulationStore:
         Q = scope.get("Q")
         mesh = scope.get("mesh")
         model = scope.get("model")
-        if Q is None or mesh is None:
+        if Q is None:
+            return False
+        if mesh is None:
+            print("[store] auto_save: Q found but no 'mesh' in scope; skipping.")
             return False
         try:
             self.save(mesh, model, np.asarray(Q),
                       Qaux=scope.get("Qaux"))
             return True
         except Exception as e:
+            import traceback
             print(f"[store] auto_save failed: {e}")
+            traceback.print_exc()
             return False
 
     @property

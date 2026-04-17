@@ -2,7 +2,7 @@
  * Zoomy Service Worker — cache-first for static assets.
  * Bump CACHE_VERSION to force re-download on next visit.
  */
-var CACHE_VERSION = "zoomy-v4";  // bump this to force clients to re-fetch assets
+var CACHE_VERSION = "zoomy-v5";  // bump this to force clients to re-fetch assets
 
 var PRECACHE_URLS = [
     "./",
@@ -69,16 +69,15 @@ self.addEventListener("fetch", function (event) {
         return;
     }
 
-    /* Same-origin: stale-while-revalidate (serves cached content fast,
-       refreshes cache in background so next load gets the new version) */
+    /* Same-origin: network-first (always fetch fresh code; cache only as
+       offline fallback). This avoids stale-JS/Python issues after deploys. */
     event.respondWith(
         caches.open(CACHE_VERSION).then(function (cache) {
-            return cache.match(event.request).then(function (cached) {
-                var fetched = fetch(event.request).then(function (response) {
-                    if (response.ok) cache.put(event.request, response.clone());
-                    return response;
-                }).catch(function () { return cached; });
-                return cached || fetched;
+            return fetch(event.request).then(function (response) {
+                if (response.ok) cache.put(event.request, response.clone());
+                return response;
+            }).catch(function () {
+                return cache.match(event.request);
             });
         })
     );
