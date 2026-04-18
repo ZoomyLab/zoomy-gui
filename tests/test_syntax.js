@@ -36,7 +36,7 @@ for (const f of [
 }
 
 console.log("\nSnippet files exist:");
-for (const f of ["snippets/mesh_2d_mpl.py", "snippets/mesh_3d_plotly.py", "snippets/sine_wave.py", "snippets/topo.py"]) {
+for (const f of ["snippets/mesh_mpl.py", "snippets/mesh_plotly.py", "snippets/sine_wave.py", "snippets/topo.py"]) {
     check(f, () => { if (!fs.existsSync(path.join(GUI_DIR, f))) throw new Error("missing"); });
 }
 
