@@ -44,27 +44,56 @@ function logDebug(level, msg) {
 
 /* === Pyodide Web Worker (runs in background thread, never freezes UI) === */
 
-var _pyWorker = new Worker("pyodide-worker.js");
+var _pyWorker = null;
 var _pyCallbacks = {};
 var _pyMsgId = 0;
 
-_pyWorker.onmessage = function (e) {
-    var msg = e.data;
-    if (msg.type === "fully_ready") {
-        hideToast();
-        return;
-    }
-    if (msg.type === "log") {
-        logDebug(msg.level || "info", "[Worker] " + msg.msg);
-        if (msg.msg.indexOf("Loading") === 0 || msg.msg.indexOf("Installing") === 0) showToast(msg.msg);
-        return;
-    }
-    var cb = _pyCallbacks[msg.id];
-    if (!cb) return;
-    delete _pyCallbacks[msg.id];
-    if (msg.type === "error") cb.reject(new Error(msg.error));
-    else cb.resolve(msg.data);
-};
+/* Attach the main message router to a (re)created worker. Split out of the
+   initial declaration so the stop-simulation path can terminate the current
+   worker and spin up a fresh one with the same wiring. */
+function attachPyWorkerHandlers(w) {
+    w.onmessage = function (e) {
+        var msg = e.data;
+        if (msg.type === "fully_ready") {
+            hideToast();
+            return;
+        }
+        if (msg.type === "log") {
+            logDebug(msg.level || "info", "[Worker] " + msg.msg);
+            if (msg.msg.indexOf("Loading") === 0 || msg.msg.indexOf("Installing") === 0) showToast(msg.msg);
+            return;
+        }
+        /* display events are handled by the addEventListener below */
+        if (msg.type === "display") return;
+        var cb = _pyCallbacks[msg.id];
+        if (!cb) return;
+        delete _pyCallbacks[msg.id];
+        if (msg.type === "error") cb.reject(new Error(msg.error));
+        else cb.resolve(msg.data);
+    };
+    w.addEventListener("message", function (ev) {
+        if (ev.data.type === "display" && ev.data.cell) {
+            var cell = JSON.parse(ev.data.cell);
+            /* Live stdout streaming from engine._LiveStdout — route to the
+               dashboard debug log instead of a notebook cell so users see
+               solver iteration progress while a long simulation is running. */
+            if (cell.mime === "text/x-log") {
+                logDebug("info", "[py] " + cell.content);
+                return;
+            }
+            var target = _activeOutputTarget ? document.getElementById(_activeOutputTarget) : null;
+            if (target) renderOutputCell(cell, target);
+        }
+    });
+}
+
+function createPyWorker() {
+    var w = new Worker("pyodide-worker.js");
+    attachPyWorkerHandlers(w);
+    return w;
+}
+
+_pyWorker = createPyWorker();
 
 function pyCall(cmd, params) {
     return new Promise(function (resolve, reject) {
@@ -262,24 +291,8 @@ function setupOutputPanel(cardId, editorWrap) {
     }
 }
 
-/* Handle display() messages from Pyodide worker */
-if (_pyWorker) {
-    var _origOnMessage = _pyWorker.onmessage;
-    _pyWorker.addEventListener("message", function (ev) {
-        if (ev.data.type === "display" && ev.data.cell) {
-            var cell = JSON.parse(ev.data.cell);
-            /* Live stdout streaming from engine._LiveStdout — route to the
-               dashboard debug log instead of a notebook cell so users see
-               solver iteration progress while a long simulation is running. */
-            if (cell.mime === "text/x-log") {
-                logDebug("info", "[py] " + cell.content);
-                return;
-            }
-            var target = _activeOutputTarget ? document.getElementById(_activeOutputTarget) : null;
-            if (target) renderOutputCell(cell, target);
-        }
-    });
-}
+/* display() message routing is wired inside attachPyWorkerHandlers above;
+   re-creating the worker (stop-simulation path) rewires it automatically. */
 
 /* === CardManager ===
  * layout: "stack" (full width, default) or "grid" (multi-column)
@@ -1144,6 +1157,65 @@ function updateDashboardSummary() {
 
 var _activeJob = null;
 var _simStatus = { state: "idle", lastFinished: null, lastJobId: null, runCount: 0 };
+/* Which execution path owns the currently running simulation, so the stop
+   button knows where to send the cancel signal. null when no sim is running. */
+var _runningMode = null;         // null | "pyodide" | "server"
+var _currentPyRunId = null;      // id of the in-flight run_code message
+
+function setRunBtnState(isRunning) {
+    var btn = document.getElementById("btn-run-sim");
+    if (!btn) return;
+    if (isRunning) {
+        btn.innerHTML = "&#9632; Stop simulation";
+        btn.classList.add("danger");
+        btn.classList.remove("primary");
+    } else {
+        btn.innerHTML = "&#9654; Run simulation";
+        btn.classList.add("primary");
+        btn.classList.remove("danger");
+    }
+}
+
+function stopSimulation() {
+    var mode = _runningMode;
+    if (!mode) return;
+    logDebug("info", "Stopping simulation (" + mode + ")...");
+    showToast("Stopping simulation...");
+
+    if (mode === "pyodide") {
+        /* No cooperative cancellation in Pyodide 0.25 — the worker is
+           blocked inside exec(). Only terminate() stops it. That also
+           loses all micropip-installed packages, so the next run has to
+           re-bootstrap (~5–10 s). Acceptable: the user explicitly asked
+           to stop. */
+        try { _pyWorker.terminate(); } catch (e) {}
+        /* Reject any in-flight callbacks so awaiting call sites (including
+           the run handler) clean up instead of hanging forever. */
+        Object.keys(_pyCallbacks).forEach(function (id) {
+            try { _pyCallbacks[id].reject(new Error("Simulation stopped by user")); } catch (e) {}
+            delete _pyCallbacks[id];
+        });
+        _pyWorker = createPyWorker();
+        logDebug("info", "Worker terminated; a fresh one will boot on the next run");
+    } else if (mode === "server") {
+        if (_activeJob && _activeJob.jobId && _activeJob.tag) {
+            ZoomyBackend.cancel(_activeJob.tag, _activeJob.jobId).then(function (res) {
+                logDebug("info", "Server job cancelled: " + JSON.stringify(res));
+            }).catch(function (err) {
+                logDebug("warn", "Cancel request failed: " + (err.message || err));
+            });
+        }
+        _activeJob = null;
+    }
+
+    _runningMode = null;
+    _currentPyRunId = null;
+    _simStatus.state = "idle";
+    _simStatus.progressHtml = "";
+    updateDashboardStatus();
+    setRunBtnState(false);
+    setTimeout(hideToast, 1500);
+}
 
 function updateDashboardStatus() {
     var el = document.querySelector("#card-dash-run .card-description");
@@ -1518,6 +1590,9 @@ document.addEventListener("DOMContentLoaded", function () {
         ZoomyBackend.connect(url);
     };
     document.getElementById("btn-run-sim").onclick = async function () {
+        /* Button is a toggle: while a sim is running it stops instead. */
+        if (_runningMode) { stopSimulation(); return; }
+
         var modelSel = managers.model && managers.model.selectedId;
         var meshSel = managers.mesh && managers.mesh.selectedId;
         var solverSel = managers.solver && managers.solver.selectedId;
@@ -1581,10 +1656,16 @@ document.addEventListener("DOMContentLoaded", function () {
             logDebug("info", "Code:\n" + code.substring(0, 500));
             showToast("Running via Pyodide...");
             updateDashboardJob({ job_id: "pyodide", status: "running" });
+            _runningMode = "pyodide";
+            setRunBtnState(true);
             var msgId = "run-" + Date.now();
+            _currentPyRunId = msgId;
             var runHandler = function (ev) {
                 if (ev.data.id !== msgId) return;
                 _pyWorker.removeEventListener("message", runHandler);
+                /* If the user clicked Stop, stopSimulation() already reset
+                   state and terminated the worker; ignore any straggler. */
+                if (_runningMode !== "pyodide" || _currentPyRunId !== msgId) return;
                 if (ev.data.type === "result") {
                     logDebug("info", "Pyodide result received");
                     showToast("Simulation complete!"); setTimeout(hideToast, 3000);
@@ -1598,6 +1679,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     showToast("Error — see Log"); setTimeout(hideToast, 3000);
                     updateDashboardJob({ job_id: "pyodide", status: "failed" });
                 }
+                _runningMode = null;
+                _currentPyRunId = null;
+                setRunBtnState(false);
             };
             _pyWorker.addEventListener("message", runHandler);
             _pyWorker.postMessage({ cmd: "run_code", code: code, id: msgId });
@@ -1619,6 +1703,8 @@ document.addEventListener("DOMContentLoaded", function () {
         try {
             var resp = await ZoomyBackend.submit(tag, zoomyCase);
             _activeJob = { jobId: resp.job_id, tag: tag, startTime: Date.now() };
+            _runningMode = "server";
+            setRunBtnState(true);
             logDebug("info", "Job submitted: " + resp.job_id);
             showToast("Job " + resp.job_id + " running...");
             updateDashboardJob({ job_id: resp.job_id, status: "queued" });
@@ -1646,15 +1732,26 @@ document.addEventListener("DOMContentLoaded", function () {
                         showToast("HDF5 download failed — see Log"); setTimeout(hideToast, 3000);
                     });
                     _activeJob = null;
+                    _runningMode = null;
+                    setRunBtnState(false);
                 } else if (status.status === "failed") {
                     logDebug("error", "Job " + resp.job_id + " failed:\n" + (status.error || "unknown"));
                     showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
                     _activeJob = null;
+                    _runningMode = null;
+                    setRunBtnState(false);
+                } else if (status.status === "cancelled") {
+                    logDebug("info", "Job " + resp.job_id + " cancelled");
+                    _activeJob = null;
+                    _runningMode = null;
+                    setRunBtnState(false);
                 }
             });
         } catch (err) {
             logDebug("error", "Submit failed: " + err);
             showToast("Submit failed — see Log on Dashboard"); setTimeout(hideToast, 3000);
+            _runningMode = null;
+            setRunBtnState(false);
         }
     };
 

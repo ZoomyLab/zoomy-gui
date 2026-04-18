@@ -71,6 +71,9 @@ button { margin-bottom: 0; }
 .sidebar-btn:hover { background: var(--c-hover); }
 .sidebar-btn.primary { background: var(--c-accent); color: var(--c-surface); border-color: var(--c-accent); }
 .sidebar-btn.primary:hover { opacity: 0.85; }
+.sidebar-btn.danger { background: #c0392b; color: #fff; border-color: #a93226; }
+.sidebar-btn.danger:hover { background: #a93226; }
+.sidebar-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 .sidebar-list { list-style: none; padding: 0; margin: 0 0 0.1rem 0; }
 .sidebar-list-item {
