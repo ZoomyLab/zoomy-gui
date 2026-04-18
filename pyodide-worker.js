@@ -22,6 +22,17 @@ async function initPyodide() {
 async function installParam() {
     if (paramReady) return;
     await initPyodide();
+    /* h5py must load BEFORE zoomy_core is imported. zoomy_core.mesh.base_mesh
+       does a try/except import of h5py at module scope and caches
+       _HAVE_H5PY; if h5py isn't available at that first import, later
+       write_to_hdf5 / from_hdf5 calls will RuntimeError even after the
+       package loads. The pre-extract loop imports zoomy_core, so we can't
+       defer h5py to installExec. */
+    try {
+        await py.loadPackage(["h5py"]);
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "h5py failed: " + (e.message || e) });
+    }
     var mp = py.pyimport("micropip");
     await mp.install(["param", "zoomy-core"]);
     var code = await fetch("param_extract.py").then(function (r) { return r.text(); });

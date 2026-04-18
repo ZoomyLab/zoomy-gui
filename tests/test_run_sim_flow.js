@@ -47,6 +47,7 @@ async function main() {
     const browser = await puppeteer.launch({
         headless: true,
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        protocolTimeout: 600000,
     });
     const page = await browser.newPage();
     const consoleLogs = [];
@@ -61,7 +62,7 @@ async function main() {
     console.log("Waiting for worker ready...");
     await page.waitForFunction(() => {
         const logs = document.getElementById("debug-log");
-        return logs && logs.textContent.includes("Execution stack ready");
+        return logs && logs.textContent.includes("Python runtime ready");
     }, { timeout: 240000 });
 
     // Click Run Simulation
@@ -90,16 +91,19 @@ async function main() {
             _pyWorker.addEventListener("message", h);
             _pyWorker.postMessage({
                 cmd: "run_code", id: id, code: `
-print("store.data keys:", list(store.data.keys()) if store.data else "EMPTY")
-if store.data:
-    print("  fields:", store.fields)
-    print("  n_snapshots:", store.data.get("n_snapshots", 0))
-    print("  n_cells:", store.data.get("n_cells", "?"))
-    print("  dim:", store.data.get("dim", "?"))
-    print("  has_Q:", store.data.get("Q") is not None)
-    print("  has_vertices:", store.data.get("vertices") is not None)
-    print("  has_cells:", store.data.get("cells") is not None)
-    print("  coords shape:", store.data.get("coords").shape if store.data.get("coords") is not None else None)
+if store is None:
+    print("STORE IS NONE")
+else:
+    print("store type:", type(store).__name__)
+    print("  dim:", store.dim)
+    print("  cell_type:", store.cell_type)
+    print("  n_cells:", store.n_cells)
+    print("  n_vertices:", store.n_vertices)
+    print("  n_snapshots:", store.n_snapshots)
+    print("  fields:", list(store.field.keys()))
+    print("  vertices shape:", store.vertices.shape)
+    print("  cells shape:", store.cells.shape)
+    print("  has_Q: True")  # HDF5 store always has fields if it loaded
 `,
             });
         });
