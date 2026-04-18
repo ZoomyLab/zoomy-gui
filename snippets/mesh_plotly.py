@@ -36,7 +36,11 @@ values = np.asarray(store.get_cell(time_step, field_name))
 vertices = np.asarray(store.vertices)
 cells = np.asarray(store.cells)
 dim = store.dim
-t_label = f"step {time_step}/{store.n_snapshots - 1}"
+# Prefer real simulation time in the title; fall back to step number.
+if store.times is not None and len(store.times):
+    t_label = f"t = {float(store.times[time_step]):.3f}"
+else:
+    t_label = f"step {time_step}"
 
 
 def _triangulate(cells_arr):
