@@ -234,6 +234,20 @@ def process_code(code_string):
             res["plot_type"] = "matplotlib"
             res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 
+    except KeyboardInterrupt:
+        # Cooperative cancel: the main thread wrote SIGINT into the shared
+        # interrupt buffer, Pyodide raised KeyboardInterrupt between
+        # bytecodes. Close any open store so the next run's write_to_hdf5
+        # doesn't collide with a half-finished handle.
+        s = scope.get("store")
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
+            scope["store"] = None
+        res["status"] = "cancelled"
+        res["output"] = "Simulation cancelled by user.\n"
     except Exception:
         import traceback
         res["status"] = "error"

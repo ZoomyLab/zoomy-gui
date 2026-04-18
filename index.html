@@ -7,10 +7,13 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/milligram@1.4.1/dist/milligram.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
     <link rel="stylesheet" href="style.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <!-- crossorigin="anonymous" lets these cross-origin scripts satisfy
+         COEP require-corp once the service worker makes the page
+         cross-origin isolated (needed for SharedArrayBuffer). -->
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="core.js"></script>
     <script src="param_widgets.js" defer></script>
     <script src="backend.js" defer></script>
@@ -63,8 +66,28 @@
     <div id="loading-toast"></div>
 
     <script>
+    // Register the service worker, which injects COOP/COEP/CORP headers so
+    // the page reaches crossOriginIsolated and SharedArrayBuffer works.
+    // On the very first visit there's no controller yet — once the SW
+    // activates we reload once so the navigation goes through it. The
+    // sessionStorage sentinel prevents a reload loop if the SW somehow
+    // fails to inject the headers (e.g. the first navigation bypasses the
+    // SW entirely on some browsers).
     if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("sw.js").catch(function () {});
+        navigator.serviceWorker.register("sw.js").then(function () {
+            if (window.crossOriginIsolated) return;
+            if (navigator.serviceWorker.controller) return;
+            if (sessionStorage.getItem("zoomy-coi-reload")) return;
+            navigator.serviceWorker.addEventListener("controllerchange", function onCtrl() {
+                navigator.serviceWorker.removeEventListener("controllerchange", onCtrl);
+                if (window.crossOriginIsolated) return;
+                sessionStorage.setItem("zoomy-coi-reload", "1");
+                location.reload();
+            });
+        }).catch(function () {});
+        // Reset the sentinel once the page actually reaches COI so the next
+        // cold visit is free to reload again if needed.
+        if (window.crossOriginIsolated) sessionStorage.removeItem("zoomy-coi-reload");
     }
     // Display build version in footer
     fetch("version.json?t=" + Date.now()).then(function (r) { return r.json(); }).then(function (v) {

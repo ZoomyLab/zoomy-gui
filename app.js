@@ -3,7 +3,21 @@
 window._aceReady = null;
 window._plotlyReady = null;
 
-function loadScript(src) { return new Promise(function (ok, fail) { var s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); }); }
+function loadScript(src) {
+    return new Promise(function (ok, fail) {
+        var s = document.createElement("script");
+        s.src = src;
+        /* Request cross-origin scripts with CORS so the response isn't
+           opaque — opaque responses can't satisfy COEP require-corp even
+           with the CORP header our service worker injects. */
+        if (/^https?:\/\//.test(src) && !src.startsWith(location.origin)) {
+            s.crossOrigin = "anonymous";
+        }
+        s.onload = ok;
+        s.onerror = fail;
+        document.head.appendChild(s);
+    });
+}
 function showToast(msg) { var t = document.getElementById("loading-toast"); if (t) { t.style.display = "block"; t.textContent = msg; } }
 function hideToast() { var t = document.getElementById("loading-toast"); if (t) t.style.display = "none"; }
 
@@ -48,6 +62,21 @@ var _pyWorker = null;
 var _pyCallbacks = {};
 var _pyMsgId = 0;
 
+/* Cooperative-cancel channel. If the page is cross-origin isolated
+   (served with COOP/COEP headers — our service worker injects those)
+   SharedArrayBuffer is available; we stash a 1-byte shared buffer here,
+   hand the same underlying SAB to the worker, and Pyodide's
+   setInterruptBuffer watches it. Writing 2 (SIGINT) interrupts Python
+   between bytecodes — no worker.terminate(), no reboot. When SAB is
+   unavailable (first load before SW activates, or a browser without
+   COI support) we fall back to terminate+recreate. */
+var _pyInterruptBuffer = null;
+var _pyInterruptView = null;
+if (typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated) {
+    _pyInterruptBuffer = new SharedArrayBuffer(1);
+    _pyInterruptView = new Uint8Array(_pyInterruptBuffer);
+}
+
 /* Attach the main message router to a (re)created worker. Split out of the
    initial declaration so the stop-simulation path can terminate the current
    worker and spin up a fresh one with the same wiring. */
@@ -90,6 +119,12 @@ function attachPyWorkerHandlers(w) {
 function createPyWorker() {
     var w = new Worker("pyodide-worker.js");
     attachPyWorkerHandlers(w);
+    /* Hand the shared interrupt buffer over as soon as the worker exists.
+       The worker wires it into Pyodide after the runtime boots. */
+    if (_pyInterruptBuffer) {
+        _pyInterruptView[0] = 0;
+        w.postMessage({ cmd: "set_interrupt_buffer", buffer: _pyInterruptBuffer });
+    }
     return w;
 }
 
@@ -1183,20 +1218,27 @@ function stopSimulation() {
     showToast("Stopping simulation...");
 
     if (mode === "pyodide") {
-        /* No cooperative cancellation in Pyodide 0.25 — the worker is
-           blocked inside exec(). Only terminate() stops it. That also
-           loses all micropip-installed packages, so the next run has to
-           re-bootstrap (~5–10 s). Acceptable: the user explicitly asked
-           to stop. */
-        try { _pyWorker.terminate(); } catch (e) {}
-        /* Reject any in-flight callbacks so awaiting call sites (including
-           the run handler) clean up instead of hanging forever. */
-        Object.keys(_pyCallbacks).forEach(function (id) {
-            try { _pyCallbacks[id].reject(new Error("Simulation stopped by user")); } catch (e) {}
-            delete _pyCallbacks[id];
-        });
-        _pyWorker = createPyWorker();
-        logDebug("info", "Worker terminated; a fresh one will boot on the next run");
+        if (_pyInterruptView) {
+            /* Cooperative cancel: write SIGINT (2) to the shared buffer.
+               Pyodide's setInterruptBuffer polls this between bytecodes
+               and raises KeyboardInterrupt in Python, which engine.py
+               catches and returns a clean "stopped" status. The worker
+               survives — no re-boot, next run uses the cached runtime. */
+            _pyInterruptView[0] = 2;
+            logDebug("info", "Interrupt sent (cooperative); worker keeps its state");
+        } else {
+            /* SharedArrayBuffer unavailable (page not cross-origin
+               isolated yet, or a browser without support). Fall back to
+               terminate + recreate — costs one Pyodide re-boot (~5–10 s)
+               on the next run, but it's the only way to stop exec(). */
+            try { _pyWorker.terminate(); } catch (e) {}
+            Object.keys(_pyCallbacks).forEach(function (id) {
+                try { _pyCallbacks[id].reject(new Error("Simulation stopped by user")); } catch (e) {}
+                delete _pyCallbacks[id];
+            });
+            _pyWorker = createPyWorker();
+            logDebug("info", "Worker terminated (no SAB); a fresh one will boot on the next run");
+        }
     } else if (mode === "server") {
         if (_activeJob && _activeJob.jobId && _activeJob.tag) {
             ZoomyBackend.cancel(_activeJob.tag, _activeJob.jobId).then(function (res) {
@@ -1208,12 +1250,18 @@ function stopSimulation() {
         _activeJob = null;
     }
 
-    _runningMode = null;
-    _currentPyRunId = null;
-    _simStatus.state = "idle";
-    _simStatus.progressHtml = "";
-    updateDashboardStatus();
-    setRunBtnState(false);
+    /* On the cooperative-cancel path the worker is still alive and will
+       return a KeyboardInterrupt result for the in-flight run_code — the
+       existing run handler resets state when it arrives, so we let it do
+       that and only clean up here for the terminate / server paths. */
+    if (mode === "server" || (mode === "pyodide" && !_pyInterruptView)) {
+        _runningMode = null;
+        _currentPyRunId = null;
+        _simStatus.state = "idle";
+        _simStatus.progressHtml = "";
+        updateDashboardStatus();
+        setRunBtnState(false);
+    }
     setTimeout(hideToast, 1500);
 }
 
@@ -1279,6 +1327,11 @@ function updateDashboardJob(status) {
         setTimeout(function () {
             if (_simStatus.state === "failed") { _simStatus.state = "idle"; updateDashboardStatus(); }
         }, 10000);
+    } else if (s === "cancelled") {
+        _simStatus.state = "idle";
+        _simStatus.lastFinished = new Date().toLocaleString() + " (cancelled)";
+        _simStatus.lastJobId = jobId;
+        _simStatus.progressHtml = '';
     } else if (s === "queued") {
         _simStatus.state = "queued";
     } else {
@@ -1666,19 +1719,32 @@ document.addEventListener("DOMContentLoaded", function () {
                 /* If the user clicked Stop, stopSimulation() already reset
                    state and terminated the worker; ignore any straggler. */
                 if (_runningMode !== "pyodide" || _currentPyRunId !== msgId) return;
+                var cancelled = false;
                 if (ev.data.type === "result") {
-                    logDebug("info", "Pyodide result received");
-                    showToast("Simulation complete!"); setTimeout(hideToast, 3000);
-                    updateDashboardJob({ job_id: "pyodide", status: "complete" });
                     try {
                         var result = JSON.parse(ev.data.data);
+                        cancelled = (result.status === "cancelled");
                         if (result.output) logDebug("info", result.output);
                     } catch (e) { logDebug("info", String(ev.data.data)); }
+                    if (cancelled) {
+                        logDebug("info", "Simulation cancelled by user");
+                        showToast("Simulation stopped"); setTimeout(hideToast, 2000);
+                        updateDashboardJob({ job_id: "pyodide", status: "cancelled" });
+                    } else {
+                        logDebug("info", "Pyodide result received");
+                        showToast("Simulation complete!"); setTimeout(hideToast, 3000);
+                        updateDashboardJob({ job_id: "pyodide", status: "complete" });
+                    }
                 } else if (ev.data.type === "error") {
                     logDebug("error", "Pyodide error: " + ev.data.error);
                     showToast("Error — see Log"); setTimeout(hideToast, 3000);
                     updateDashboardJob({ job_id: "pyodide", status: "failed" });
                 }
+                /* Re-arm the shared interrupt buffer so the next run starts
+                   with a clean SIGINT flag (Pyodide clears it internally on
+                   each exec start, but the explicit reset keeps intent
+                   visible and guards against any ordering quirks). */
+                if (_pyInterruptView) _pyInterruptView[0] = 0;
                 _runningMode = null;
                 _currentPyRunId = null;
                 setRunBtnState(false);
