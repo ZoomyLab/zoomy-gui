@@ -134,32 +134,39 @@ else:
     });
     await new Promise(r => setTimeout(r, 500));
 
-    console.log("Selecting mesh_mpl card and clicking refresh...");
+    console.log("Selecting mesh_mpl card and clicking run...");
     await page.evaluate(() => {
         const card = document.getElementById("card-vis-mesh-mpl");
         if (card) card.click();
     });
     await new Promise(r => setTimeout(r, 500));
-    const refreshClicked = await page.evaluate(() => {
-        const btn = document.getElementById("card-vis-mesh-mpl-refresh");
+    const runClicked = await page.evaluate(() => {
+        /* Phase 2: unified play button replaces the old per-card refresh button. */
+        const btn = document.getElementById("card-vis-mesh-mpl-run");
         if (btn) { btn.click(); return true; }
         return false;
     });
 
-    if (refreshClicked) {
+    if (runClicked) {
         await page.waitForFunction(() => {
-            const inter = document.getElementById("card-vis-mesh-mpl-interactive");
-            return inter && inter.innerHTML.length > 100;
+            const cells = document.getElementById("card-vis-mesh-mpl-output");
+            if (!cells) return false;
+            /* Wait until a real plot/svg cell lands (the preview img
+               doesn't count — its id matches .card-output-preview). */
+            return cells.querySelector(".output-cell-plotly, .output-cell-svg, .output-cell-text");
         }, { timeout: 60000 }).catch(() => {});
         const mplResult = await page.evaluate(() => {
-            const inter = document.getElementById("card-vis-mesh-mpl-interactive");
-            const img = inter && inter.querySelector("img");
-            const pre = inter && inter.querySelector("pre");
+            const cells = document.getElementById("card-vis-mesh-mpl-output");
+            if (!cells) return { hasImage: false, hasError: false, contentLen: 0 };
+            const hasImage = !!cells.querySelector(".output-cell-plotly, .output-cell-svg");
+            const errCell = cells.querySelector(".output-cell-text");
+            const errText = errCell ? errCell.textContent : "";
+            const isError = /Traceback|Error|error/.test(errText);
             return {
-                hasImage: !!img,
-                hasError: !!pre,
-                errorText: pre ? pre.textContent.substring(0, 800) : null,
-                contentLen: inter ? inter.innerHTML.length : 0,
+                hasImage,
+                hasError: isError,
+                errorText: isError ? errText.substring(0, 800) : null,
+                contentLen: cells.innerHTML.length,
             };
         });
         console.log("Mesh viewer result:", mplResult);
