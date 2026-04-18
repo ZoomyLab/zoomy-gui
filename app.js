@@ -800,7 +800,7 @@ function createCard(targetId, card, mgr, cardType) {
     if (hasPreview || hasRefresh) {
         var previewSrc = card.preview || card._autoPreview;
         html += '<div class="card-preview" id="' + targetId + '-pw">';
-        if (previewSrc) html += '<img id="' + targetId + '-preview" src="' + previewSrc + '" onerror="this.style.display=\'none\'">';
+        if (previewSrc) html += '<img id="' + targetId + '-preview" loading="lazy" decoding="async" src="' + previewSrc + '" onerror="this.style.display=\'none\'">';
         html += '<div class="card-preview-interactive" id="' + targetId + '-interactive"></div>';
         html += '</div>';
     }
@@ -809,6 +809,9 @@ function createCard(targetId, card, mgr, cardType) {
     if (card.description) html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
     html += '<div class="card-actions">';
     if (hasTimeline) html += '<div class="card-timeline"><input type="range" min="0" max="100" value="0" id="' + targetId + '-tl"><span id="' + targetId + '-ts">0</span></div>';
+    /* Field selector: populated from store_meta.fields after first run.
+       Sits between the timeline and the refresh/play button. */
+    if (cardType === "vis") html += '<select class="card-select" id="' + targetId + '-field-select" disabled title="Field"><option>\u2014</option></select>';
     if (hasRefresh) html += '<button class="icon-btn" id="' + targetId + '-refresh" title="Run">&#9654;</button>';
     if (hasGear) html += '<button class="icon-btn" id="' + targetId + '-gear" title="Parameters">&#9881;</button>';
     if (hasEdit) html += '<button class="icon-btn" id="' + targetId + '-edit" title="Edit code">&#9998;</button>';
@@ -866,6 +869,22 @@ function createCard(targetId, card, mgr, cardType) {
                     }, 300);
                 });
             }
+        }
+    }
+
+    /* Field selector auto-refresh (debounced). Populated by the refresh
+       handler from store_meta.fields. */
+    if (cardType === "vis") {
+        var fs = document.getElementById(targetId + "-field-select");
+        if (fs) {
+            var _fsDebounce = null;
+            fs.addEventListener("change", function () {
+                if (_fsDebounce) clearTimeout(_fsDebounce);
+                _fsDebounce = setTimeout(function () {
+                    var refreshBtn = document.getElementById(targetId + "-refresh");
+                    if (refreshBtn && !refreshBtn.disabled) refreshBtn.click();
+                }, 200);
+            });
         }
     }
 
@@ -1034,6 +1053,14 @@ function createCard(targetId, card, mgr, cardType) {
                 if (tlSlider) {
                     code = "time_step = " + tlSlider.value + "\n" + code;
                 }
+                /* Inject field_name from the field selector, if one is
+                   active. Snippets honour this convention. */
+                var fieldSel = document.getElementById(targetId + "-field-select");
+                if (fieldSel && !fieldSel.disabled && fieldSel.value && fieldSel.value !== "\u2014") {
+                    /* Escape the quotes just in case. */
+                    var safe = fieldSel.value.replace(/"/g, '\\"');
+                    code = 'field_name = "' + safe + '"\n' + code;
+                }
                 var resultJson = await runCode(code);
                 var result = JSON.parse(resultJson);
                 var preview = document.getElementById(targetId + "-preview");
@@ -1059,6 +1086,25 @@ function createCard(targetId, card, mgr, cardType) {
                         tlSlider.max = nSnaps - 1;
                         var tsLabel = document.getElementById(targetId + "-ts");
                         if (tsLabel) tsLabel.textContent = tlSlider.value + "/" + (nSnaps - 1);
+                    }
+                }
+
+                /* Populate the field selector from store_meta.fields. Keep
+                   the current selection if it's still valid; otherwise pick
+                   the first option. */
+                if (result.store_meta && fieldSel) {
+                    var fields = result.store_meta.fields || [];
+                    if (fields.length) {
+                        var prev = fieldSel.value;
+                        var html = "";
+                        fields.forEach(function (name) {
+                            html += '<option value="' + name + '">' + name + '</option>';
+                        });
+                        fieldSel.innerHTML = html;
+                        if (fields.indexOf(prev) !== -1) {
+                            fieldSel.value = prev;
+                        }
+                        fieldSel.disabled = false;
                     }
                 }
             } catch (err) { console.error("Runtime error:", err); }
