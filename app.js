@@ -1626,17 +1626,24 @@ document.addEventListener("DOMContentLoaded", function () {
                 updateDashboardJob(status);
                 if (status.status === "complete") {
                     logDebug("info", "Job " + resp.job_id + " complete");
-                    showToast("Job complete — fetching results...");
-                    /* Query results from server and populate the store */
-                    ZoomyBackend.getResults(tag, resp.job_id, true).then(function (data) {
-                        logDebug("info", "Fetched results: " + data.n_cells + " cells, " +
-                            (data.n_snapshots || 1) + " snapshot(s)");
-                        return pyCall("load_results", { data: data });
+                    showToast("Job complete — downloading HDF5…");
+                    /* Server path mirrors the local one: download the HDF5
+                       output, write to Pyodide's VFS, and have engine.open_hdf5
+                       build the store via zoomy_plotting.read_hdf5. */
+                    var url = ZoomyBackend.getUrlForTag(tag) +
+                              "/api/v1/jobs/" + resp.job_id + "/results/hdf5";
+                    fetch(url).then(function (r) {
+                        if (!r.ok) throw new Error("HTTP " + r.status);
+                        return r.arrayBuffer();
+                    }).then(function (buf) {
+                        logDebug("info", "HDF5 downloaded: " + buf.byteLength + " bytes");
+                        var path = "/tmp/zoomy_sim/" + resp.job_id + ".h5";
+                        return pyCall("write_hdf5_bytes", { path: path, bytes: new Uint8Array(buf) });
                     }).then(function () {
                         showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
                     }).catch(function (err) {
-                        logDebug("error", "Failed to fetch results: " + err);
-                        showToast("Results fetch failed — see Log"); setTimeout(hideToast, 3000);
+                        logDebug("error", "Failed to fetch HDF5: " + err);
+                        showToast("HDF5 download failed — see Log"); setTimeout(hideToast, 3000);
                     });
                     _activeJob = null;
                 } else if (status.status === "failed") {
