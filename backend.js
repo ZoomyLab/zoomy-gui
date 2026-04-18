@@ -79,6 +79,23 @@ var ZoomyBackend = {
         }).then(function (r) { return r.json(); });
     },
 
+    cancel: function (tag, jobId) {
+        var url = this.getUrlForTag(tag);
+        if (!url) return Promise.reject("No backend for tag: " + tag);
+        /* Stop polling immediately — the server's DELETE response is the
+           final word, we don't need one more status fetch after that. */
+        var key = tag + ":" + jobId;
+        if (this._pollTimers[key]) {
+            clearInterval(this._pollTimers[key]);
+            delete this._pollTimers[key];
+        }
+        return fetch(url + "/api/v1/jobs/" + jobId, { method: "DELETE" })
+            .then(function (r) {
+                if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);
+                return r.status === 404 ? { status: "not_found" } : r.json();
+            });
+    },
+
     getResults: function (tag, jobId, timeline) {
         var url = this.getUrlForTag(tag);
         if (!url) return Promise.reject("No backend for tag: " + tag);
