@@ -2,7 +2,7 @@
 
 var py = null;
 
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js");
+importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js");
 
 /* Silence the chatty "Loading <pkg> from CDN" stdout that Pyodide emits
    during loadPackage. We still capture unexpected stderr. */
