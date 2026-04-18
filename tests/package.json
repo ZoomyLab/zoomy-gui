@@ -3,12 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "node test_syntax.js && node test_e2e_browser.js",
+    "test": "node test_syntax.js && node test_card_interactions.js && node test_param_widgets.js && node test_run_sim_flow.js",
     "test:syntax": "node test_syntax.js",
-    "test:pipeline": "node test_viz_pipeline.js",
-    "test:e2e": "node test_e2e_browser.js"
+    "test:cards": "node test_card_interactions.js",
+    "test:widgets": "node test_param_widgets.js",
+    "test:sim": "node test_run_sim_flow.js",
+    "test:perf": "node test_perf.js",
+    "test:visual": "node test_visual_regression.js",
+    "test:worker": "node test_worker_boot.js"
   },
   "dependencies": {
+    "pixelmatch": "^6.0.0",
+    "pngjs": "^7.0.0",
     "puppeteer": "^24.41.0",
     "pyodide": "^0.29.0"
   }
