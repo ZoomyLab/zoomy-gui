@@ -1,18 +1,20 @@
 /**
  * GUI performance measurement — page load + per-tab switch timings.
  *
- * Serves the production zoomy_gui/ files on a local HTTP server, launches
- * headless Chromium, records:
+ * By default serves the production zoomy_gui/ files on a local HTTP server.
+ * Pass an environment variable to measure against a deployed URL instead:
  *
+ *   TARGET_URL=https://zoomylab.github.io/Zoomy/gui/ node test_perf.js
+ *
+ * Records:
  *   - domContentLoaded / load times
  *   - bytes + count of resources fetched until network-idle, grouped by
  *     URL prefix (cards/, snippets/, previews/, CDN, other)
  *   - per-tab activation time: click the tab button, measure time until
  *     the page is idle again
  *
- * Writes a markdown table to tests/perf_report.md.
- *
- * Run: `node test_perf.js`
+ * Writes a markdown table to tests/perf_report.md (or TARGET_URL host-
+ * suffixed if the variable is set).
  */
 const puppeteer = require("puppeteer");
 const http = require("http");
@@ -20,8 +22,12 @@ const fs = require("fs");
 const path = require("path");
 
 const GUI_DIR = path.resolve(__dirname, "..");
-const REPORT = path.join(__dirname, "perf_report.md");
 const PORT = 8767;
+const TARGET_URL = process.env.TARGET_URL || null;
+const REPORT = path.join(
+    __dirname,
+    TARGET_URL ? "perf_report_remote.md" : "perf_report.md",
+);
 
 const MIME = {
     ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
@@ -50,24 +56,28 @@ function startServer() {
 }
 
 
-function categorise(url) {
-    if (!url.startsWith(`http://127.0.0.1:${PORT}/`)) return "cdn";
-    const p = url.slice(`http://127.0.0.1:${PORT}/`.length);
-    if (p.startsWith("cards/"))    return "cards";
-    if (p.startsWith("snippets/")) return "snippets";
-    if (p.startsWith("previews/")) return "previews";
-    if (p === "version.json")      return "version";
-    if (p.endsWith(".js") || p.endsWith(".css") || p.endsWith(".html"))
-        return "app";
-    if (p.endsWith(".py"))         return "py";
-    return "other";
+function categoriseFactory(baseUrl) {
+    return function (url) {
+        if (!url.startsWith(baseUrl)) return "cdn";
+        const p = url.slice(baseUrl.length).replace(/^\//, "");
+        if (p.startsWith("cards/"))    return "cards";
+        if (p.startsWith("snippets/")) return "snippets";
+        if (p.startsWith("previews/")) return "previews";
+        if (p === "version.json")      return "version";
+        if (p.endsWith(".js") || p.endsWith(".css") || p.endsWith(".html"))
+            return "app";
+        if (p.endsWith(".py"))         return "py";
+        return "other";
+    };
 }
 
+
+let _categorise;   // set in main() after we know the base URL
 
 function summarise(resources) {
     const by = {};
     for (const r of resources) {
-        const key = categorise(r.name);
+        const key = _categorise(r.name);
         by[key] ||= { count: 0, bytes: 0, avg_ms: 0, total_ms: 0 };
         by[key].count += 1;
         by[key].bytes += r.transferSize || 0;
@@ -110,8 +120,17 @@ function table(rows) {
 
 
 async function main() {
-    console.log("Starting local server…");
-    const server = await startServer();
+    let server = null;
+    let baseUrl;
+    if (TARGET_URL) {
+        baseUrl = TARGET_URL.endsWith("/") ? TARGET_URL : TARGET_URL + "/";
+        console.log("Measuring remote:", baseUrl);
+    } else {
+        console.log("Starting local server…");
+        server = await startServer();
+        baseUrl = `http://127.0.0.1:${PORT}/`;
+    }
+    _categorise = categoriseFactory(baseUrl);
 
     const browser = await puppeteer.launch({
         headless: true,
@@ -122,7 +141,7 @@ async function main() {
 
     console.log("Loading page…");
     const t0 = Date.now();
-    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load", timeout: 60000 });
+    await page.goto(baseUrl, { waitUntil: "load", timeout: 60000 });
     const navigationMs = Date.now() - t0;
 
     // Wait for the tab bar to be populated.
@@ -185,12 +204,13 @@ async function main() {
     }
 
     await browser.close();
-    server.close();
+    if (server) server.close();
 
     const md = [
         "# GUI perf report",
         "",
         `Generated: ${new Date().toISOString()}`,
+        `Target: ${baseUrl}`,
         "",
         `- navigation (DOMContentLoaded + idle): ${navigationMs} ms`,
         "",
