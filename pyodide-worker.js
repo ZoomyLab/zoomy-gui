@@ -9,11 +9,27 @@ importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js");
 var _origConsoleLog = self.console.log;
 self.console.log = function () { /* drop pyodide package-download chatter */ };
 
+/* SharedArrayBuffer-backed interrupt wiring. The main thread posts a
+   SAB via the "set_interrupt_buffer" command; Pyodide's setInterruptBuffer
+   polls it between bytecodes and raises KeyboardInterrupt when the main
+   thread writes 2. If the buffer arrives before Pyodide has finished
+   loading we stash it and wire it up at the end of initPyodide. */
+var _pendingInterruptBuffer = null;
+
 async function initPyodide() {
     if (py) return py;
     postMessage({ type: "log", level: "info", msg: "Booting Pyodide…" });
     py = await loadPyodide({ stdout: function () {}, stderr: function () {} });
     await py.loadPackage("micropip");
+    if (_pendingInterruptBuffer) {
+        try {
+            py.setInterruptBuffer(new Uint8Array(_pendingInterruptBuffer));
+            postMessage({ type: "log", level: "info", msg: "Cooperative interrupt enabled (SAB)" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "setInterruptBuffer failed: " + (e.message || e) });
+        }
+        _pendingInterruptBuffer = null;
+    }
     return py;
 }
 
@@ -132,7 +148,22 @@ onmessage = async function (e) {
         postMessage({ type: "log", level: "info", msg: msg.cmd + " (id=" + msg.id + ")" });
     }
     try {
-        if (msg.cmd === "init") {
+        if (msg.cmd === "set_interrupt_buffer") {
+            /* Wire it in now if Pyodide is already up; otherwise stash it
+               for initPyodide to install as soon as the runtime is ready. */
+            if (py) {
+                try {
+                    py.setInterruptBuffer(new Uint8Array(msg.buffer));
+                    postMessage({ type: "log", level: "info", msg: "Cooperative interrupt enabled (SAB)" });
+                } catch (e) {
+                    postMessage({ type: "log", level: "warn", msg: "setInterruptBuffer failed: " + (e.message || e) });
+                }
+            } else {
+                _pendingInterruptBuffer = msg.buffer;
+            }
+            return;
+
+        } else if (msg.cmd === "init") {
             await initPyodide();
             postMessage({ type: "ready", id: msg.id });
 
