@@ -117,11 +117,23 @@ onmessage = async function (e) {
             var result = py.globals.get("process_code")(msg.code);
             postMessage({ type: "result", id: msg.id, data: result });
 
-        } else if (msg.cmd === "load_results") {
-            /* Populate the store from server-returned JSON results. */
+        } else if (msg.cmd === "open_hdf5") {
+            /* Point the store at an HDF5 file already on Pyodide's VFS
+               (written by the solver template) or at one we just wrote
+               via write_hdf5_bytes. */
             await installExec();
-            var store = py.globals.get("store");
-            store.load_server_results(py.toPy(msg.data || {}));
+            py.globals.get("open_hdf5")(msg.path);
+            postMessage({ type: "result", id: msg.id, data: "ok" });
+
+        } else if (msg.cmd === "write_hdf5_bytes") {
+            /* Stream an HDF5 binary (e.g. downloaded from the server's
+               /jobs/{id}/results/hdf5 endpoint) into Pyodide's VFS, then
+               hand the path to engine.open_hdf5. */
+            await installExec();
+            var dir = msg.path.replace(/\/[^\/]*$/, "");
+            if (dir) py.FS.mkdirTree(dir);
+            py.FS.writeFile(msg.path, new Uint8Array(msg.bytes));
+            py.globals.get("open_hdf5")(msg.path);
             postMessage({ type: "result", id: msg.id, data: "ok" });
 
         } else if (msg.cmd === "describe_model") {

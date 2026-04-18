@@ -1,10 +1,34 @@
-import sys, io, json, base64
+"""Pyodide-side execution engine for the Zoomy GUI.
+
+Design notes:
+
+* Simulation results live in an HDF5 file on Pyodide's virtual filesystem
+  (``/tmp/zoomy_sim/sim.h5`` by convention). Nothing else. The browser is a
+  regular filesystem as far as Python is concerned.
+* ``store`` is a :class:`zoomy_plotting.SimulationStore` built via
+  ``zoomy_plotting.read_hdf5(path)``. Lazy field reads, no in-memory
+  arrays outside the open h5py handle.
+* No ``SimulationStore`` shim, no ``auto_save_from_scope`` sniffing,
+  no ``load_server_results`` JSON path. One code path for both the local
+  Pyodide solver and a remote server job: download the HDF5 → write to
+  VFS → read it.
+* No fallbacks. If ``store`` is unset or malformed, viz snippets raise.
+"""
+
+import base64
+import io
+import json
+import os
+import sys
+
 import numpy as np
 
-# Lazy imports — avoid loading heavy packages at module level in Pyodide.
-# plotly import is slow in WASM; matplotlib-pyodide hangs in web workers.
+
+# --- Lazy imports — plotly init is slow in WASM, matplotlib-pyodide
+#     hangs in web workers unless we go through pyplot carefully. ---
 _go = None
 _plt = None
+
 
 def _get_go():
     global _go
@@ -12,6 +36,7 @@ def _get_go():
         import plotly.graph_objects as go
         _go = go
     return _go
+
 
 def _get_plt():
     global _plt
@@ -22,26 +47,21 @@ def _get_plt():
         _plt = mpl_plt
     return _plt
 
-# --- 1. Custom Encoder for Robustness ---
+
+# --- Robust JSON encoder for numpy types (int64/float32 crash the default). ---
 class NumpyEncoder(json.JSONEncoder):
-    """
-    Explicitly handles NumPy types that often crash the default JSON serializer
-    in Pyodide/WASM environments (specifically int64 and float32).
-    """
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)
-        elif isinstance(obj, np.floating):
+        if isinstance(obj, np.floating):
             return float(obj)
-        elif isinstance(obj, np.ndarray):
+        if isinstance(obj, np.ndarray):
             return obj.tolist()
-        return super(NumpyEncoder, self).default(obj)
+        return super().default(obj)
 
-# --- 2. Rich display function (Jupyter-like output cells) ---
 
+# --- Rich display funnel (Jupyter-like output cells). ---
 class ZoomyDisplay:
-    """Rich output funnel. In Pyodide: sends to GUI output cells. In CPython: falls back to print."""
-
     def __call__(self, obj=None, *, mermaid=None, latex=None, html=None):
         if mermaid is not None:
             self._emit({"mime": "text/x-mermaid", "content": str(mermaid)})
@@ -51,13 +71,15 @@ class ZoomyDisplay:
             self._emit({"mime": "text/html", "content": str(html)})
         elif obj is None:
             return
-        elif hasattr(obj, "to_dict"):  # Plotly figure
-            self._emit({"mime": "application/vnd.plotly+json", "content": json.dumps(obj.to_dict(), cls=NumpyEncoder)})
-        elif hasattr(obj, "savefig"):  # Matplotlib figure
+        elif hasattr(obj, "to_dict"):  # plotly figure
+            self._emit({"mime": "application/vnd.plotly+json",
+                        "content": json.dumps(obj.to_dict(), cls=NumpyEncoder)})
+        elif hasattr(obj, "savefig"):  # matplotlib figure
             buf = io.BytesIO()
             obj.savefig(buf, format="svg", bbox_inches="tight")
             buf.seek(0)
-            self._emit({"mime": "image/svg+xml", "content": buf.read().decode("utf-8")})
+            self._emit({"mime": "image/svg+xml",
+                        "content": buf.read().decode("utf-8")})
         elif hasattr(obj, "to_html"):  # pandas DataFrame
             self._emit({"mime": "text/html", "content": obj.to_html()})
         elif isinstance(obj, np.ndarray):
@@ -69,7 +91,6 @@ class ZoomyDisplay:
         if hasattr(sys, "_zoomy_display_callback"):
             sys._zoomy_display_callback(cell)
         else:
-            # Fallback for CPython / CLI
             content = cell.get("content", "")
             if cell.get("mime") == "text/x-mermaid":
                 print("[mermaid]", content[:200])
@@ -78,308 +99,21 @@ class ZoomyDisplay:
             else:
                 print(content[:500] if len(content) > 500 else content)
 
+
 display = ZoomyDisplay()
 
-# --- 3. Simulation results store ---
 
-class SimulationStore:
-    """Stores simulation results for visualization.
-
-    After a solver.solve() call, use store.save(...) to make results
-    available to the visualization cards.
-
-    Usage in simulation code::
-
-        Q, Qaux = solver.solve(mesh, model, write_output=True)
-        store.save(mesh, model, Q, Qaux)
-
-    Or from HDF5 timeline::
-
-        store.load_hdf5("outputs/sim.h5")
-
-    Usage in visualization code::
-
-        data = store.data  # dict with mesh, Q, Qaux, fields, times, etc.
-    """
-
-    def __init__(self):
-        self.data = {}
-
-    def save(self, mesh, model, Q, Qaux=None, times=None, Q_timeline=None, Qaux_timeline=None):
-        """Store simulation results for visualization.
-
-        zoomy_core's solver returns Q over all cells including ghosts
-        (``n_cells = n_inner + n_boundary_faces``). The store keeps only
-        inner cells — ghost/boundary cells are a solver-internal artefact
-        and have no place in a user-facing visualisation.
-        """
-        Q = np.asarray(Q)
-        Qaux = np.asarray(Qaux) if Qaux is not None else None
-
-        # Number of inner cells. Prefer mesh.n_inner_cells; fall back to
-        # Q's column count (≡ treat as already-trimmed).
-        n_inner = getattr(mesh, "n_inner_cells", None)
-        if n_inner is None:
-            n_inner = int(Q.shape[1]) if Q.ndim > 1 else int(len(Q))
-        n_inner = int(n_inner)
-
-        # Slice out ghost/boundary cells consistently from every array.
-        def _trim(a):
-            if a is None:
-                return None
-            a = np.asarray(a)
-            if a.ndim >= 2 and a.shape[-1] > n_inner:
-                return a[..., :n_inner]
-            return a
-
-        Q = _trim(Q)
-        Qaux = _trim(Qaux)
-        Q_timeline = _trim(np.asarray(Q_timeline)) if Q_timeline is not None else None
-        Qaux_timeline = _trim(np.asarray(Qaux_timeline)) if Qaux_timeline is not None else None
-
-        # Extract field names from model
-        field_names = []
-        if hasattr(model, 'variables'):
-            v = model.variables
-            if hasattr(v, 'keys'):
-                field_names = list(v.keys())
-            elif hasattr(v, '_fields'):
-                field_names = list(v._fields)
-        if not field_names:
-            field_names = [f"q{i}" for i in range(Q.shape[0])]
-
-        aux_names = []
-        if Qaux is not None and Qaux.size > 0:
-            if hasattr(model, 'aux_variables'):
-                av = model.aux_variables
-                if hasattr(av, 'keys'):
-                    aux_names = list(av.keys())
-                elif hasattr(av, '_fields'):
-                    aux_names = list(av._fields)
-            if not aux_names:
-                aux_names = [f"aux{i}" for i in range(Qaux.shape[0])]
-
-        # Extract mesh coordinates / topology. zoomy_core BaseMesh has
-        # ``cell_centers_computed`` (method) and ``vertex_coordinates``
-        # (attribute). Other codebases use different names; try several.
-        def _try_attrs(obj, names):
-            for name in names:
-                if hasattr(obj, name):
-                    val = getattr(obj, name)
-                    try:
-                        val = val() if callable(val) else val
-                    except Exception:
-                        continue
-                    if val is not None:
-                        return np.asarray(val)
-            return None
-
-        coords = _try_attrs(mesh, ('cell_centers', 'cell_centers_computed', 'x'))
-        # zoomy_core returns (dim_embed, n_cells); trim to n_inner + take only
-        # the columns we need. Transpose to (n_inner, dim_embed) for a
-        # canonical, matplotlib-friendly layout.
-        if coords is not None and coords.ndim == 2:
-            if coords.shape[0] < coords.shape[1]:
-                coords = coords.T
-            coords = coords[:n_inner]
-
-        vertices = _try_attrs(mesh, ('vertices', 'nodes', 'vertex_coordinates'))
-        if vertices is not None and vertices.ndim == 2:
-            # Transpose (dim, n_v) → (n_v, dim) if needed.
-            if vertices.shape[0] < vertices.shape[1] and vertices.shape[0] <= 3:
-                vertices = vertices.T
-
-        cells_arr = _try_attrs(mesh, ('cells', 'connectivity', 'cell_vertices'))
-        if cells_arr is not None and cells_arr.ndim == 2:
-            # zoomy_core stores cell_vertices as (k, n_cells); transpose to (n_cells, k).
-            if cells_arr.shape[0] < cells_arr.shape[1] and cells_arr.shape[0] <= 16:
-                cells_arr = cells_arr.T
-            cells_arr = cells_arr[:n_inner]
-
-        self.data = {
-            "Q": Q,                                  # (n_vars, n_inner) final state
-            "Qaux": Qaux,
-            "fields": field_names,
-            "aux_fields": aux_names,
-            "coords": coords,                         # (n_inner, dim)
-            "vertices": vertices,                     # (n_vertices, dim_embed)
-            "cells": cells_arr,                       # (n_inner, k)
-            "dim": int(getattr(mesh, 'dim', None) or getattr(mesh, 'dimension', 1) or 1),
-            "n_cells": n_inner,
-        }
-
-        # Timeline data (multiple snapshots)
-        if Q_timeline is not None:
-            self.data["Q_timeline"] = Q_timeline
-            self.data["times"] = np.asarray(times) if times is not None else np.arange(Q_timeline.shape[0], dtype=float)
-            self.data["n_snapshots"] = int(Q_timeline.shape[0])
-        else:
-            # Single-snapshot case — still expose n_snapshots=1 so the
-            # JS can size the slider correctly.
-            self.data["n_snapshots"] = 1
-
-        if Qaux_timeline is not None:
-            self.data["Qaux_timeline"] = Qaux_timeline
-
-        print(f"[store] Saved: {len(field_names)} fields, {n_inner} cells, "
-              f"{self.data['n_snapshots']} snapshots")
-
-    def load_hdf5(self, filepath):
-        """Load results from HDF5 file written by the solver."""
-        from zoomy_core.misc.io import load_timeline_of_fields_from_hdf5
-        x, Q_all, Qaux_all, times = load_timeline_of_fields_from_hdf5(filepath)
-        self.data = {
-            "Q": Q_all[-1],
-            "Qaux": Qaux_all[-1] if Qaux_all is not None else None,
-            "Q_timeline": Q_all,
-            "Qaux_timeline": Qaux_all,
-            "times": times,
-            "n_snapshots": Q_all.shape[0],
-            "fields": [f"q{i}" for i in range(Q_all.shape[1])],
-            "aux_fields": [f"aux{i}" for i in range(Qaux_all.shape[1])] if Qaux_all is not None and Qaux_all.ndim > 1 else [],
-            "coords": x,
-            "dim": 1 if x.ndim == 1 else x.shape[1],
-            "n_cells": Q_all.shape[2],
-        }
-        print(f"[store] Loaded HDF5: {self.data['n_snapshots']} snapshots, {self.data['n_cells']} cells")
-
-    def load_server_results(self, server_data):
-        """Populate store from JSON response of GET /api/v1/jobs/{id}/results.
-
-        Accepts the dict returned by the server's get_results endpoint. Handles
-        both the final-snapshot (no Q_timeline) and full-timeline formats.
-        """
-        d = server_data or {}
-        if "Q" not in d:
-            print("[store] Server response missing Q; nothing to load.")
-            return
-
-        Q = np.asarray(d["Q"])
-        n_vars = Q.shape[0] if Q.ndim > 1 else 1
-        n_cells = Q.shape[-1]
-
-        # Server doesn't know field names yet → name them q0, q1, ...
-        fields = d.get("fields") or [f"q{i}" for i in range(n_vars)]
-        aux_fields = d.get("aux_fields") or []
-        if "Qaux" in d and d["Qaux"] is not None:
-            Qaux_arr = np.asarray(d["Qaux"])
-            n_aux = Qaux_arr.shape[0] if Qaux_arr.ndim > 1 else (1 if Qaux_arr.size else 0)
-            if not aux_fields and n_aux:
-                aux_fields = [f"aux{i}" for i in range(n_aux)]
-        else:
-            Qaux_arr = None
-
-        coords = np.asarray(d["coords"]) if d.get("coords") is not None else None
-        vertices = np.asarray(d["vertices"]) if d.get("vertices") is not None else None
-        cells = np.asarray(d["cells"]) if d.get("cells") is not None else None
-
-        self.data = {
-            "Q": Q,
-            "Qaux": Qaux_arr,
-            "fields": fields,
-            "aux_fields": aux_fields,
-            "coords": coords,
-            "vertices": vertices,
-            "cells": cells,
-            "dim": d.get("dim", 1 if coords is None or coords.ndim == 1 else coords.shape[-1]),
-            "n_cells": n_cells,
-        }
-
-        if "Q_timeline" in d and d["Q_timeline"] is not None:
-            Q_tl = np.asarray(d["Q_timeline"])
-            self.data["Q_timeline"] = Q_tl
-            self.data["n_snapshots"] = Q_tl.shape[0]
-            if "times" in d and d["times"] is not None:
-                self.data["times"] = np.asarray(d["times"])
-            else:
-                self.data["times"] = np.arange(Q_tl.shape[0], dtype=float)
-        if "Qaux_timeline" in d and d["Qaux_timeline"] is not None:
-            self.data["Qaux_timeline"] = np.asarray(d["Qaux_timeline"])
-
-        print(f"[store] Loaded server results: {len(fields)} fields, {n_cells} cells" +
-              (f", {self.data.get('n_snapshots', 0)} snapshots" if "Q_timeline" in self.data else ""))
-
-    def auto_save_from_scope(self, scope):
-        """Auto-populate store from exec-scope variables (Pyodide local runs).
-
-        Looks for Q, Qaux, mesh, model, and — if present — a full timeline
-        under any of these names: ``Q_timeline`` / ``Q_all``, ``times``,
-        ``Qaux_timeline`` / ``Qaux_all``. The solver template appends a
-        ``load_timeline_of_fields_from_hdf5`` call that produces exactly
-        those names.
-        """
-        Q = scope.get("Q")
-        mesh = scope.get("mesh")
-        model = scope.get("model")
-        if Q is None:
-            return False
-        if mesh is None:
-            print("[store] auto_save: Q found but no 'mesh' in scope; skipping.")
-            return False
-
-        Q_timeline = scope.get("Q_timeline") or scope.get("Q_all")
-        Qaux_timeline = scope.get("Qaux_timeline") or scope.get("Qaux_all")
-        times = scope.get("times")
-
-        try:
-            self.save(
-                mesh,
-                model,
-                np.asarray(Q),
-                Qaux=scope.get("Qaux"),
-                Q_timeline=np.asarray(Q_timeline) if Q_timeline is not None else None,
-                Qaux_timeline=np.asarray(Qaux_timeline) if Qaux_timeline is not None else None,
-                times=np.asarray(times) if times is not None else None,
-            )
-            return True
-        except Exception as e:
-            import traceback
-            print(f"[store] auto_save failed: {e}")
-            traceback.print_exc()
-            return False
-
-    @property
-    def fields(self):
-        """All available field names (primary + auxiliary)."""
-        return self.data.get("fields", []) + self.data.get("aux_fields", [])
-
-    def get_field(self, name, time_step=-1):
-        """Get a specific field at a specific time step."""
-        d = self.data
-        names = d.get("fields", [])
-        aux_names = d.get("aux_fields", [])
-
-        if name in names:
-            idx = names.index(name)
-            if "Q_timeline" in d and time_step >= 0:
-                return d["Q_timeline"][min(time_step, d["n_snapshots"] - 1), idx]
-            return d["Q"][idx]
-        elif name in aux_names:
-            idx = aux_names.index(name)
-            if "Qaux_timeline" in d and time_step >= 0:
-                return d["Qaux_timeline"][min(time_step, d["n_snapshots"] - 1), idx]
-            return d["Qaux"][idx] if d.get("Qaux") is not None else None
-        return None
-
-store = SimulationStore()
-
-# --- 4. Initialize Scope ---
+# --- Persistent exec scope. Populated lazily; ``store`` starts unset and
+#     is set by the solver template to a ``zoomy_plotting.SimulationStore``. ---
 if not hasattr(sys, "_shallowflow_scope"):
     sys._shallowflow_scope = {"np": np}
 
 sys._shallowflow_scope["display"] = display
-sys._shallowflow_scope["store"] = store
-sys._shallowflow_scope["_results"] = getattr(sys, "_zoomy_results", {})
-if not hasattr(sys, "_zoomy_results"):
-    sys._zoomy_results = sys._shallowflow_scope["_results"]
+sys._shallowflow_scope.setdefault("store", None)
 
+
+# --- Live stdout streaming to the GUI dashboard log. ---
 class _LiveStdout(io.StringIO):
-    """Forwards each flushed line to the GUI log via the display bridge.
-
-    Keeps the original capture behaviour (getvalue() still works) so the
-    final result's ``output`` field still contains everything.
-    """
-
     def __init__(self):
         super().__init__()
         self._buf = ""
@@ -401,16 +135,52 @@ class _LiveStdout(io.StringIO):
         return len(s)
 
 
+# --- Helper used by the solver template to load results into the store. ---
+def open_hdf5(path):
+    """Open an HDF5 simulation output via zoomy_plotting and install it
+    as the exec-scope ``store``.
+
+    Raises loudly on anything unexpected: missing file, missing ``/mesh``
+    group, mesh/field shape mismatch. No fallback, no soft failure."""
+    import zoomy_plotting as zp   # lazy; triggers PyPI micropip install
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"open_hdf5: no such file: {path}")
+
+    store = zp.read_hdf5(path)    # validates schema internally
+
+    # Sanity: the mesh we loaded must match the fields we loaded.
+    # zoomy_plotting's SimulationStore already asserts vertices.shape[1]==dim
+    # in __post_init__; we add a cell-count cross-check here so mismatches
+    # surface with a clear message instead of at plot time.
+    if store.cells.shape[0] != store.n_cells:
+        raise ValueError(
+            f"open_hdf5: cells/Q mismatch in {path}: "
+            f"{store.cells.shape[0]} cells from /mesh, "
+            f"but fields report {store.n_cells} cells. "
+            f"Check the solver's HDF5 writer."
+        )
+
+    sys._shallowflow_scope["store"] = store
+    print(f"[store] opened {path}  dim={store.dim} cell_type={store.cell_type} "
+          f"n_cells={store.n_cells} n_snapshots={store.n_snapshots}")
+    return store
+
+
+sys._shallowflow_scope["open_hdf5"] = open_hdf5
+
+
+# --- Main entry point for run_code messages from the worker. ---
 def process_code(code_string):
     new_stdout = _LiveStdout()
     old_stdout = sys.stdout
     sys.stdout = new_stdout
 
-    res = {"status": "success", "output": "", "plot_type": "none", "plot_data": None, "store_meta": None}
+    res = {"status": "success", "output": "", "plot_type": "none",
+           "plot_data": None, "store_meta": None}
     scope = sys._shallowflow_scope
 
     try:
-        # Clean up previous matplotlib figures if loaded
         if _plt is not None:
             scope["plt"] = _plt
             _plt.close("all")
@@ -418,20 +188,14 @@ def process_code(code_string):
             scope["go"] = _go
         scope.pop("fig", None)
 
-        # Execute user code
         exec(code_string, scope)
 
-        # --- Auto-populate store from scope (Pyodide local runs) ---
-        # If the user code left Q, mesh, model in scope, save them automatically
-        # so visualization cards can find the data without manual store.save().
-        store.auto_save_from_scope(scope)
-
-        # --- Detect which plotting library the user's fig belongs to ---
+        # Detect which plotting library the user's `fig` belongs to.
         fig_obj = scope.get("fig")
-        is_plotly_fig = fig_obj is not None and hasattr(fig_obj, "to_dict") and not hasattr(fig_obj, "savefig")
+        is_plotly_fig = (fig_obj is not None
+                         and hasattr(fig_obj, "to_dict")
+                         and not hasattr(fig_obj, "savefig"))
         is_mpl_fig = fig_obj is not None and hasattr(fig_obj, "savefig")
-
-        # Prefer user's imported plt; fallback to engine's _plt
         user_plt = scope.get("plt") or _plt
 
         if is_plotly_fig:
@@ -458,14 +222,18 @@ def process_code(code_string):
         sys.stdout = old_stdout
         res["output"] = new_stdout.getvalue() + res["output"]
 
-    # Attach store metadata so JS can update slider range + field dropdown
-    if store.data:
-        res["store_meta"] = {
-            "fields": store.fields,
-            "n_snapshots": store.data.get("n_snapshots", 0),
-            "dim": store.data.get("dim", 1),
-            "n_cells": store.data.get("n_cells", 0),
-        }
+    # Store metadata for the GUI's slider / field selector. Read off the
+    # zoomy_plotting.SimulationStore currently in scope, if one is installed.
+    s = scope.get("store")
+    if s is not None and hasattr(s, "field") and hasattr(s, "n_snapshots"):
+        try:
+            res["store_meta"] = {
+                "fields": list(s.field.keys()),
+                "n_snapshots": int(s.n_snapshots),
+                "dim": int(s.dim),
+                "n_cells": int(s.n_cells),
+            }
+        except Exception:
+            res["store_meta"] = None
 
-    # Use the robust encoder for the final response packet as well
     return json.dumps(res, cls=NumpyEncoder)
