@@ -170,6 +170,26 @@ def open_hdf5(path):
 sys._shallowflow_scope["open_hdf5"] = open_hdf5
 
 
+def close_store():
+    """Close any store currently installed in scope and release its file handle.
+
+    The previous run's ``SimulationStore`` holds an open ``h5py.File`` via
+    ``_resource``; that lock prevents ``mesh.write_to_hdf5(path)`` from
+    truncating the same path on a subsequent run. The solver template
+    calls this before writing so re-runs succeed cleanly."""
+    s = sys._shallowflow_scope.get("store")
+    if s is None:
+        return
+    try:
+        s.close()
+    except Exception:
+        pass
+    sys._shallowflow_scope["store"] = None
+
+
+sys._shallowflow_scope["close_store"] = close_store
+
+
 # --- Main entry point for run_code messages from the worker. ---
 def process_code(code_string):
     new_stdout = _LiveStdout()

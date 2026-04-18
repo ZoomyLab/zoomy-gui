@@ -77,7 +77,11 @@ self.addEventListener("fetch", function (event) {
         return;
     }
 
-    /* Cross-origin (CDN): stale-while-revalidate */
+    /* Cross-origin (CDN): stale-while-revalidate.
+       Backend health checks (localhost:8080 / :8000) also come through
+       here. If the network fetch fails AND we have no cached copy, we
+       must return a Response — passing `undefined` to respondWith()
+       triggers a SW error in the page. Fall back to a synthetic 503. */
     if (url.origin !== self.location.origin) {
         event.respondWith(caches.open(CDN_CACHE).then(function (cache) {
             return cache.match(req).then(function (cached) {
@@ -85,7 +89,12 @@ self.addEventListener("fetch", function (event) {
                     if (response.ok) cache.put(req, response.clone());
                     return response;
                 }).catch(function () { return cached; });
-                return cached || fetched;
+                return cached || fetched.then(function (r) {
+                    return r || new Response("", {
+                        status: 503,
+                        statusText: "Service Unavailable (SW offline fallback)",
+                    });
+                });
             });
         }));
         return;

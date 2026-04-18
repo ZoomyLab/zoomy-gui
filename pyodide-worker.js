@@ -1,8 +1,6 @@
 /* Pyodide Web Worker — runs Python in a background thread, never blocks UI */
 
 var py = null;
-var paramReady = false;
-var execReady = false;
 
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js");
 
@@ -19,65 +17,109 @@ async function initPyodide() {
     return py;
 }
 
-async function installParam() {
-    if (paramReady) return;
-    await initPyodide();
-    /* h5py must load BEFORE zoomy_core is imported. zoomy_core.mesh.base_mesh
-       does a try/except import of h5py at module scope and caches
-       _HAVE_H5PY; if h5py isn't available at that first import, later
-       write_to_hdf5 / from_hdf5 calls will RuntimeError even after the
-       package loads. The pre-extract loop imports zoomy_core, so we can't
-       defer h5py to installExec. */
-    try {
-        await py.loadPackage(["h5py"]);
-    } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "h5py failed: " + (e.message || e) });
-    }
-    var mp = py.pyimport("micropip");
-    await mp.install(["param", "zoomy-core"]);
-    var code = await fetch("param_extract.py").then(function (r) { return r.text(); });
-    await py.runPythonAsync(code);
-    paramReady = true;
+/* Each install phase caches its Promise so concurrent callers share the same
+   in-flight work instead of racing to install the same packages twice. */
+var _paramPromise = null;
+var _execPromise = null;
+var _mplPromise = null;
+var _plotlyPromise = null;
+
+function installParam() {
+    if (_paramPromise) return _paramPromise;
+    _paramPromise = (async function () {
+        await initPyodide();
+        /* h5py must load BEFORE zoomy_core is imported. zoomy_core.mesh.base_mesh
+           does a try/except import of h5py at module scope and caches
+           _HAVE_H5PY; if h5py isn't available at that first import, later
+           write_to_hdf5 / from_hdf5 calls will RuntimeError even after the
+           package loads. The pre-extract loop imports zoomy_core, so h5py
+           must land inside installParam, not later. */
+        try {
+            await py.loadPackage(["h5py"]);
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "h5py failed: " + (e.message || e) });
+        }
+        var mp = py.pyimport("micropip");
+        await mp.install(["param", "zoomy-core"]);
+        var code = await fetch("param_extract.py").then(function (r) { return r.text(); });
+        await py.runPythonAsync(code);
+    })();
+    return _paramPromise;
 }
 
-async function installExec() {
-    if (execReady) return;
-    await installParam();
-    postMessage({ type: "log", level: "info", msg: "Installing plotting packages…" });
-    try {
-        await py.loadPackage(["matplotlib"]);
-    } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "matplotlib failed: " + (e.message || e) });
-    }
-    try {
-        var mp = py.pyimport("micropip");
-        await mp.install(["plotly"]);
-    } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "plotly failed: " + (e.message || e) });
-    }
-    try {
-        var mp2 = py.pyimport("micropip");
-        await mp2.install(["zoomy-plotting"]);
-        postMessage({ type: "log", level: "info", msg: "zoomy-plotting ready" });
-    } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "zoomy-plotting unavailable; snippets will use inline fallback (" + (e.message || e) + ")" });
-    }
-    var code = await fetch("engine.py").then(function (r) { return r.text(); });
-    await py.runPythonAsync(code);
+function installExec() {
+    if (_execPromise) return _execPromise;
+    _execPromise = (async function () {
+        await installParam();
+        /* zoomy-plotting is needed by engine.open_hdf5 for the solver run
+           path (not just viz), so it loads here rather than on first viz. */
+        try {
+            var mp = py.pyimport("micropip");
+            await mp.install(["zoomy-plotting"]);
+            postMessage({ type: "log", level: "info", msg: "zoomy-plotting ready" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "zoomy-plotting unavailable (" + (e.message || e) + ")" });
+        }
+        var code = await fetch("engine.py").then(function (r) { return r.text(); });
+        await py.runPythonAsync(code);
 
-    /* Register display callback: funnels rich output to main thread */
-    self._zoomyDisplayBridge = function (cellJson) {
-        postMessage({ type: "display", cell: cellJson });
-    };
-    await py.runPythonAsync([
-        "import sys, json as _json",
-        "from js import _zoomyDisplayBridge",
-        "def _zoomy_display_cb(cell):",
-        "    _zoomyDisplayBridge(_json.dumps(cell))",
-        "sys._zoomy_display_callback = _zoomy_display_cb"
-    ].join("\n"));
+        /* Register display callback: funnels rich output to main thread */
+        self._zoomyDisplayBridge = function (cellJson) {
+            postMessage({ type: "display", cell: cellJson });
+        };
+        await py.runPythonAsync([
+            "import sys, json as _json",
+            "from js import _zoomyDisplayBridge",
+            "def _zoomy_display_cb(cell):",
+            "    _zoomyDisplayBridge(_json.dumps(cell))",
+            "sys._zoomy_display_callback = _zoomy_display_cb"
+        ].join("\n"));
+    })();
+    return _execPromise;
+}
 
-    execReady = true;
+/* Lazy per-library installers. Triggered by run_code when the user's snippet
+   actually references the library. Each is promise-guarded so concurrent
+   viz refreshes don't try to install twice. */
+function installMatplotlib() {
+    if (_mplPromise) return _mplPromise;
+    _mplPromise = (async function () {
+        postMessage({ type: "log", level: "info", msg: "Installing matplotlib (first mpl viz)…" });
+        try {
+            await py.loadPackage(["matplotlib"]);
+            postMessage({ type: "log", level: "info", msg: "matplotlib ready" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "matplotlib failed: " + (e.message || e) });
+        }
+    })();
+    return _mplPromise;
+}
+
+function installPlotly() {
+    if (_plotlyPromise) return _plotlyPromise;
+    _plotlyPromise = (async function () {
+        postMessage({ type: "log", level: "info", msg: "Installing plotly (first plotly viz)…" });
+        try {
+            var mp = py.pyimport("micropip");
+            await mp.install(["plotly"]);
+            postMessage({ type: "log", level: "info", msg: "plotly ready" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "plotly failed: " + (e.message || e) });
+        }
+    })();
+    return _plotlyPromise;
+}
+
+/* Regex sniffing of user code to pick which viz library to pull on demand.
+   Matches `import matplotlib`, `from matplotlib`, and `matplotlib.use`. */
+var _MPL_RE = /\b(import\s+matplotlib|from\s+matplotlib|matplotlib\.)/;
+var _PLOTLY_RE = /\b(import\s+plotly|from\s+plotly)/;
+
+async function ensureVizDeps(code) {
+    var needs = [];
+    if (_MPL_RE.test(code)) needs.push(installMatplotlib());
+    if (_PLOTLY_RE.test(code)) needs.push(installPlotly());
+    if (needs.length) await Promise.all(needs);
 }
 
 var paramCache = {};
@@ -125,6 +167,7 @@ onmessage = async function (e) {
 
         } else if (msg.cmd === "run_code") {
             await installExec();
+            await ensureVizDeps(msg.code);
             var result = py.globals.get("process_code")(msg.code);
             postMessage({ type: "result", id: msg.id, data: result });
 
