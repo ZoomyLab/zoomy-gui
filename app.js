@@ -1079,13 +1079,19 @@ function createCard(targetId, card, mgr, cardType) {
                 if (preview) preview.style.display = "none";
                 inter.classList.add("active");
 
-                /* Update slider range from store metadata */
+                /* Update slider range from store metadata. */
                 if (result.store_meta && tlSlider) {
-                    var nSnaps = result.store_meta.n_snapshots;
-                    if (nSnaps > 0) {
-                        tlSlider.max = nSnaps - 1;
+                    var nSnaps = result.store_meta.n_snapshots || 0;
+                    if (nSnaps >= 1) {
+                        tlSlider.max = Math.max(0, nSnaps - 1);
+                        if (parseInt(tlSlider.value, 10) > tlSlider.max) {
+                            tlSlider.value = tlSlider.max;
+                        }
+                        /* Disable the slider when there's only one snapshot
+                           — keeps the UI honest about the degenerate case. */
+                        tlSlider.disabled = (nSnaps <= 1);
                         var tsLabel = document.getElementById(targetId + "-ts");
-                        if (tsLabel) tsLabel.textContent = tlSlider.value + "/" + (nSnaps - 1);
+                        if (tsLabel) tsLabel.textContent = tlSlider.value + "/" + tlSlider.max;
                     }
                 }
 

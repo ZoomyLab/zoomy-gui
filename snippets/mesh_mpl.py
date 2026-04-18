@@ -157,11 +157,19 @@ def _inline_fallback(store, time_step, field_name, colormap):
     vertices = data.get("vertices")
     cells = data.get("cells")
 
-    if dim == 1 and coords is not None:
-        x = coords[:, 0] if coords.ndim > 1 else coords
+    if dim == 1:
+        if coords is not None:
+            x = coords[:, 0] if coords.ndim > 1 else coords
+            order = np.argsort(x)
+            x = np.asarray(x)[order]
+            values = np.asarray(values)[order]
+            xlabel = "x"
+        else:
+            x = np.arange(len(values))
+            xlabel = "cell index"
         fig, ax = plt.subplots(1, 1, figsize=(7, 4))
         ax.plot(x, values, "-o", markersize=3)
-        ax.set_xlabel("x"); ax.set_ylabel(field_name)
+        ax.set_xlabel(xlabel); ax.set_ylabel(field_name)
         ax.set_title(f"{field_name}  —  {t_label}")
         ax.grid(True, alpha=0.3)
     elif dim == 2 and vertices is not None and cells is not None:

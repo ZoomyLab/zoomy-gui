@@ -106,7 +106,37 @@ class SimulationStore:
         self.data = {}
 
     def save(self, mesh, model, Q, Qaux=None, times=None, Q_timeline=None, Qaux_timeline=None):
-        """Store simulation results for visualization."""
+        """Store simulation results for visualization.
+
+        zoomy_core's solver returns Q over all cells including ghosts
+        (``n_cells = n_inner + n_boundary_faces``). The store keeps only
+        inner cells — ghost/boundary cells are a solver-internal artefact
+        and have no place in a user-facing visualisation.
+        """
+        Q = np.asarray(Q)
+        Qaux = np.asarray(Qaux) if Qaux is not None else None
+
+        # Number of inner cells. Prefer mesh.n_inner_cells; fall back to
+        # Q's column count (≡ treat as already-trimmed).
+        n_inner = getattr(mesh, "n_inner_cells", None)
+        if n_inner is None:
+            n_inner = int(Q.shape[1]) if Q.ndim > 1 else int(len(Q))
+        n_inner = int(n_inner)
+
+        # Slice out ghost/boundary cells consistently from every array.
+        def _trim(a):
+            if a is None:
+                return None
+            a = np.asarray(a)
+            if a.ndim >= 2 and a.shape[-1] > n_inner:
+                return a[..., :n_inner]
+            return a
+
+        Q = _trim(Q)
+        Qaux = _trim(Qaux)
+        Q_timeline = _trim(np.asarray(Q_timeline)) if Q_timeline is not None else None
+        Qaux_timeline = _trim(np.asarray(Qaux_timeline)) if Qaux_timeline is not None else None
+
         # Extract field names from model
         field_names = []
         if hasattr(model, 'variables'):
@@ -129,47 +159,70 @@ class SimulationStore:
             if not aux_names:
                 aux_names = [f"aux{i}" for i in range(Qaux.shape[0])]
 
-        # Extract mesh coordinates
-        coords = None
-        if hasattr(mesh, 'cell_centers'):
-            coords = np.asarray(mesh.cell_centers)
-        elif hasattr(mesh, 'x'):
-            coords = np.asarray(mesh.x)
+        # Extract mesh coordinates / topology. zoomy_core BaseMesh has
+        # ``cell_centers_computed`` (method) and ``vertex_coordinates``
+        # (attribute). Other codebases use different names; try several.
+        def _try_attrs(obj, names):
+            for name in names:
+                if hasattr(obj, name):
+                    val = getattr(obj, name)
+                    try:
+                        val = val() if callable(val) else val
+                    except Exception:
+                        continue
+                    if val is not None:
+                        return np.asarray(val)
+            return None
 
-        vertices = None
-        if hasattr(mesh, 'vertices'):
-            vertices = np.asarray(mesh.vertices)
-        elif hasattr(mesh, 'nodes'):
-            vertices = np.asarray(mesh.nodes)
+        coords = _try_attrs(mesh, ('cell_centers', 'cell_centers_computed', 'x'))
+        # zoomy_core returns (dim_embed, n_cells); trim to n_inner + take only
+        # the columns we need. Transpose to (n_inner, dim_embed) for a
+        # canonical, matplotlib-friendly layout.
+        if coords is not None and coords.ndim == 2:
+            if coords.shape[0] < coords.shape[1]:
+                coords = coords.T
+            coords = coords[:n_inner]
 
-        cells = None
-        if hasattr(mesh, 'cells'):
-            cells = np.asarray(mesh.cells) if not callable(mesh.cells) else None
-        if cells is None and hasattr(mesh, 'connectivity'):
-            cells = np.asarray(mesh.connectivity)
+        vertices = _try_attrs(mesh, ('vertices', 'nodes', 'vertex_coordinates'))
+        if vertices is not None and vertices.ndim == 2:
+            # Transpose (dim, n_v) → (n_v, dim) if needed.
+            if vertices.shape[0] < vertices.shape[1] and vertices.shape[0] <= 3:
+                vertices = vertices.T
+
+        cells_arr = _try_attrs(mesh, ('cells', 'connectivity', 'cell_vertices'))
+        if cells_arr is not None and cells_arr.ndim == 2:
+            # zoomy_core stores cell_vertices as (k, n_cells); transpose to (n_cells, k).
+            if cells_arr.shape[0] < cells_arr.shape[1] and cells_arr.shape[0] <= 16:
+                cells_arr = cells_arr.T
+            cells_arr = cells_arr[:n_inner]
 
         self.data = {
-            "Q": np.asarray(Q),                    # (n_vars, n_cells) final state
-            "Qaux": np.asarray(Qaux) if Qaux is not None else None,
-            "fields": field_names,                  # ['h', 'hu', ...]
-            "aux_fields": aux_names,                # ['grad_h', ...]
-            "coords": coords,                       # cell centers
-            "vertices": vertices,                    # mesh vertex coords
-            "cells": cells,                          # cell connectivity
-            "dim": getattr(mesh, 'dim', 1),
-            "n_cells": Q.shape[1] if Q.ndim > 1 else len(Q),
+            "Q": Q,                                  # (n_vars, n_inner) final state
+            "Qaux": Qaux,
+            "fields": field_names,
+            "aux_fields": aux_names,
+            "coords": coords,                         # (n_inner, dim)
+            "vertices": vertices,                     # (n_vertices, dim_embed)
+            "cells": cells_arr,                       # (n_inner, k)
+            "dim": int(getattr(mesh, 'dim', None) or getattr(mesh, 'dimension', 1) or 1),
+            "n_cells": n_inner,
         }
 
         # Timeline data (multiple snapshots)
         if Q_timeline is not None:
-            self.data["Q_timeline"] = np.asarray(Q_timeline)  # (n_snaps, n_vars, n_cells)
+            self.data["Q_timeline"] = Q_timeline
             self.data["times"] = np.asarray(times) if times is not None else np.arange(Q_timeline.shape[0], dtype=float)
-            self.data["n_snapshots"] = Q_timeline.shape[0]
-        if Qaux_timeline is not None:
-            self.data["Qaux_timeline"] = np.asarray(Qaux_timeline)
+            self.data["n_snapshots"] = int(Q_timeline.shape[0])
+        else:
+            # Single-snapshot case — still expose n_snapshots=1 so the
+            # JS can size the slider correctly.
+            self.data["n_snapshots"] = 1
 
-        print(f"[store] Saved: {len(field_names)} fields, {Q.shape[1] if Q.ndim > 1 else len(Q)} cells" +
-              (f", {self.data.get('n_snapshots', 0)} snapshots" if Q_timeline is not None else ""))
+        if Qaux_timeline is not None:
+            self.data["Qaux_timeline"] = Qaux_timeline
+
+        print(f"[store] Saved: {len(field_names)} fields, {n_inner} cells, "
+              f"{self.data['n_snapshots']} snapshots")
 
     def load_hdf5(self, filepath):
         """Load results from HDF5 file written by the solver."""
@@ -249,8 +302,11 @@ class SimulationStore:
     def auto_save_from_scope(self, scope):
         """Auto-populate store from exec-scope variables (Pyodide local runs).
 
-        Looks for Q, Qaux, mesh, model in the scope and saves them if present.
-        Returns True if anything was saved.
+        Looks for Q, Qaux, mesh, model, and — if present — a full timeline
+        under any of these names: ``Q_timeline`` / ``Q_all``, ``times``,
+        ``Qaux_timeline`` / ``Qaux_all``. The solver template appends a
+        ``load_timeline_of_fields_from_hdf5`` call that produces exactly
+        those names.
         """
         Q = scope.get("Q")
         mesh = scope.get("mesh")
@@ -260,9 +316,21 @@ class SimulationStore:
         if mesh is None:
             print("[store] auto_save: Q found but no 'mesh' in scope; skipping.")
             return False
+
+        Q_timeline = scope.get("Q_timeline") or scope.get("Q_all")
+        Qaux_timeline = scope.get("Qaux_timeline") or scope.get("Qaux_all")
+        times = scope.get("times")
+
         try:
-            self.save(mesh, model, np.asarray(Q),
-                      Qaux=scope.get("Qaux"))
+            self.save(
+                mesh,
+                model,
+                np.asarray(Q),
+                Qaux=scope.get("Qaux"),
+                Q_timeline=np.asarray(Q_timeline) if Q_timeline is not None else None,
+                Qaux_timeline=np.asarray(Qaux_timeline) if Qaux_timeline is not None else None,
+                times=np.asarray(times) if times is not None else None,
+            )
             return True
         except Exception as e:
             import traceback
