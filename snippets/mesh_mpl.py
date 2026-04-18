@@ -43,5 +43,11 @@ with zp.apply_style():
         fig, ax = plt.subplots()
     plotter.plot(ax, time_step=time_step, field=field_name, **plot_kwargs)
 
+# Prefer simulation time in the title. zoomy_plotting >= 0.1.2 does this
+# internally; override here so the title is consistent even on 0.1.1
+# until the new wheel propagates through PyPI + Pyodide's micropip cache.
+if store.times is not None and len(store.times):
+    ax.set_title(f"{field_name}  —  t = {float(store.times[time_step]):.3f}")
+
 print(f"[zp] {store.cell_type} dim={store.dim} field={field_name!r} "
       f"snaps={store.n_snapshots} cells={store.n_cells}")
