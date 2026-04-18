@@ -115,7 +115,6 @@ button { margin-bottom: 0; }
 .card:hover { border-color: var(--c-muted); }
 .card.selected { border: var(--bw2) solid var(--c-accent); }
 .card.collapsed .card-body,
-.card.collapsed .card-preview,
 .card.collapsed .expandable { display: none; }
 .card-header {
     padding: 0.5rem 0.8rem;
@@ -125,15 +124,31 @@ button { margin-bottom: 0; }
 .card-header-actions { display: flex; gap: 0.3rem; align-items: center; visibility: hidden; }
 .card.selected .card-header-actions { visibility: visible; }
 .card[data-requires-tag] .card-header-actions { visibility: visible; }
-.card-preview { overflow: hidden; border-bottom: var(--bw) solid var(--c-border); position: relative; min-height: 60px; }
-.card-preview img { width: 100%; max-height: 280px; object-fit: contain; display: block; }
-.card-preview-interactive { width: 100%; min-height: 280px; position: absolute; top: 0; left: 0; visibility: hidden; opacity: 0; transition: opacity 0.4s; }
-.card-preview-interactive.active { position: relative; visibility: visible; opacity: 1; }
 .card-body { padding: 0 0.8rem 0.5rem; }
 .card-description { color: var(--c-muted); font-size: var(--fs-s); line-height: 1.5; margin: 0 0 0.4rem 0; }
 .card-description img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: var(--r); margin: 0.3rem 0; display: block; }
 .card-description .katex { font-size: var(--fs-m); }
-.card-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+
+/* --- Unified card anatomy ---
+   Code-bearing cards (model / solver / mesh-with-template / vis) all share
+   the same shape: header -> description? -> controls -> output -> code
+   (collapsed by default) -> play button. The controls bar carries per-frame
+   knobs (timeline slider, field selector) plus gear/edit/size. */
+.card-controls { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin: 0.3rem 0; }
+.card-output { margin: 0.3rem 0; }
+.card-output .output-cells { border: var(--bw) solid var(--c-border); border-radius: var(--r); background: var(--c-bg); max-height: 480px; overflow: auto; }
+.card-output-preview { display: block; width: 100%; max-height: 280px; object-fit: contain; }
+.card-code { /* .expandable handles collapse */ }
+.card-play { margin-top: 0.3rem; display: flex; justify-content: flex-start; }
+.card-play .play-btn {
+    background: var(--c-accent); color: var(--c-surface);
+    border: var(--bw) solid var(--c-accent); border-radius: var(--r);
+    padding: 0.2rem 1rem; font-size: var(--fs-m); cursor: pointer;
+    min-width: 40px;
+}
+.card-play .play-btn:hover { opacity: 0.85; }
+.card-play .play-btn:disabled { opacity: 0.5; cursor: wait; }
+
 .card-select {
     padding: 0.15rem 1.4rem 0.15rem 0.4rem; border: var(--bw) solid var(--c-border);
     border-radius: var(--r); font-size: var(--fs-s); font-family: var(--f-sans);
@@ -155,17 +170,30 @@ button { margin-bottom: 0; }
 .icon-btn.open { background: var(--c-accent); color: var(--c-surface); border-color: var(--c-accent); }
 .icon-btn:disabled { opacity: 0.3; cursor: wait; }
 
-/* --- Maximized card overlay --- */
+/* --- Maximized card overlay ---
+   Every code-bearing card maximizes to a side-by-side "code | output"
+   layout. Controls bar + play button pin to the code pane so timeline
+   scrubbing stays within reach while the output fills the right half. */
 .card.maximized {
     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-    z-index: 200; border-radius: 0; margin: 0;
-    display: flex; flex-direction: column;
-    overflow: auto;
+    z-index: 200; border-radius: 0; margin: 0; overflow: hidden;
+    display: grid; grid-template-rows: auto 1fr;
 }
-.card.maximized .card-preview { flex: 1; }
-.card.maximized .card-preview img { max-height: none; height: 100%; }
-.card.maximized .card-preview-interactive { height: 100%; }
-.card.maximized .expandable.open { flex: 1; display: flex; flex-direction: column; }
+.card.maximized .card-body {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem;
+    height: 100%; overflow: hidden;
+    grid-template-areas:
+        "code output"
+        "code output";
+}
+.card.maximized .card-description,
+.card.maximized .card-controls,
+.card.maximized .card-code,
+.card.maximized .card-play { grid-column: code; }
+.card.maximized .card-output { grid-column: output; overflow: auto; }
+.card.maximized .card-code { display: block; max-height: none; overflow: auto; }
+.card.maximized .card-code .inline-editor { height: calc(100vh - 240px); min-height: 300px; }
+.card.maximized .card-output .output-cells { max-height: none; height: 100%; }
 
 /* --- Expandable panels --- */
 .expandable { overflow: hidden; max-height: 0; transition: max-height 0.3s ease; }
@@ -189,16 +217,6 @@ button { margin-bottom: 0; }
 
 /* --- Inline editor --- */
 .inline-editor { height: 200px; width: 100%; }
-
-/* --- Editor + output layout --- */
-.editor-layout { display: flex; flex-direction: column; }
-.editor-pane { min-width: 0; }
-.output-pane { min-width: 0; flex: 1; }
-.card.maximized .editor-layout { flex-direction: row; flex: 1; height: calc(100vh - 60px); }
-.card.maximized .editor-pane { flex: 1; min-width: 0; }
-.card.maximized .editor-pane .inline-editor { height: 100%; }
-.card.maximized .output-pane { flex: 1; min-width: 0; border-left: var(--bw) solid var(--c-border); overflow-y: auto; height: 100%; }
-.card.maximized .output-pane .output-cells { max-height: none; overflow-y: visible; }
 
 /* --- Gear description editor --- */
 .gear-desc-section { margin: 0.4rem 0; grid-column: 1 / -1; }
@@ -385,20 +403,10 @@ button { margin-bottom: 0; }
 .output-cell-svg svg { max-width: 100%; height: auto; }
 .output-cell-mermaid { text-align: center; padding: 0.6rem; }
 .output-cell-latex { text-align: center; padding: 0.4rem; }
-.output-cell-plotly { min-height: 200px; }
-.output-cells-toolbar {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 0.2rem 0.6rem; background: var(--c-hover);
-    border-top: var(--bw) solid var(--c-border);
-    font-size: var(--fs-s); color: var(--c-muted);
-}
-.output-cells-toolbar button {
-    background: none; border: var(--bw) solid var(--c-border);
-    border-radius: var(--r); padding: 0.1rem 0.5rem;
-    font-size: var(--fs-s); font-family: var(--f-sans);
-    cursor: pointer; color: var(--c-muted);
-}
-.output-cells-toolbar button:hover { color: var(--c-text); background: var(--c-surface); }
+.output-cell-plotly { min-height: 400px; }
+/* Plotly cells must grow past the shared output cap when a plot is present;
+   remove the max-height constraint so the plot fills its natural size. */
+.card-output .output-cells:has(.output-cell-plotly) { max-height: none; }
 
 /* --- Responsive --- */
 @media (max-width: 768px) {

@@ -240,90 +240,189 @@ function countDisplayCalls(code) {
     return count;
 }
 
-function setupOutputPanel(cardId, editorWrap) {
-    var panelId = cardId + "-output";
-    if (document.getElementById(panelId)) return;
+/* Resolve a card's code from (in order): user-edited ace buffer, saved
+   cState.code, card.snippet (fetch), card.template with {init}
+   substitution, class + init auto-generator, fallback placeholder. Used
+   by both the unified play handler and the editor-open path so the
+   "run without opening the editor" flow produces the same code the user
+   would see in ace. */
+async function resolveCardCode(targetId, card) {
+    var container = document.getElementById(targetId);
+    var cState = _project && _project.cardState ? _project.cardState.get(targetId) : null;
+    if (container && container._editor) return container._editor.getValue();
+    var defCode = cardDefaults[targetId] ? cardDefaults[targetId].code : "";
+    if (cState && cState.code && cState.code !== defCode) return cState.code;
+    if (card.snippet) {
+        try { return await fetch(card.snippet).then(function (r) { return r.text(); }); }
+        catch (e) { return "# snippet not found\n"; }
+    }
+    if (card.template) {
+        var tpl = card.template;
+        if (card.init) Object.keys(card.init).forEach(function (k) { tpl = tpl.split("{" + k + "}").join(String(card.init[k])); });
+        return tpl;
+    }
+    if (card["class"]) {
+        var parts = card["class"].split(".");
+        var cls = parts[parts.length - 1];
+        var mod = parts.slice(0, -1).join(".");
+        var kwargs = card.init ? Object.keys(card.init).map(function (k) {
+            var v = card.init[k];
+            return k + "=" + (typeof v === "string" ? "'" + v + "'" : v);
+        }).join(", ") : "";
+        return "from " + mod + " import " + cls + "\n\nmodel = " + cls + "(" + kwargs + ")\n";
+    }
+    return "# edit here\n";
+}
 
-    var toolbar = document.createElement("div");
-    toolbar.className = "output-cells-toolbar";
-    toolbar.innerHTML = '<span>Output</span><div>' +
-        '<button id="' + panelId + '-run">&#9654; Run</button> ' +
-        '<button id="' + panelId + '-clear">Clear</button> ' +
-        '<label style="font-size:var(--fs-s);cursor:pointer"><input type="checkbox" id="' + panelId + '-auto"> auto</label></div>';
-
-    var cells = document.createElement("div");
-    cells.className = "output-cells";
-    cells.id = panelId;
-
-    editorWrap.appendChild(toolbar);
-    editorWrap.appendChild(cells);
-
-    var _running = false;
-
-    async function executeAndDisplay() {
-        if (_running) return;
-        var container = document.getElementById(cardId);
-        var editor = container && container._editor;
-        if (!editor) return;
-        _running = true;
-        cells.innerHTML = "";
-        _activeOutputTarget = panelId;
-        var code = editor.getValue();
-        try {
-            var resultJson = await runCode(code);
-            var result = JSON.parse(resultJson);
-            /* stdout output goes into a cell only if not empty */
-            if (result.output && result.output.trim()) {
-                renderOutputCell({ mime: "text/plain", content: result.output }, cells);
-            }
-            /* Plotly/matplotlib from process_code (non-display path) */
-            if (result.plot_type === "plotly" && result.plot_data) {
-                await ensurePlotly();
-                renderOutputCell({ mime: "application/vnd.plotly+json", content: result.plot_data }, cells);
-            } else if (result.plot_type === "matplotlib" && result.plot_data) {
-                renderOutputCell({ mime: "image/svg+xml", content: atob(result.plot_data) }, cells);
-            }
-            if (result.status === "error") {
-                renderOutputCell({ mime: "text/plain", content: result.output }, cells);
-            }
-        } catch (err) {
-            renderOutputCell({ mime: "text/plain", content: "Error: " + err.message }, cells);
+/* Append (or re-use) a plot cell in a card's shared output-cells list.
+   Plots want to grow to a decent size, so we look for the LAST
+   .output-cell-plotly / .output-cell-svg and update that rather than
+   appending a fresh one — this is what makes timeline-slider scrubbing
+   feel like one live plot instead of a growing gallery. */
+function _upsertPlotCell(cells, mime, content) {
+    if (mime === "application/vnd.plotly+json") {
+        var plotData = JSON.parse(content);
+        var existing = cells.querySelector(".output-cell-plotly:last-of-type");
+        if (existing && window.Plotly) {
+            try {
+                Plotly.react(existing, plotData.data || [], plotData.layout || {}, { responsive: true });
+                return;
+            } catch (e) { /* fall through to append */ }
         }
-        _activeOutputTarget = null;
-        _running = false;
+    } else if (mime === "image/svg+xml") {
+        var existingSvg = cells.querySelector(".output-cell-svg:last-of-type");
+        if (existingSvg) { existingSvg.innerHTML = content; return; }
     }
+    renderOutputCell({ mime: mime, content: content }, cells);
+}
 
-    /* Manual run button */
-    document.getElementById(panelId + "-run").onclick = function (e) { e.stopPropagation(); executeAndDisplay(); };
+/* Unified play handler. Replaces both the old setupOutputPanel.run
+   button and the vis refresh button. Knows how to inject time_step /
+   field_name for viz cards, updates timeline + field selector from
+   store_meta, and renders results into the card's .output-cells list.
 
-    /* Clear button */
-    document.getElementById(panelId + "-clear").onclick = function (e) { e.stopPropagation(); cells.innerHTML = ""; };
+   Options:
+     - timelineEl / fieldSelEl: DOM elements for the per-frame controls
+       (optional; only passed by vis cards so non-vis cards don't try
+       to read a slider value). */
+async function executeCard(targetId, card, options) {
+    options = options || {};
+    var container = document.getElementById(targetId);
+    if (!container) return;
+    var cells = document.getElementById(targetId + "-output");
+    if (!cells) return;
+    if (container._running) return;
+    container._running = true;
+    _activeOutputTarget = targetId + "-output";
 
-    /* Auto-run: watch editor for completed display() statements */
-    var _lastDisplayCount = 0;
-    var _autoDebounce = null;
-    var autoCheckbox = document.getElementById(panelId + "-auto");
+    var runBtn = document.getElementById(targetId + "-run");
+    var prevLabel = runBtn ? runBtn.innerHTML : "";
+    if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = "&hellip;"; }
 
-    var container = document.getElementById(cardId);
-    if (container && container._editor) {
-        container._editor.session.on("change", function () {
-            if (!autoCheckbox || !autoCheckbox.checked) return;
-            if (_autoDebounce) clearTimeout(_autoDebounce);
-            _autoDebounce = setTimeout(function () {
-                var code = container._editor.getValue();
-                var n = countDisplayCalls(code);
-                if (n > _lastDisplayCount) {
-                    _lastDisplayCount = n;
-                    executeAndDisplay();
-                } else {
-                    _lastDisplayCount = n;
+    try {
+        var code = await resolveCardCode(targetId, card);
+
+        /* Timeline + field-selector injection — only present on vis cards. */
+        if (options.timelineEl) {
+            code = "time_step = " + options.timelineEl.value + "\n" + code;
+        }
+        if (options.fieldSelEl && !options.fieldSelEl.disabled &&
+            options.fieldSelEl.value && options.fieldSelEl.value !== "\u2014") {
+            var safe = options.fieldSelEl.value.replace(/"/g, '\\"');
+            code = 'field_name = "' + safe + '"\n' + code;
+        }
+
+        /* Plotly is needed only when the snippet imports it; ensure it's
+           loaded before we get a result to render. For simple stdout-only
+           runs this is a no-op cache hit. */
+        if (/\bplotly\b/.test(code)) await ensurePlotly();
+
+        var resultJson = await runCode(code);
+        var result = JSON.parse(resultJson);
+
+        /* Clear the cells on a fresh run but preserve the last plot cell
+           if the incoming result is going to re-use it (Plotly.react). */
+        var willReusePlot = (result.plot_type === "plotly" || result.plot_type === "matplotlib") &&
+                            result.plot_data &&
+                            !!cells.querySelector(".output-cell-plotly, .output-cell-svg");
+        if (!willReusePlot) cells.innerHTML = "";
+
+        if (result.output && result.output.trim()) {
+            renderOutputCell({ mime: "text/plain", content: result.output }, cells);
+        }
+        if (result.plot_type === "plotly" && result.plot_data) {
+            _upsertPlotCell(cells, "application/vnd.plotly+json", result.plot_data);
+        } else if (result.plot_type === "matplotlib" && result.plot_data) {
+            _upsertPlotCell(cells, "image/svg+xml", atob(result.plot_data));
+        }
+        if (result.status === "error") {
+            renderOutputCell({ mime: "text/plain", content: result.output }, cells);
+        }
+        if (result.status === "cancelled") {
+            renderOutputCell({ mime: "text/plain", content: "(cancelled)" }, cells);
+        }
+
+        /* Update timeline + field selector from store metadata (viz cards). */
+        if (result.store_meta) {
+            if (options.timelineEl) {
+                var nSnaps = result.store_meta.n_snapshots || 0;
+                if (nSnaps >= 1) {
+                    options.timelineEl.max = Math.max(0, nSnaps - 1);
+                    if (parseInt(options.timelineEl.value, 10) > options.timelineEl.max) {
+                        options.timelineEl.value = options.timelineEl.max;
+                    }
+                    options.timelineEl.disabled = (nSnaps <= 1);
+                    var tsLabel = document.getElementById(targetId + "-ts");
+                    if (tsLabel) tsLabel.textContent = options.timelineEl.value + "/" + options.timelineEl.max;
                 }
-            }, 800);
-        });
-
-        /* Initialize count from current content */
-        _lastDisplayCount = countDisplayCalls(container._editor.getValue());
+            }
+            if (options.fieldSelEl) {
+                var fields = result.store_meta.fields || [];
+                if (fields.length) {
+                    var prev = options.fieldSelEl.value;
+                    var optHtml = "";
+                    fields.forEach(function (name) {
+                        optHtml += '<option value="' + name + '">' + name + '</option>';
+                    });
+                    options.fieldSelEl.innerHTML = optHtml;
+                    if (fields.indexOf(prev) !== -1) options.fieldSelEl.value = prev;
+                    options.fieldSelEl.disabled = false;
+                }
+            }
+        }
+    } catch (err) {
+        renderOutputCell({ mime: "text/plain", content: "Error: " + (err.message || err) }, cells);
+    } finally {
+        _activeOutputTarget = null;
+        container._running = false;
+        if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = prevLabel || "&#9654;"; }
     }
+}
+
+/* Wire auto-run: watch the editor for completed display() calls and
+   re-execute when the count grows, honouring cState.auto_run. Default:
+   ON for model/mesh/vis, OFF for solver (per plan — solver cards can
+   run 30+ seconds; silent re-runs on edit are a footgun). */
+function setupAutoRun(targetId, card, cState, cardType, options) {
+    var container = document.getElementById(targetId);
+    if (!container || !container._editor) return;
+    var _lastCount = countDisplayCalls(container._editor.getValue());
+    var _debounce = null;
+    container._editor.session.on("change", function () {
+        var on = (cState.auto_run !== undefined) ? !!cState.auto_run : (cardType !== "solver");
+        if (!on) return;
+        if (_debounce) clearTimeout(_debounce);
+        _debounce = setTimeout(function () {
+            var code = container._editor.getValue();
+            var n = countDisplayCalls(code);
+            if (n > _lastCount) {
+                _lastCount = n;
+                executeCard(targetId, card, options);
+            } else {
+                _lastCount = n;
+            }
+        }, 800);
+    });
 }
 
 /* display() message routing is wired inside attachPyWorkerHandlers above;
@@ -814,19 +913,19 @@ function createCard(targetId, card, mgr, cardType) {
     var container = document.getElementById(targetId);
     if (!container) return;
 
-    var hasGear     = true;
     var hasEdit     = cardType === "model" || cardType === "solver" || cardType === "vis" || (cardType === "mesh" && !!card.template);
-    var hasRefresh  = cardType === "vis";
+    var hasPlay     = hasEdit;                          // every code-bearing card gets the unified play button
     var hasSizes    = cardType === "mesh" && card.mesh_sizes && card.mesh_sizes.length > 0;
     var hasTimeline = cardType === "vis" && !!card.has_timeline;
-    /* Preview: explicit path or auto-detect by convention previews/{id}.svg */
-    if (!card.preview) card._autoPreview = "previews/" + card.id + ".svg";
-    var hasPreview  = !!card.preview || !!card._autoPreview;
-    var hasMaximize = cardType === "model" || cardType === "solver" || cardType === "vis";
+    var hasMaximize = hasEdit;                          // same set as code-bearing
     var hasClass    = !!card["class"];
     var hasLocal    = !!card._localParams;
+    var hasGear     = true;
+    /* Preview: explicit path or auto-detect by convention previews/{id}.svg */
+    if (!card.preview) card._autoPreview = "previews/" + card.id + ".svg";
+    var previewSrc  = card.preview || card._autoPreview;
 
-    container.className = "card";
+    container.className = "card" + (hasPlay ? " has-code" : " slot-only");
     if (card.requires_tag) {
         container.dataset.requiresTag = card.requires_tag;
         if (!ZoomyBackend.isTagConnected(card.requires_tag)) container.classList.add("disabled");
@@ -835,32 +934,24 @@ function createCard(targetId, card, mgr, cardType) {
 
     var hasConnectionStatus = !!card.requires_tag;
 
-    /* Header with connection status + maximize */
+    /* --- Header: title + connection badge + maximize --- */
     var html = '<div class="card-header"><span class="card-title">' + card.title + '</span>';
     html += '<div class="card-header-actions">';
     if (hasConnectionStatus) {
         var tagConnected = ZoomyBackend.isTagConnected(card.requires_tag);
-        html += '<span class="card-connection-status' + (tagConnected ? ' connected' : '') + '">' + (tagConnected ? 'Connected' : 'Disconnected') + '</span>';
+        html += '<span class="card-connection-status' + (tagConnected ? ' connected' : '') + '">' +
+                (tagConnected ? 'Connected' : 'Disconnected') + '</span>';
     }
     if (hasMaximize) html += '<button class="icon-btn sm" id="' + targetId + '-max" title="Maximize">&#9723;</button>';
     html += '</div></div>';
 
-    if (hasPreview || hasRefresh) {
-        var previewSrc = card.preview || card._autoPreview;
-        html += '<div class="card-preview" id="' + targetId + '-pw">';
-        if (previewSrc) html += '<img id="' + targetId + '-preview" loading="lazy" decoding="async" src="' + previewSrc + '" onerror="this.style.display=\'none\'">';
-        html += '<div class="card-preview-interactive" id="' + targetId + '-interactive"></div>';
-        html += '</div>';
-    }
-
     html += '<div class="card-body">';
     if (card.description) html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
-    html += '<div class="card-actions">';
+
+    /* --- Controls bar: per-frame controls + gear/edit/size --- */
+    html += '<div class="card-controls">';
     if (hasTimeline) html += '<div class="card-timeline"><input type="range" min="0" max="100" value="0" id="' + targetId + '-tl"><span id="' + targetId + '-ts">0</span></div>';
-    /* Field selector: populated from store_meta.fields after first run.
-       Sits between the timeline and the refresh/play button. */
     if (cardType === "vis") html += '<select class="card-select" id="' + targetId + '-field-select" disabled title="Field"><option>\u2014</option></select>';
-    if (hasRefresh) html += '<button class="icon-btn" id="' + targetId + '-refresh" title="Run">&#9654;</button>';
     if (hasGear) html += '<button class="icon-btn" id="' + targetId + '-gear" title="Parameters">&#9881;</button>';
     if (hasEdit) html += '<button class="icon-btn" id="' + targetId + '-edit" title="Edit code">&#9998;</button>';
     if (hasSizes) {
@@ -868,17 +959,36 @@ function createCard(targetId, card, mgr, cardType) {
         card.mesh_sizes.forEach(function (s) { html += '<option>' + s + '</option>'; });
         html += '</select>';
     }
-    html += '</div></div>';
+    html += '</div>';
+
+    /* --- Output list (always present for code-bearing cards) --- */
+    if (hasPlay) {
+        html += '<div class="card-output"><div class="output-cells" id="' + targetId + '-output">';
+        /* Preview image appears initially when no output exists. Cleared on first run. */
+        if (previewSrc) {
+            html += '<img class="card-output-preview" id="' + targetId + '-preview" loading="lazy" decoding="async" src="' + previewSrc + '" onerror="this.style.display=\'none\'">';
+        }
+        html += '</div></div>';
+    }
 
     if (hasGear) html += '<div class="expandable" id="' + targetId + '-params"></div>';
-    if (hasEdit) html += '<div class="expandable" id="' + targetId + '-editor-wrap"></div>';
+    if (hasEdit) html += '<div class="expandable card-code" id="' + targetId + '-editor-wrap"></div>';
+
+    /* --- Play button under the code, not inside the output toolbar --- */
+    if (hasPlay) {
+        html += '<div class="card-play"><button class="play-btn" id="' + targetId + '-run" title="Run">&#9654;</button></div>';
+    }
+
+    html += '</div>';   /* .card-body */
 
     container.innerHTML = html;
 
-    /* Selection */
+    /* Selection: clicking anywhere on the card body selects it, except
+       when the click lands on an interactive control (buttons, selects,
+       expandables, timeline slider, play button, output cells). */
     if (mgr) {
         container.onclick = function (e) {
-            if (e.target.closest(".icon-btn,.expandable,select,.card-timeline")) return;
+            if (e.target.closest(".icon-btn,.expandable,select,.card-timeline,.card-play,.card-output,.play-btn")) return;
             mgr.select(targetId);
         };
     }
@@ -889,51 +999,49 @@ function createCard(targetId, card, mgr, cardType) {
             e.stopPropagation();
             container.classList.toggle("maximized");
             this.innerHTML = container.classList.contains("maximized") ? "&#10005;" : "&#9723;";
-            var plotEl = document.getElementById(targetId + "-interactive");
-            if (plotEl && window.Plotly) {
-                setTimeout(function () { Plotly.Plots.resize(plotEl); }, 100);
+            /* Re-size any plot(s) that live inside the shared output-cells
+               list now that the container has changed size. */
+            var plots = container.querySelectorAll(".output-cell-plotly");
+            if (plots.length && window.Plotly) {
+                setTimeout(function () {
+                    plots.forEach(function (p) { try { Plotly.Plots.resize(p); } catch (e) {} });
+                }, 100);
             }
-            /* Resize Ace editor to fit new layout */
             if (container._editor) {
                 setTimeout(function () { container._editor.resize(); }, 100);
             }
         };
     }
 
-    /* Timeline */
-    if (hasTimeline) {
-        var sl = document.getElementById(targetId + "-tl");
-        var lb = document.getElementById(targetId + "-ts");
-        if (sl) {
-            sl.oninput = function () { lb.textContent = sl.value + "/" + sl.max; };
-            /* Auto-refresh visualization on slider change (debounced) */
-            if (hasRefresh) {
-                var _tlDebounce = null;
-                sl.addEventListener("change", function () {
-                    if (_tlDebounce) clearTimeout(_tlDebounce);
-                    _tlDebounce = setTimeout(function () {
-                        var refreshBtn = document.getElementById(targetId + "-refresh");
-                        if (refreshBtn && !refreshBtn.disabled) refreshBtn.click();
-                    }, 300);
-                });
-            }
-        }
-    }
+    /* The timeline slider's label + auto-refresh, and the field
+       selector's auto-refresh, need the per-frame control elements —
+       captured here so the play-button wiring below can reuse them. */
+    var tlSlider = hasTimeline ? document.getElementById(targetId + "-tl") : null;
+    var tsLabel = hasTimeline ? document.getElementById(targetId + "-ts") : null;
+    var fieldSelEl = cardType === "vis" ? document.getElementById(targetId + "-field-select") : null;
 
-    /* Field selector auto-refresh (debounced). Populated by the refresh
-       handler from store_meta.fields. */
-    if (cardType === "vis") {
-        var fs = document.getElementById(targetId + "-field-select");
-        if (fs) {
-            var _fsDebounce = null;
-            fs.addEventListener("change", function () {
-                if (_fsDebounce) clearTimeout(_fsDebounce);
-                _fsDebounce = setTimeout(function () {
-                    var refreshBtn = document.getElementById(targetId + "-refresh");
-                    if (refreshBtn && !refreshBtn.disabled) refreshBtn.click();
-                }, 200);
-            });
-        }
+    if (tlSlider) {
+        tlSlider.oninput = function () {
+            if (tsLabel) tsLabel.textContent = tlSlider.value + "/" + tlSlider.max;
+        };
+        var _tlDebounce = null;
+        tlSlider.addEventListener("change", function () {
+            if (_tlDebounce) clearTimeout(_tlDebounce);
+            _tlDebounce = setTimeout(function () {
+                var runBtn = document.getElementById(targetId + "-run");
+                if (runBtn && !runBtn.disabled) runBtn.click();
+            }, 300);
+        });
+    }
+    if (fieldSelEl) {
+        var _fsDebounce = null;
+        fieldSelEl.addEventListener("change", function () {
+            if (_fsDebounce) clearTimeout(_fsDebounce);
+            _fsDebounce = setTimeout(function () {
+                var runBtn = document.getElementById(targetId + "-run");
+                if (runBtn && !runBtn.disabled) runBtn.click();
+            }, 200);
+        });
     }
 
     /* Gear + Edit */
@@ -948,10 +1056,23 @@ function createCard(targetId, card, mgr, cardType) {
     var hasDescription = !!card.description || cardType === "vis";
     var descEditorReady = false;
 
+    /* Auto-run default: ON for model/mesh/vis, OFF for solver. */
+    var autoRunDefault = (cardType !== "solver");
+    if (cState.auto_run === undefined) cState.auto_run = autoRunDefault;
+
     exclusiveToggle(gearBtn, paramsDiv, editBtn, editorWrap, async function () {
         if (gearLoaded) return;
 
-        var metaParams = { title: { type: "String", default: cState.title, doc: "Card title" } };
+        var metaParams = {
+            title: { type: "String", default: cState.title, doc: "Card title" }
+        };
+        if (hasPlay) {
+            metaParams.auto_run = {
+                type: "Boolean",
+                default: !!cState.auto_run,
+                doc: "Run automatically on display() edits (default ON except for solver cards)",
+            };
+        }
         paramsDiv.appendChild(renderParamWidgets({ params: metaParams }, function (n, v) {
             cState[n] = v;
             if (n === "title") {
@@ -1046,124 +1167,33 @@ function createCard(targetId, card, mgr, cardType) {
         gearLoaded = true;
     });
 
+    /* --- Edit button: open the ace editor (lazy). The editor is the only
+       place that writes container._editor; executeCard and setupAutoRun
+       both read it. --- */
     if (hasEdit) {
         exclusiveToggle(editBtn, editorWrap, gearBtn, paramsDiv, async function () {
             if (editorLoaded) return;
             await ensureAce();
-            editorWrap.innerHTML = '<div class="editor-layout"><div class="editor-pane"><div class="inline-editor" id="' + targetId + '-ace"></div></div><div class="output-pane"></div></div>';
-            var defCode = cardDefaults[targetId] ? cardDefaults[targetId].code : "";
-            var code = "";
-            if (cState.code && cState.code !== defCode) {
-                code = cState.code;
-            } else if (card.snippet) {
-                try { code = await fetch(card.snippet).then(function (r) { return r.text(); }); } catch (e) { code = "# snippet not found"; }
-            } else if (card.template) {
-                code = card.template;
-                if (card.init) Object.keys(card.init).forEach(function (k) { code = code.split("{" + k + "}").join(String(card.init[k])); });
-            } else if (card["class"]) {
-                /* Auto-generate from class + init */
-                var _p = card["class"].split("."), _cls = _p[_p.length-1], _mod = _p.slice(0,-1).join(".");
-                var _kw = card.init ? Object.keys(card.init).map(function(k){ var v=card.init[k]; return k+"="+(typeof v==="string"?"'"+v+"'":v); }).join(", ") : "";
-                code = "from " + _mod + " import " + _cls + "\n\nmodel = " + _cls + "(" + _kw + ")\n";
-            } else {
-                code = "# edit here";
-            }
+            editorWrap.innerHTML = '<div class="inline-editor" id="' + targetId + '-ace"></div>';
+            var code = await resolveCardCode(targetId, card);
             container._editor = makeAceEditor(targetId + "-ace", code);
             container._code = code;
             cState.code = code;
             container._editor.session.on("change", function () { cState.code = container._editor.getValue(); });
-            /* Visualization cards use the interactive preview area for output
-               (via the refresh button). All other card types get the
-               notebook-style output panel next to / below the editor. */
-            if (cardType !== "vis") {
-                var outputPane = editorWrap.querySelector(".output-pane");
-                setupOutputPanel(targetId, outputPane || editorWrap);
-            }
+            setupAutoRun(targetId, card, cState, cardType, { timelineEl: tlSlider, fieldSelEl: fieldSelEl });
             editorLoaded = true;
         });
     }
 
-    /* Refresh (vis) */
-    if (hasRefresh) {
-        document.getElementById(targetId + "-refresh").onclick = async function (e) {
-            e.stopPropagation();
-            var btn = this; btn.disabled = true;
-            try {
-                await ensurePlotly();
-                var code = container._editor ? container._editor.getValue() : (cState.code || container._code);
-                if (!code) {
-                    if (card.snippet) code = await fetch(card.snippet).then(function (r) { return r.text(); });
-                    else { code = card.template || ""; if (card.init) Object.keys(card.init).forEach(function (k) { code = code.split("{" + k + "}").join(String(card.init[k])); }); }
-                    container._code = code;
-                }
-                /* Inject timeline slider value as time_step variable */
-                var tlSlider = document.getElementById(targetId + "-tl");
-                if (tlSlider) {
-                    code = "time_step = " + tlSlider.value + "\n" + code;
-                }
-                /* Inject field_name from the field selector, if one is
-                   active. Snippets honour this convention. */
-                var fieldSel = document.getElementById(targetId + "-field-select");
-                if (fieldSel && !fieldSel.disabled && fieldSel.value && fieldSel.value !== "\u2014") {
-                    /* Escape the quotes just in case. */
-                    var safe = fieldSel.value.replace(/"/g, '\\"');
-                    code = 'field_name = "' + safe + '"\n' + code;
-                }
-                var resultJson = await runCode(code);
-                var result = JSON.parse(resultJson);
-                var preview = document.getElementById(targetId + "-preview");
-                var inter = document.getElementById(targetId + "-interactive");
-                if (!inter) return;
-                if (result.status === "success") {
-                    if (result.plot_type === "plotly") {
-                        inter.style.minHeight = "400px";
-                        Plotly.newPlot(inter, JSON.parse(result.plot_data).data, JSON.parse(result.plot_data).layout, {responsive: true});
-                    } else if (result.plot_type === "matplotlib") {
-                        inter.innerHTML = '<img src="data:image/svg+xml;base64,' + result.plot_data + '" style="max-width:100%;height:auto;display:block;margin:auto;">';
-                    }
-                } else {
-                    inter.innerHTML = '<pre style="color:#dc2626;padding:0.8rem;font-size:var(--fs-s);overflow:auto">' + result.output + '</pre>';
-                }
-                if (preview) preview.style.display = "none";
-                inter.classList.add("active");
-
-                /* Update slider range from store metadata. */
-                if (result.store_meta && tlSlider) {
-                    var nSnaps = result.store_meta.n_snapshots || 0;
-                    if (nSnaps >= 1) {
-                        tlSlider.max = Math.max(0, nSnaps - 1);
-                        if (parseInt(tlSlider.value, 10) > tlSlider.max) {
-                            tlSlider.value = tlSlider.max;
-                        }
-                        /* Disable the slider when there's only one snapshot
-                           — keeps the UI honest about the degenerate case. */
-                        tlSlider.disabled = (nSnaps <= 1);
-                        var tsLabel = document.getElementById(targetId + "-ts");
-                        if (tsLabel) tsLabel.textContent = tlSlider.value + "/" + tlSlider.max;
-                    }
-                }
-
-                /* Populate the field selector from store_meta.fields. Keep
-                   the current selection if it's still valid; otherwise pick
-                   the first option. */
-                if (result.store_meta && fieldSel) {
-                    var fields = result.store_meta.fields || [];
-                    if (fields.length) {
-                        var prev = fieldSel.value;
-                        var html = "";
-                        fields.forEach(function (name) {
-                            html += '<option value="' + name + '">' + name + '</option>';
-                        });
-                        fieldSel.innerHTML = html;
-                        if (fields.indexOf(prev) !== -1) {
-                            fieldSel.value = prev;
-                        }
-                        fieldSel.disabled = false;
-                    }
-                }
-            } catch (err) { console.error("Runtime error:", err); }
-            finally { btn.disabled = false; }
-        };
+    /* --- Unified play button: single handler for every card type. --- */
+    if (hasPlay) {
+        var playBtn = document.getElementById(targetId + "-run");
+        if (playBtn) {
+            playBtn.onclick = function (e) {
+                e.stopPropagation();
+                executeCard(targetId, card, { timelineEl: tlSlider, fieldSelEl: fieldSelEl });
+            };
+        }
     }
 }
 
