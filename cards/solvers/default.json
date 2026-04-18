@@ -6,7 +6,7 @@
     "requires_tag": "numpy",
     "class": "zoomy_core.fvm.solver_numpy.HyperbolicSolver",
     "init": {"time_end": 0.1, "reconstruction_order": 1},
-    "template": "from zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver\nimport zoomy_core.fvm.timestepping as ts\n\nsolver = FreeSurfaceFlowSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    reconstruction_order=1,\n)\nQ, Qaux = solver.solve(mesh, model, write_output=False)\nprint('Done:', Q.shape[0], 'variables,', mesh.n_inner_cells, 'cells')\n"
+    "template": "import os\nfrom zoomy_core.fvm.solver_numpy import FreeSurfaceFlowSolver\nimport zoomy_core.fvm.timestepping as ts\nfrom zoomy_core.misc.misc import Zstruct\nfrom zoomy_core.misc.io import load_timeline_of_fields_from_hdf5\n\n# Writing output to Pyodide's virtual FS, then loading the full timeline\n# so the store can populate slider + field selector.\nos.makedirs('/tmp/zoomy_sim', exist_ok=True)\nsettings = Zstruct(output=Zstruct(\n    directory='/tmp/zoomy_sim',\n    filename='sim',\n    snapshots=20,\n    clean_directory=True,\n))\n\nsolver = FreeSurfaceFlowSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    reconstruction_order=1,\n    settings=settings,\n)\nQ, Qaux = solver.solve(mesh, model, write_output=True)\n\n# Full (n_snaps, n_vars, n_cells) arrays for the viz store.\n_coords, Q_timeline, Qaux_timeline, times = load_timeline_of_fields_from_hdf5(\n    '/tmp/zoomy_sim/sim.h5'\n)\n\nprint('Done:', Q.shape[0], 'variables,', mesh.n_inner_cells, 'inner cells,', len(times), 'snapshots')\n"
   },
   {
     "id": "solver-jax",
