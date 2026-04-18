@@ -44,6 +44,13 @@ async function installExec() {
     } catch (e) {
         postMessage({ type: "log", level: "warn", msg: "plotly failed: " + (e.message || e) });
     }
+    try {
+        var mp2 = py.pyimport("micropip");
+        await mp2.install(["zoomy-plotting"]);
+        postMessage({ type: "log", level: "info", msg: "zoomy-plotting ready" });
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "zoomy-plotting unavailable; snippets will use inline fallback (" + (e.message || e) + ")" });
+    }
     var code = await fetch("engine.py").then(function (r) { return r.text(); });
     await py.runPythonAsync(code);
 
