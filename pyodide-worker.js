@@ -67,15 +67,10 @@ function installExec() {
     if (_execPromise) return _execPromise;
     _execPromise = (async function () {
         await installParam();
-        /* zoomy-plotting is needed by engine.open_hdf5 for the solver run
-           path (not just viz), so it loads here rather than on first viz. */
-        try {
-            var mp = py.pyimport("micropip");
-            await mp.install(["zoomy-plotting"]);
-            postMessage({ type: "log", level: "info", msg: "zoomy-plotting ready" });
-        } catch (e) {
-            postMessage({ type: "log", level: "warn", msg: "zoomy-plotting unavailable (" + (e.message || e) + ")" });
-        }
+        /* zoomy-plotting is no longer loaded here — it moved to tier 2
+           (background). The engine.py function open_hdf5() imports it
+           lazily, and any run_code that touches the HDF5 path waits on
+           installZoomyPlotting() through ensureVizDeps(). */
         var code = await fetch("engine.py").then(function (r) { return r.text(); });
         await py.runPythonAsync(code);
 
@@ -126,6 +121,22 @@ function installPlotly() {
     return _plotlyPromise;
 }
 
+var _zpPromise = null;
+function installZoomyPlotting() {
+    if (_zpPromise) return _zpPromise;
+    _zpPromise = (async function () {
+        postMessage({ type: "log", level: "info", msg: "Installing zoomy-plotting in background…" });
+        try {
+            var mp = py.pyimport("micropip");
+            await mp.install(["zoomy-plotting"]);
+            postMessage({ type: "log", level: "info", msg: "zoomy-plotting ready" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "zoomy-plotting failed: " + (e.message || e) });
+        }
+    })();
+    return _zpPromise;
+}
+
 var _jediPromise = null;
 function installJedi() {
     if (_jediPromise) return _jediPromise;
@@ -142,14 +153,21 @@ function installJedi() {
     return _jediPromise;
 }
 
-/* Regex sniffing of user code to pick which viz library to pull on demand.
-   Matches `import matplotlib`, `from matplotlib`, and `matplotlib.use`. */
-var _MPL_RE = /\b(import\s+matplotlib|from\s+matplotlib|matplotlib\.)/;
+/* Regex sniffing of user code to decide which background / optional
+   installs must be awaited before run_code proceeds. Each regex maps
+   to a promise-guarded installer; callers hook onto the in-flight
+   promise so a snippet that arrives mid-install just waits its turn. */
+var _MPL_RE    = /\b(import\s+matplotlib|from\s+matplotlib|matplotlib\.)/;
 var _PLOTLY_RE = /\b(import\s+plotly|from\s+plotly)/;
+/* zoomy-plotting is used via engine.open_hdf5 — every solver-template
+   snippet ends with `open_hdf5(path)`, which lazy-imports zp inside
+   Python. Run_code must block on the zp install if the snippet needs it. */
+var _ZP_RE     = /\b(open_hdf5|zoomy_plotting)\b/;
 
 async function ensureVizDeps(code) {
     var needs = [];
-    if (_MPL_RE.test(code)) needs.push(installMatplotlib());
+    if (_ZP_RE.test(code))     needs.push(installZoomyPlotting());
+    if (_MPL_RE.test(code))    needs.push(installMatplotlib());
     if (_PLOTLY_RE.test(code)) needs.push(installPlotly());
     if (needs.length) await Promise.all(needs);
 }
@@ -234,16 +252,19 @@ onmessage = async function (e) {
         } else if (msg.cmd === "open_hdf5") {
             /* Point the store at an HDF5 file already on Pyodide's VFS
                (written by the solver template) or at one we just wrote
-               via write_hdf5_bytes. */
+               via write_hdf5_bytes. engine.open_hdf5 lazy-imports
+               zoomy_plotting, so the install must finish first. */
             await installExec();
+            await installZoomyPlotting();
             py.globals.get("open_hdf5")(msg.path);
             postMessage({ type: "result", id: msg.id, data: "ok" });
 
         } else if (msg.cmd === "write_hdf5_bytes") {
             /* Stream an HDF5 binary (e.g. downloaded from the server's
                /jobs/{id}/results/hdf5 endpoint) into Pyodide's VFS, then
-               hand the path to engine.open_hdf5. */
+               hand the path to engine.open_hdf5 (which requires zp). */
             await installExec();
+            await installZoomyPlotting();
             var dir = msg.path.replace(/\/[^\/]*$/, "");
             if (dir) py.FS.mkdirTree(dir);
             py.FS.writeFile(msg.path, new Uint8Array(msg.bytes));
@@ -321,20 +342,34 @@ onmessage = async function (e) {
     postMessage({ type: "fully_ready" });
 
     /* --- Install tiers ---
-     *   1. CORE (boot-blocking, above): zoomy-core, sympy, param, h5py,
-     *      zoomy-plotting, engine.py + display hook. Without these the
-     *      user can't select / extract params / open a store.
-     *   2. BACKGROUND (eager but non-blocking, here): matplotlib, jedi.
-     *      Kick off AFTER posting "fully_ready" so the GUI becomes
-     *      interactive immediately while the worker uses idle time to
-     *      warm up packages the user is likely to need soon. The lazy
-     *      triggers in run_code / complete_code await the same promise,
-     *      so a click that arrives early just waits on the already-in-
-     *      flight install instead of starting a new one.
+     *   1. CORE (boot-blocking, above): zoomy-core + param + h5py +
+     *      engine.py + display hook. h5py stays here because
+     *      zoomy_core.mesh.base_mesh caches _HAVE_H5PY at module
+     *      import time; the boot pre-extract loop imports zoomy_core,
+     *      so h5py must already be present when that happens.
+     *
+     *   2. BACKGROUND (eager but non-blocking, here):
+     *        jedi                — autocomplete; first click is
+     *                              usually a gear or editor; kick off
+     *                              FIRST so it has the most wall-
+     *                              clock time to finish before use.
+     *        zoomy-plotting      — needed at end of every Pyodide
+     *                              solver run (open_hdf5) and for
+     *                              every viz refresh. ensureVizDeps
+     *                              blocks run_code on this if the
+     *                              snippet touches open_hdf5 / zp.
+     *        matplotlib          — needed only by mpl viz cards; last
+     *                              in the priority line but still
+     *                              pre-warmed so the first viz
+     *                              refresh is instant.
+     *
      *   3. OPTIONAL (fully lazy, in run_code): plotly. Many snippets
      *      never touch it, so we don't spend the install budget until
      *      a snippet actually imports it.
-     */
-    installMatplotlib();     // fire-and-forget, promise-guarded
-    installJedi();           // fire-and-forget, promise-guarded
+     *
+     * All four installers are promise-guarded, so concurrent callers
+     * attach to the in-flight install instead of starting a duplicate. */
+    installJedi();              // highest-priority tier 2
+    installZoomyPlotting();
+    installMatplotlib();
 })();
