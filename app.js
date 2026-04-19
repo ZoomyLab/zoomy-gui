@@ -306,6 +306,15 @@ if (typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated) {
 var _cli = null;
 var _cliReady = null;
 
+/* --- Autocomplete readiness tracker ---
+   Autocomplete needs BOTH jedi (installed in Pyodide) and Ace
+   (loaded + language_tools + our completer registered). We watch the
+   worker log for the "jedi ready" marker, preload Ace at boot, and
+   flash a confirmation toast once both are done so the user has an
+   explicit "you can now use Ctrl-Space" signal. */
+var _resolveJediReady;
+var _jediReady = new Promise(function (resolve) { _resolveJediReady = resolve; });
+
 function _onAdapterLog(msg) {
     logDebug(msg.level || "info", "[Worker] " + msg.msg);
     /* Show as toast for coarse progress markers — booting the
@@ -313,6 +322,12 @@ function _onAdapterLog(msg) {
        background_ready signal hides the toast when the final tier-2
        install finishes. */
     if (/^(Booting|Loading|Installing)\b/.test(msg.msg)) showToast(msg.msg);
+    /* Resolve the jedi gate when the worker announces the install is
+       done. Worker logs "jedi ready" (see installJedi in pyodide-worker.js). */
+    if (_resolveJediReady && msg.msg.indexOf("jedi ready") !== -1) {
+        _resolveJediReady();
+        _resolveJediReady = null;
+    }
 }
 
 function _onAdapterDisplay(cellOrJson) {
@@ -362,6 +377,23 @@ function getCli() {
 }
 getCli();
 
+/* Preload Ace (editor + language_tools + zoomy completer) in parallel
+   with Pyodide tier-2 installs. Without this preload Ace only loads on
+   the first card click, which creates a dead window (seen in the logs
+   as: "jedi ready" at T+8s, then 20s idle, then "Loading Ace editor"
+   on the first interaction). Preloading overlaps both halves so that
+   by the time the user clicks anything, autocomplete is fully live. */
+ensureAce();
+
+/* When jedi is installed AND Ace is loaded, flash an explicit
+   "Autocomplete ready" confirmation so the user knows Ctrl-Space is
+   live — the one thing background_ready alone doesn't communicate. */
+Promise.all([_jediReady, window._aceReady]).then(function () {
+    showToast("Autocomplete ready");
+    setTimeout(hideToast, 2000);
+    logDebug("info", "Autocomplete ready (jedi + Ace)");
+});
+
 /* No more pyCall / runCode / extractParams wrappers in app.js — every
    backend interaction goes through the CLI façade (cli.runCode,
    cli.extractParams, cli.describeModel, cli.writeHdf5Bytes,
@@ -383,17 +415,20 @@ function _cliGetUrlForTag(tag) {
 
 function ensureAce() {
     if (!window._aceReady) window._aceReady = (async function () {
-        logDebug("info", "Loading Ace editor...");
-        showToast("Loading editor...");
+        logDebug("info", "Loading Ace editor (autocomplete UI)...");
+        /* NOTE: We intentionally don't showToast/hideToast here —
+           ensureAce() is called at boot and the Pyodide "Installing X"
+           toasts are already visible. The combined "Autocomplete ready"
+           confirmation is orchestrated by the _jediReady + _aceReady
+           Promise.all near getCli(). */
         await loadScript("https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js");
         /* Pull in language_tools to enable Ace's autocomplete framework.
            Our custom zoomy_core completer is registered via
-           registerZoomyCompleter() below, which adds a completer that
-           reads types.json + the buffer to answer `.method` queries. */
+           registerZoomyCompleter() below, which hooks into Pyodide+jedi
+           to answer `.method` / kwarg-in-call queries. */
         await loadScript("https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ext-language_tools.js");
         registerZoomyCompleter();
         logDebug("info", "Ace editor ready");
-        hideToast();
     })();
     return window._aceReady;
 }
