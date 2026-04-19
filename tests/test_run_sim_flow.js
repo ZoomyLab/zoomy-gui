@@ -59,33 +59,27 @@ async function main() {
 
     // Check if the store got populated by executing a query
     console.log("\nChecking store state...");
-    const storeStatus = await page.evaluate(() => {
-        return new Promise((resolve) => {
-            const id = Date.now();
-            const h = (ev) => {
-                if (ev.data.id !== id) return;
-                _pyWorker.removeEventListener("message", h);
-                resolve(ev.data);
-            };
-            _pyWorker.addEventListener("message", h);
-            _pyWorker.postMessage({
-                cmd: "run_code", id: id, code: `
-if store is None:
-    print("STORE IS NONE")
-else:
-    print("store type:", type(store).__name__)
-    print("  dim:", store.dim)
-    print("  cell_type:", store.cell_type)
-    print("  n_cells:", store.n_cells)
-    print("  n_vertices:", store.n_vertices)
-    print("  n_snapshots:", store.n_snapshots)
-    print("  fields:", list(store.field.keys()))
-    print("  vertices shape:", store.vertices.shape)
-    print("  cells shape:", store.cells.shape)
-    print("  has_Q: True")  # HDF5 store always has fields if it loaded
-`,
-            });
-        });
+    /* Post-Phase-3: route store probe through the CLI façade, not the
+       raw worker. The CLI runs the code through PyodideAdapter.runCode
+       and returns the same JSON result shape as the old pyWorker path. */
+    const storeStatus = await page.evaluate(async () => {
+        const cli = await window.getCli();
+        const code =
+            'if store is None:\n' +
+            '    print("STORE IS NONE")\n' +
+            'else:\n' +
+            '    print("store type:", type(store).__name__)\n' +
+            '    print("  dim:", store.dim)\n' +
+            '    print("  cell_type:", store.cell_type)\n' +
+            '    print("  n_cells:", store.n_cells)\n' +
+            '    print("  n_vertices:", store.n_vertices)\n' +
+            '    print("  n_snapshots:", store.n_snapshots)\n' +
+            '    print("  fields:", list(store.field.keys()))\n' +
+            '    print("  vertices shape:", store.vertices.shape)\n' +
+            '    print("  cells shape:", store.cells.shape)\n' +
+            '    print("  has_Q: True")\n';
+        const data = await cli.runCode(code);
+        return { data };
     });
     const storeResult = JSON.parse(storeStatus.data || "{}");
     console.log("Store status:");

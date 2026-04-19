@@ -56,20 +56,25 @@ function logDebug(level, msg) {
     else console.log("[zoomy]", msg);
 }
 
-/* === Pyodide Web Worker (runs in background thread, never freezes UI) === */
-
-var _pyWorker = null;
-var _pyCallbacks = {};
-var _pyMsgId = 0;
+/* === Isomorphic CLI façade (Phase 3) =====================================
+ * app.js routes every backend call through a single ZoomyCLI instance.
+ * The CLI owns the Pyodide worker (via PyodideAdapter) and any HTTP
+ * backends (HttpAdapter, registered at connect time). No more direct
+ * _pyWorker.postMessage or ZoomyBackend.* calls from app.js.
+ *
+ * The GUI is not itself a module, so the CLI loads via dynamic
+ * import(). Every worker-bound action goes through `await getCli()`
+ * followed by `cli.runCode(...)` / `cli.extractParams(...)` / etc.
+ * For the few places that need the raw Worker object (set_interrupt_
+ * buffer during boot, terminate() during hard-stop fallback) we expose
+ * `cli.pyodide._worker`, still through the façade. */
 
 /* Cooperative-cancel channel. If the page is cross-origin isolated
    (served with COOP/COEP headers — our service worker injects those)
-   SharedArrayBuffer is available; we stash a 1-byte shared buffer here,
-   hand the same underlying SAB to the worker, and Pyodide's
+   SharedArrayBuffer is available; we stash a 1-byte shared buffer here
+   and the PyodideAdapter hands the same SAB to the worker so Pyodide's
    setInterruptBuffer watches it. Writing 2 (SIGINT) interrupts Python
-   between bytecodes — no worker.terminate(), no reboot. When SAB is
-   unavailable (first load before SW activates, or a browser without
-   COI support) we fall back to terminate+recreate. */
+   between bytecodes — no terminate, no reboot. */
 var _pyInterruptBuffer = null;
 var _pyInterruptView = null;
 if (typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated) {
@@ -77,110 +82,62 @@ if (typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated) {
     _pyInterruptView = new Uint8Array(_pyInterruptBuffer);
 }
 
-/* Attach the main message router to a (re)created worker. Split out of the
-   initial declaration so the stop-simulation path can terminate the current
-   worker and spin up a fresh one with the same wiring. */
-function attachPyWorkerHandlers(w) {
-    w.onmessage = function (e) {
-        var msg = e.data;
-        if (msg.type === "fully_ready") {
-            hideToast();
-            return;
-        }
-        if (msg.type === "log") {
-            logDebug(msg.level || "info", "[Worker] " + msg.msg);
-            if (msg.msg.indexOf("Loading") === 0 || msg.msg.indexOf("Installing") === 0) showToast(msg.msg);
-            return;
-        }
-        /* display events are handled by the addEventListener below */
-        if (msg.type === "display") return;
-        var cb = _pyCallbacks[msg.id];
-        if (!cb) return;
-        delete _pyCallbacks[msg.id];
-        if (msg.type === "error") cb.reject(new Error(msg.error));
-        else cb.resolve(msg.data);
-    };
-    w.addEventListener("message", function (ev) {
-        if (ev.data.type === "display" && ev.data.cell) {
-            var cell = JSON.parse(ev.data.cell);
-            /* Live stdout streaming from engine._LiveStdout — route to the
-               dashboard debug log instead of a notebook cell so users see
-               solver iteration progress while a long simulation is running. */
-            if (cell.mime === "text/x-log") {
-                logDebug("info", "[py] " + cell.content);
-                return;
-            }
-            var target = _activeOutputTarget ? document.getElementById(_activeOutputTarget) : null;
-            if (target) renderOutputCell(cell, target);
-        }
-    });
-}
-
-function createPyWorker() {
-    var w = new Worker("pyodide-worker.js");
-    attachPyWorkerHandlers(w);
-    /* Hand the shared interrupt buffer over as soon as the worker exists.
-       The worker wires it into Pyodide after the runtime boots. */
-    if (_pyInterruptBuffer) {
-        _pyInterruptView[0] = 0;
-        w.postMessage({ cmd: "set_interrupt_buffer", buffer: _pyInterruptBuffer });
-    }
-    return w;
-}
-
-_pyWorker = createPyWorker();
-
-function pyCall(cmd, params) {
-    return new Promise(function (resolve, reject) {
-        var id = ++_pyMsgId;
-        _pyCallbacks[id] = { resolve: resolve, reject: reject };
-        var msg = { cmd: cmd, id: id };
-        Object.keys(params || {}).forEach(function (k) { msg[k] = params[k]; });
-        /* pyCall chatter suppressed — the worker logs user-visible commands itself. */
-        _pyWorker.postMessage(msg);
-    });
-}
-
-function extractParams(classPath, init) {
-    return pyCall("extract_params", { class_path: classPath, init: init });
-}
-
-function runCode(code) {
-    return pyCall("run_code", { code: code });
-}
-
-/* === Isomorphic CLI façade (Phase 3) =====================================
- * app.js talks to backends through a single ZoomyCLI instance loaded from
- * library/zoomy_cli/browser.mjs. The GUI is not itself a module, so we
- * load the CLI via dynamic import() and expose it as `_cli` once ready;
- * call-sites use `await getCli()` to ensure it's available.
- *
- * The migration is incremental: storage-type fetches (card manifests,
- * tabs.json, snippets, registry) go through the CLI now; worker and
- * HTTP-backend call-sites follow in subsequent commits. Until then the
- * legacy pyCall/runCode/ZoomyBackend paths above continue to work. */
+/* The CLI load is async (dynamic import). Kick it off at boot; every
+   caller uses `await getCli()` before touching the façade. `_cli` is
+   exposed on window so debug tooling can reach it. */
 var _cli = null;
 var _cliReady = null;
+
+function _onAdapterLog(msg) {
+    logDebug(msg.level || "info", "[Worker] " + msg.msg);
+    if (msg.msg.indexOf("Loading") === 0 || msg.msg.indexOf("Installing") === 0) showToast(msg.msg);
+}
+
+function _onAdapterDisplay(cellOrJson) {
+    /* The adapter forwards the raw message cell; engine.py may have
+       already JSON-encoded it, so handle both shapes defensively. */
+    var cell = (typeof cellOrJson === "string") ? JSON.parse(cellOrJson) : cellOrJson;
+    /* Live stdout streaming from engine._LiveStdout — route to the
+       dashboard debug log instead of a notebook cell so users see
+       solver iteration progress while a long simulation is running. */
+    if (cell.mime === "text/x-log") { logDebug("info", "[py] " + cell.content); return; }
+    var target = _activeOutputTarget ? document.getElementById(_activeOutputTarget) : null;
+    if (target) renderOutputCell(cell, target);
+}
+
+window.getCli = getCli;    // expose for tests and debugging
 function getCli() {
     if (_cliReady) return _cliReady;
     _cliReady = import("./zoomy_cli/browser.mjs").then(function (m) {
-        /* Construct the CLI without a worker for now — the Pyodide
-           adapter's message routing would collide with the legacy
-           attachPyWorkerHandlers. Later migration steps will switch the
-           worker over to the adapter and delete the legacy handler. */
+        var pyodide = new m.PyodideAdapter({
+            workerUrl: "pyodide-worker.js",
+            interruptBuffer: _pyInterruptBuffer,
+            onLog: _onAdapterLog,
+            onDisplay: _onAdapterDisplay,
+            onReady: function () { hideToast(); },
+        });
+        /* Boot the worker immediately — matches the legacy behaviour
+           of creating the Worker at top-of-app.js. Without this, the
+           first extractParams() call pays a cold-boot tax. */
+        pyodide._ensureWorker();
         _cli = new m.ZoomyCLI({
             storage: new m.FetchStorage(),
-            pyodide: new m.PyodideAdapter({}),
+            pyodide: pyodide,
         });
         window._cli = _cli;
         return _cli;
     }).catch(function (err) {
-        logDebug("warn", "ZoomyCLI failed to load: " + (err.message || err));
+        logDebug("error", "ZoomyCLI failed to load: " + (err.message || err));
         throw err;
     });
     return _cliReady;
 }
 getCli();
+
+/* No more pyCall / runCode / extractParams wrappers in app.js — every
+   backend interaction goes through the CLI façade (cli.runCode,
+   cli.extractParams, cli.describeModel, cli.writeHdf5Bytes,
+   cli.submitCase, cli.cancel). The old wrappers used to live here. */
 
 /* === Ace + Plotly (still main thread, they need DOM access) === */
 
@@ -371,7 +328,8 @@ async function executeCard(targetId, card, options) {
            runs this is a no-op cache hit. */
         if (/\bplotly\b/.test(code)) await ensurePlotly();
 
-        var resultJson = await runCode(code);
+        var cli = await getCli();
+        var resultJson = await cli.runCode(code);
         var result = JSON.parse(resultJson);
 
         /* Clear the cells on a fresh run but preserve the last plot cell
@@ -1144,7 +1102,8 @@ function createCard(targetId, card, mgr, cardType) {
                     var btn = this;
                     logDebug("info", "Fetching describe() for " + card["class"] + "...");
                     try {
-                        var desc = await pyCall("describe_model", { class_path: card["class"], init: card.init || {} });
+                        var _cliRef = await getCli();
+                        var desc = await _cliRef.describeModel(card["class"], card.init || {});
                         logDebug("info", "describe() returned " + (desc ? desc.length : 0) + " chars");
                         /* Put into editor (if open) — the editor's on("change") triggers render */
                         if (_descEditor) {
@@ -1190,7 +1149,8 @@ function createCard(targetId, card, mgr, cardType) {
             }));
         } else if (hasClass) {
             try {
-                var sj = await extractParams(card["class"], card.init || {});
+                var _cliRef = await getCli();
+                var sj = await _cliRef.extractParams(card["class"], card.init || {});
                 var parsed = JSON.parse(sj);
                 paramsDiv.appendChild(renderParamWidgets(parsed, function (n, v) {
                     cState.params[n] = v;
@@ -1282,30 +1242,23 @@ function stopSimulation() {
     showToast("Stopping simulation...");
 
     if (mode === "pyodide") {
-        if (_pyInterruptView) {
-            /* Cooperative cancel: write SIGINT (2) to the shared buffer.
-               Pyodide's setInterruptBuffer polls this between bytecodes
-               and raises KeyboardInterrupt in Python, which engine.py
-               catches and returns a clean "stopped" status. The worker
-               survives — no re-boot, next run uses the cached runtime. */
-            _pyInterruptView[0] = 2;
-            logDebug("info", "Interrupt sent (cooperative); worker keeps its state");
-        } else {
-            /* SharedArrayBuffer unavailable (page not cross-origin
-               isolated yet, or a browser without support). Fall back to
-               terminate + recreate — costs one Pyodide re-boot (~5–10 s)
-               on the next run, but it's the only way to stop exec(). */
-            try { _pyWorker.terminate(); } catch (e) {}
-            Object.keys(_pyCallbacks).forEach(function (id) {
-                try { _pyCallbacks[id].reject(new Error("Simulation stopped by user")); } catch (e) {}
-                delete _pyCallbacks[id];
-            });
-            _pyWorker = createPyWorker();
-            logDebug("info", "Worker terminated (no SAB); a fresh one will boot on the next run");
-        }
+        /* Ask the CLI's PyodideAdapter to interrupt. It prefers
+           cooperative cancel (SIGINT on the shared buffer) and falls
+           back to terminate + re-create when SharedArrayBuffer is
+           unavailable. The result tells us which path was taken. */
+        getCli().then(function (cli) {
+            var res = cli.pyodide.interrupt();
+            if (res.mode === "cooperative") {
+                logDebug("info", "Interrupt sent (cooperative); worker keeps its state");
+            } else if (res.mode === "terminate+recreate") {
+                logDebug("info", "Worker terminated (no SAB); a fresh one will boot on the next run");
+            }
+        });
     } else if (mode === "server") {
         if (_activeJob && _activeJob.jobId && _activeJob.tag) {
-            ZoomyBackend.cancel(_activeJob.tag, _activeJob.jobId).then(function (res) {
+            getCli().then(function (cli) {
+                return cli.cancel({ tag: _activeJob.tag, jobId: _activeJob.jobId });
+            }).then(function (res) {
                 logDebug("info", "Server job cancelled: " + JSON.stringify(res));
             }).catch(function (err) {
                 logDebug("warn", "Cancel request failed: " + (err.message || err));
@@ -1772,47 +1725,48 @@ document.addEventListener("DOMContentLoaded", function () {
             showToast("Running via Pyodide...");
             updateDashboardJob({ job_id: "pyodide", status: "running" });
             _runningMode = "pyodide";
+            var runId = "run-" + Date.now();
+            _currentPyRunId = runId;
             setRunBtnState(true);
-            var msgId = "run-" + Date.now();
-            _currentPyRunId = msgId;
-            var runHandler = function (ev) {
-                if (ev.data.id !== msgId) return;
-                _pyWorker.removeEventListener("message", runHandler);
-                /* If the user clicked Stop, stopSimulation() already reset
-                   state and terminated the worker; ignore any straggler. */
-                if (_runningMode !== "pyodide" || _currentPyRunId !== msgId) return;
-                var cancelled = false;
-                if (ev.data.type === "result") {
-                    try {
-                        var result = JSON.parse(ev.data.data);
-                        cancelled = (result.status === "cancelled");
-                        if (result.output) logDebug("info", result.output);
-                    } catch (e) { logDebug("info", String(ev.data.data)); }
-                    if (cancelled) {
-                        logDebug("info", "Simulation cancelled by user");
-                        showToast("Simulation stopped"); setTimeout(hideToast, 2000);
-                        updateDashboardJob({ job_id: "pyodide", status: "cancelled" });
-                    } else {
-                        logDebug("info", "Pyodide result received");
-                        showToast("Simulation complete!"); setTimeout(hideToast, 3000);
-                        updateDashboardJob({ job_id: "pyodide", status: "complete" });
-                    }
-                } else if (ev.data.type === "error") {
-                    logDebug("error", "Pyodide error: " + ev.data.error);
-                    showToast("Error — see Log"); setTimeout(hideToast, 3000);
-                    updateDashboardJob({ job_id: "pyodide", status: "failed" });
+
+            getCli().then(function (cli) {
+                return cli.runCode(code);
+            }).then(function (resultJson) {
+                /* Late returns from a cancelled run get ignored; the stop
+                   handler has already reset UI state. */
+                if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
+                var cancelled = false, result = null;
+                try {
+                    result = JSON.parse(resultJson);
+                    cancelled = (result.status === "cancelled");
+                    if (result.output) logDebug("info", result.output);
+                } catch (e) {
+                    logDebug("info", String(resultJson));
                 }
-                /* Re-arm the shared interrupt buffer so the next run starts
-                   with a clean SIGINT flag (Pyodide clears it internally on
-                   each exec start, but the explicit reset keeps intent
-                   visible and guards against any ordering quirks). */
+                if (cancelled) {
+                    logDebug("info", "Simulation cancelled by user");
+                    showToast("Simulation stopped"); setTimeout(hideToast, 2000);
+                    updateDashboardJob({ job_id: "pyodide", status: "cancelled" });
+                } else {
+                    logDebug("info", "Pyodide result received");
+                    showToast("Simulation complete!"); setTimeout(hideToast, 3000);
+                    updateDashboardJob({ job_id: "pyodide", status: "complete" });
+                }
+            }).catch(function (err) {
+                if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
+                logDebug("error", "Pyodide error: " + (err.message || err));
+                showToast("Error — see Log"); setTimeout(hideToast, 3000);
+                updateDashboardJob({ job_id: "pyodide", status: "failed" });
+            }).finally(function () {
+                if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
+                /* Re-arm the shared interrupt flag so the next run starts
+                   clean (Pyodide clears it internally on each exec start,
+                   but the explicit reset keeps intent visible). */
                 if (_pyInterruptView) _pyInterruptView[0] = 0;
                 _runningMode = null;
                 _currentPyRunId = null;
                 setRunBtnState(false);
-            };
-            _pyWorker.addEventListener("message", runHandler);
-            _pyWorker.postMessage({ cmd: "run_code", code: code, id: msgId });
+            });
             return;
         }
 
@@ -1829,52 +1783,100 @@ document.addEventListener("DOMContentLoaded", function () {
         logDebug("info", "Case: " + JSON.stringify(zoomyCase).substring(0, 200));
         showToast("Submitting job...");
         try {
-            var resp = await ZoomyBackend.submit(tag, zoomyCase);
-            _activeJob = { jobId: resp.job_id, tag: tag, startTime: Date.now() };
+            /* Make sure the CLI has an HttpAdapter registered for this tag
+               (ZoomyBackend already knew the URL; we bridge it to the CLI
+               on demand, which keeps backward compat with existing
+               discover()/connect() flows that only touched ZoomyBackend). */
+            var cli = await getCli();
+            if (!cli.isHttpConnected(tag)) {
+                var backendUrl = ZoomyBackend.getUrlForTag(tag);
+                if (backendUrl) {
+                    try { await cli.connectHttp(backendUrl, cli.constructor.HttpAdapter || (await import("./zoomy_cli/browser.mjs")).HttpAdapter); }
+                    catch (e) { logDebug("warn", "CLI HttpAdapter connect failed, falling back to ZoomyBackend.submit: " + (e.message || e)); }
+                }
+            }
+
+            /* Prefer the CLI path (submit → poll → download HDF5 → write
+               to Pyodide VFS, all in one call). Falls back to the legacy
+               ZoomyBackend pathway if no HttpAdapter is available. */
             _runningMode = "server";
             setRunBtnState(true);
-            logDebug("info", "Job submitted: " + resp.job_id);
-            showToast("Job " + resp.job_id + " running...");
-            updateDashboardJob({ job_id: resp.job_id, status: "queued" });
-            ZoomyBackend.poll(tag, resp.job_id, function (status) {
-                updateDashboardJob(status);
-                if (status.status === "complete") {
-                    logDebug("info", "Job " + resp.job_id + " complete");
-                    showToast("Job complete — downloading HDF5…");
-                    /* Server path mirrors the local one: download the HDF5
-                       output, write to Pyodide's VFS, and have engine.open_hdf5
-                       build the store via zoomy_plotting.read_hdf5. */
-                    var url = ZoomyBackend.getUrlForTag(tag) +
-                              "/api/v1/jobs/" + resp.job_id + "/results/hdf5";
-                    fetch(url).then(function (r) {
-                        if (!r.ok) throw new Error("HTTP " + r.status);
-                        return r.arrayBuffer();
-                    }).then(function (buf) {
-                        logDebug("info", "HDF5 downloaded: " + buf.byteLength + " bytes");
-                        var path = "/tmp/zoomy_sim/" + resp.job_id + ".h5";
-                        return pyCall("write_hdf5_bytes", { path: path, bytes: new Uint8Array(buf) });
-                    }).then(function () {
-                        showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
-                    }).catch(function (err) {
-                        logDebug("error", "Failed to fetch HDF5: " + err);
-                        showToast("HDF5 download failed — see Log"); setTimeout(hideToast, 3000);
+
+            if (cli.isHttpConnected(tag)) {
+                var jobId = null;
+                var _onStatus = function (status) {
+                    if (!_activeJob && status.job_id) {
+                        _activeJob = { jobId: status.job_id, tag: tag, startTime: Date.now() };
+                        jobId = status.job_id;
+                        logDebug("info", "Job submitted: " + jobId);
+                        showToast("Job " + jobId + " running...");
+                    }
+                    updateDashboardJob(status);
+                };
+                try {
+                    var outcome = await cli.submitCase({
+                        tag: tag,
+                        case: zoomyCase,
+                        onStatus: _onStatus,
                     });
-                    _activeJob = null;
-                    _runningMode = null;
-                    setRunBtnState(false);
-                } else if (status.status === "failed") {
-                    logDebug("error", "Job " + resp.job_id + " failed:\n" + (status.error || "unknown"));
+                    /* submitCase already piped the HDF5 into Pyodide's VFS
+                       via the CLI — viz cards can open_hdf5 it directly. */
+                    if (outcome.mode === "http" && outcome.result.status === "complete") {
+                        var id = outcome.result.job_id;
+                        logDebug("info", "Job " + id + " complete (HDF5 "
+                                 + (outcome.result.hdf5 ? outcome.result.hdf5.byteLength + " bytes" : "missing")
+                                 + ")");
+                        showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
+                        updateDashboardJob({ job_id: id, status: "complete" });
+                    } else if (outcome.result && outcome.result.status === "cancelled") {
+                        logDebug("info", "Job " + (jobId || "?") + " cancelled");
+                        updateDashboardJob({ job_id: jobId || "?", status: "cancelled" });
+                    }
+                } catch (err) {
+                    logDebug("error", "Job failed: " + (err.message || err));
                     showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
-                    _activeJob = null;
-                    _runningMode = null;
-                    setRunBtnState(false);
-                } else if (status.status === "cancelled") {
-                    logDebug("info", "Job " + resp.job_id + " cancelled");
-                    _activeJob = null;
-                    _runningMode = null;
-                    setRunBtnState(false);
+                    updateDashboardJob({ job_id: jobId || "?", status: "failed" });
+                } finally {
+                    _activeJob = null; _runningMode = null; setRunBtnState(false);
                 }
-            });
+            } else {
+                /* Legacy ZoomyBackend pathway — kept until the final
+                   cleanup commit of Phase 3 deletes backend.js. */
+                var resp = await ZoomyBackend.submit(tag, zoomyCase);
+                _activeJob = { jobId: resp.job_id, tag: tag, startTime: Date.now() };
+                logDebug("info", "Job submitted: " + resp.job_id);
+                showToast("Job " + resp.job_id + " running...");
+                updateDashboardJob({ job_id: resp.job_id, status: "queued" });
+                ZoomyBackend.poll(tag, resp.job_id, function (status) {
+                    updateDashboardJob(status);
+                    if (status.status === "complete") {
+                        logDebug("info", "Job " + resp.job_id + " complete");
+                        showToast("Job complete — downloading HDF5…");
+                        var url = ZoomyBackend.getUrlForTag(tag) +
+                                  "/api/v1/jobs/" + resp.job_id + "/results/hdf5";
+                        fetch(url).then(function (r) {
+                            if (!r.ok) throw new Error("HTTP " + r.status);
+                            return r.arrayBuffer();
+                        }).then(function (buf) {
+                            logDebug("info", "HDF5 downloaded: " + buf.byteLength + " bytes");
+                            return cli.writeHdf5Bytes("/tmp/zoomy_sim/" + resp.job_id + ".h5", new Uint8Array(buf));
+                        }).then(function () {
+                            showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
+                        }).catch(function (err) {
+                            logDebug("error", "Failed to fetch HDF5: " + err);
+                            showToast("HDF5 download failed — see Log"); setTimeout(hideToast, 3000);
+                        });
+                        _activeJob = null; _runningMode = null; setRunBtnState(false);
+                    } else if (status.status === "failed") {
+                        logDebug("error", "Job " + resp.job_id + " failed:\n" + (status.error || "unknown"));
+                        showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
+                        _activeJob = null; _runningMode = null; setRunBtnState(false);
+                    } else if (status.status === "cancelled") {
+                        logDebug("info", "Job " + resp.job_id + " cancelled");
+                        _activeJob = null; _runningMode = null; setRunBtnState(false);
+                    }
+                });
+            }
         } catch (err) {
             logDebug("error", "Submit failed: " + err);
             showToast("Submit failed — see Log on Dashboard"); setTimeout(hideToast, 3000);
