@@ -145,10 +145,38 @@ function installJedi() {
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["jedi"]);
-            postMessage({ type: "log", level: "info", msg: "jedi ready" });
         } catch (e) {
             postMessage({ type: "log", level: "warn", msg: "jedi failed: " + (e.message || e) });
+            return;
         }
+        /* Prime jedi's parser cache with a representative zoomy_core
+           completion. Jedi does on-demand indexing: the first call over
+           an import graph (e.g. `from zoomy_core.model.models.sme_model
+           import SMEInviscid; model.describe`) takes 15-25 s on WASM as
+           it walks + parses every transitive module. Subsequent calls
+           reuse the cached ParserStates and return in ~50 ms. So we
+           front-load that cost here, before posting "jedi ready", so
+           the user's first Ctrl-Space in the editor is instant. */
+        postMessage({ type: "log", level: "info", msg: "Indexing zoomy_core for autocomplete…" });
+        try {
+            await installExec();   // pulls engine.py in so complete_code is available
+            var priming = [
+                "from zoomy_core.model.models.sme_model import SMEInviscid",
+                "model = SMEInviscid(level=0)",
+                "model.",
+            ].join("\n");
+            var t0 = performance.now();
+            /* 3rd line, column after "model." */
+            var res = py.globals.get("complete_code")(priming, 3, 6);
+            if (res && res.destroy) res.destroy();
+            var dt = ((performance.now() - t0) / 1000).toFixed(1);
+            postMessage({ type: "log", level: "info", msg: "zoomy_core indexed in " + dt + "s" });
+        } catch (e) {
+            /* Priming failure is non-fatal — autocomplete still works,
+               just with a slow first call. Log it so we notice in CI. */
+            postMessage({ type: "log", level: "warn", msg: "jedi prime failed: " + (e.message || e) });
+        }
+        postMessage({ type: "log", level: "info", msg: "jedi ready" });
     })();
     return _jediPromise;
 }
