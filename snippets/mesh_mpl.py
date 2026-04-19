@@ -51,3 +51,8 @@ if store.times is not None and len(store.times):
 
 print(f"[zp] {store.cell_type} dim={store.dim} field={field_name!r} "
       f"snaps={store.n_snapshots} cells={store.n_cells}")
+
+# Single output convention — display(fig) is the only way a snippet
+# publishes a plot to the card. The GUI clears the output list at the
+# start of every run, so the figure shown is always just this one.
+display(fig)

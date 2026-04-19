@@ -128,26 +128,38 @@ button { margin-bottom: 0; }
 .card-description { color: var(--c-muted); font-size: var(--fs-s); line-height: 1.5; margin: 0 0 0.4rem 0; }
 .card-description img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: var(--r); margin: 0.3rem 0; display: block; }
 .card-description .katex { font-size: var(--fs-m); }
+.card-description p { margin: 0.3rem 0; }
+.card-description h2, .card-description h3, .card-description h4 { margin: 0.5rem 0 0.2rem; color: var(--c-text); }
+.card-description ul, .card-description ol { margin: 0.3rem 0 0.3rem 1.2rem; padding: 0; }
+.card-description li { margin: 0.1rem 0; }
+.card-description code { background: var(--c-hover); padding: 0 0.25rem; border-radius: var(--r); font-family: var(--f-mono); font-size: 0.9em; }
+.card-description pre.md-code { background: var(--c-bg); border: var(--bw) solid var(--c-border); border-radius: var(--r); padding: 0.4rem 0.6rem; overflow: auto; font-size: 0.85em; }
+.card-description hr { border: 0; border-top: var(--bw) solid var(--c-border); margin: 0.5rem 0; }
 
 /* --- Unified card anatomy ---
-   Code-bearing cards (model / solver / mesh-with-template / vis) all share
-   the same shape: header -> description? -> controls -> output -> code
-   (collapsed by default) -> play button. The controls bar carries per-frame
-   knobs (timeline slider, field selector) plus gear/edit/size. */
+   Code-bearing cards all share the same shape:
+     header -> description? -> controls -> #params -> #editor-wrap -> output.
+   The controls bar carries per-frame knobs (timeline / field selector)
+   plus gear / edit / play / size. The play button is HIDDEN by
+   default — CSS reveals it on vis cards and on any card whose edit
+   panel is open (see .card.has-vis / .card.edit-open below). */
 .card-controls { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin: 0.3rem 0; }
 .card-output { margin: 0.3rem 0; }
 .card-output .output-cells { border: var(--bw) solid var(--c-border); border-radius: var(--r); background: var(--c-bg); max-height: 480px; overflow: auto; }
 .card-output-preview { display: block; width: 100%; max-height: 280px; object-fit: contain; }
 .card-code { /* .expandable handles collapse */ }
-.card-play { margin-top: 0.3rem; display: flex; justify-content: flex-start; }
-.card-play .play-btn {
-    background: var(--c-accent); color: var(--c-surface);
-    border: var(--bw) solid var(--c-accent); border-radius: var(--r);
-    padding: 0.2rem 1rem; font-size: var(--fs-m); cursor: pointer;
-    min-width: 40px;
-}
-.card-play .play-btn:hover { opacity: 0.85; }
-.card-play .play-btn:disabled { opacity: 0.5; cursor: wait; }
+/* Play button — styled as an accent variant of .icon-btn. Selectors are
+   doubled to outrank the generic .icon-btn rules that appear later in
+   this file (CSS cascade: equal specificity → later wins; we bump
+   specificity with .card .card-play-btn instead). */
+.card .card-play-btn { display: none; background: var(--c-accent); color: var(--c-surface); border-color: var(--c-accent); }
+.card.has-vis   .card-play-btn,
+.card.edit-open .card-play-btn { display: inline-flex; }
+.card .card-play-btn:hover { opacity: 0.85; }
+.card .card-play-btn:disabled { opacity: 0.5; cursor: wait; }
+
+/* Title is the ONLY collapse handle now (independent of selection). */
+.card-title { cursor: pointer; user-select: none; }
 
 .card-select {
     padding: 0.15rem 1.4rem 0.15rem 0.4rem; border: var(--bw) solid var(--c-border);

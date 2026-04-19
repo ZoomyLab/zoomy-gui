@@ -16,3 +16,4 @@ fig = go.Figure(
 )
 
 fig.update_layout(scene=dict(aspectmode="data"), title="3D Vector Field")
+display(fig)

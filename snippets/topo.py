@@ -36,3 +36,4 @@ fig.update_layout(
     title="Hand-Constructed Mesh (No SciPy, No NumPy)",
     scene=dict(aspectmode='data')
 )
+display(fig)
