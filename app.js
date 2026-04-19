@@ -675,34 +675,61 @@ function renderOutputCell(cell, container) {
                contains three enrichments beyond plain CommonMark:
                  • ```mermaid fenced diagrams
                  • $$ … $$ / $…$ LaTeX math
-                 • <br/> literals (from derivation graphs)
-               We rescue mermaid blocks BEFORE miniMarkdown (which would
-               otherwise wrap them in <pre><code>), then run KaTeX's
-               auto-render for the math and mermaid.render for diagrams. */
+                 • <br/> literals (from mermaid node labels)
+               Both marked and miniMarkdown would mangle these — marked
+               turns `_` inside `$x_1$` into <em>, and either parser
+               wraps mermaid fences in <pre><code>. Pre-extract them to
+               placeholder comments BEFORE parsing, then re-inject. */
             var mdSrc = cell.content;
             var _mermaidBlocks = [];
             mdSrc = mdSrc.replace(/```mermaid\n([\s\S]*?)```/g, function (_m, src) {
                 var idx = _mermaidBlocks.push(src.trim()) - 1;
-                return '<!--MERMAID_PLACEHOLDER_' + idx + '-->';
+                return '\n<!--MERMAID_' + idx + '-->\n';
             });
-            var mdHtml = miniMarkdown(mdSrc).replace(/<!--MERMAID_PLACEHOLDER_(\d+)-->/g,
-                function (_m, i) { return '<div class="mermaid-block">' + _mermaidBlocks[+i] + '</div>'; });
+            var _mathBlocks = [];
+            /* Display math first (greedy), then inline — otherwise the
+               inline regex would chew into a display block's delimiters. */
+            mdSrc = mdSrc.replace(/\$\$([\s\S]+?)\$\$/g, function (_m, math) {
+                var idx = _mathBlocks.push({ display: true, src: math }) - 1;
+                return '<!--MATH_' + idx + '-->';
+            });
+            mdSrc = mdSrc.replace(/\$([^\$\n]+?)\$/g, function (_m, math) {
+                var idx = _mathBlocks.push({ display: false, src: math }) - 1;
+                return '<!--MATH_' + idx + '-->';
+            });
+            /* Prefer marked (real CommonMark/GFM, tables, nested lists)
+               when it has loaded. Fall back to miniMarkdown otherwise —
+               rendering degrades gracefully but still works. */
+            var mdHtml = (window.marked && window.marked.parse)
+                ? window.marked.parse(mdSrc)
+                : miniMarkdown(mdSrc);
+            /* Re-inject math: marked preserves HTML comments, so we just
+               swap them back to `$$…$$` / `$…$` for KaTeX auto-render. */
+            mdHtml = mdHtml.replace(/<!--MATH_(\d+)-->/g, function (_m, i) {
+                var b = _mathBlocks[+i];
+                return b.display ? '$$' + b.src + '$$' : '$' + b.src + '$';
+            });
+            /* Re-inject mermaid as empty placeholder divs; we set their
+               textContent from the captured source AFTER innerHTML so
+               special chars (including <br/>) in the mermaid source
+               aren't interpreted as HTML by the browser. */
+            mdHtml = mdHtml.replace(/<!--MERMAID_(\d+)-->/g, function (_m, i) {
+                return '<div class="mermaid-block" data-mermaid-idx="' + (+i) + '"></div>';
+            });
             div.innerHTML = mdHtml;
+            div.querySelectorAll(".mermaid-block[data-mermaid-idx]").forEach(function (el) {
+                var idx = +el.getAttribute("data-mermaid-idx");
+                if (!isNaN(idx)) el.textContent = _mermaidBlocks[idx];
+            });
             container.appendChild(div);
-            /* Render $$-math via KaTeX auto-render if it loaded. */
             if (window.renderMathInElement) {
                 try { renderMathInElement(div, { throwOnError: false,
                     delimiters: [{left:"$$",right:"$$",display:true},
                                  {left:"$", right:"$", display:false}] }); } catch (e) {}
             }
-            /* Render each .mermaid-block into an SVG. We skip mermaid's
-               own auto-scan (startOnLoad:false) and render manually so
-               each block gets a unique id and we get per-block error
-               handling. */
             if (window.mermaid) {
                 if (!_mermaidReady) { mermaid.initialize({ startOnLoad: false, theme: "neutral" }); _mermaidReady = true; }
-                var blocks = div.querySelectorAll(".mermaid-block");
-                blocks.forEach(function (el, i) {
+                div.querySelectorAll(".mermaid-block").forEach(function (el, i) {
                     var src = el.textContent;
                     var id = "mermaid-" + Date.now() + "-" + i + "-" + Math.random().toString(36).slice(2, 6);
                     mermaid.render(id, src).then(
