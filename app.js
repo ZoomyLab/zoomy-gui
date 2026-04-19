@@ -442,10 +442,18 @@ function getCli() {
            of creating the Worker at top-of-app.js. Without this, the
            first extractParams() call pays a cold-boot tax. */
         pyodide._ensureWorker();
+        /* FetchStorage reads static files from the page origin. The
+           IdbStorage overlay makes user-authored cards (written under
+           cards/sessions/…) round-trip through IndexedDB — which is the
+           only writable persistence a static page has access to. */
+        var overlay = null;
+        try { overlay = new m.IdbStorage(); }
+        catch (e) { logDebug("warn", "IndexedDB unavailable; user cards won't persist"); }
         _cli = new m.ZoomyCLI({
-            storage: new m.FetchStorage(),
+            storage: new m.FetchStorage({ overlay: overlay }),
             pyodide: pyodide,
         });
+        _cli.userCards = m.userCards;
         window._cli = _cli;
         return _cli;
     }).catch(function (err) {
@@ -1260,32 +1268,41 @@ var sessionMgr = new CardManager("sessions", {
             var arriving = sessionMgr.selectedId;
             _project.sessions.switchTo(arriving, _project);
 
-            /* Sync UI managers with restored selections. Every tab's
-               manager must match the arriving session exactly — tabs
-               NOT in the arriving session's selections get cleared so
-               the previous session's selection doesn't bleed through. */
-            var sel = _project.selections.toDict();
-            Object.keys(managers).forEach(function (tab) {
-                var mgr = managers[tab];
-                if (!mgr) return;
-                if (sel[tab]) {
-                    mgr.select(sel[tab]);
-                } else {
-                    mgr.selectedId = null;
-                    mgr.updateUI();
-                }
-            });
+            /* Per-session UI state (log + run status + worker) gets
+               swapped in by the session-runtime helpers below. */
+            _applySessionRuntime();
 
-            /* Refresh open editors with restored card state */
+            /* Rebuild every cards tab so the new session's user-
+               authored cards replace the departing session's. Fires
+               async; selections inside the arriving session are
+               restored by reloadCards itself. */
+            if (typeof reloadCards === "function") {
+                reloadCards().catch(function (e) {
+                    console.error("session switch: reloadCards failed:", e);
+                });
+            } else {
+                /* reloadCards is defined further down in the file — if
+                   something calls onSelect before it loads (unlikely),
+                   fall back to the old selection-sync path. */
+                var sel = _project.selections.toDict();
+                Object.keys(managers).forEach(function (tab) {
+                    var mgr = managers[tab];
+                    if (!mgr) return;
+                    if (sel[tab]) mgr.select(sel[tab]);
+                    else { mgr.selectedId = null; mgr.updateUI(); }
+                });
+            }
+
+            /* Refresh open editors with restored card state. Runs after
+               reloadCards kicks off so a freshly-rebuilt editor picks
+               up the session's code too (the rebuild re-initialises the
+               editor from cState, so this second pass is belt-and-
+               braces for cards that were already open pre-switch). */
             Object.keys(_project.cardState.cards).forEach(function (cardId) {
                 var cEl = document.getElementById(cardId);
                 var cs = _project.cardState.cards[cardId];
                 if (cEl && cEl._editor && cs) cEl._editor.setValue(cs.code || "", -1);
             });
-
-            /* Per-session UI state (log + run status + worker) gets
-               swapped in by the session-runtime helpers below. */
-            _applySessionRuntime();
         }
         renderSessionSidebar();
         renderDashboardSessionCard();
@@ -1293,7 +1310,10 @@ var sessionMgr = new CardManager("sessions", {
 });
 
 function createSession(name) {
-    var id = "session-" + Date.now();
+    /* timestamp + counter + random suffix — matches core.js's
+       SessionManager.create. Session ids are folder names in
+       IndexedDB (for user cards), so cross-tab uniqueness matters. */
+    var id = "session-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
     /* Snapshot the CURRENT session (if any) so its selections stick
        before we switch away. Then push the new record with an empty
        selections dict. DO NOT set activeId here — that would short-
@@ -1532,6 +1552,11 @@ function createCard(targetId, card, mgr, cardType) {
                 (tagConnected ? 'Connected' : 'Disconnected') + '</span>';
     }
     if (hasMaximize) html += '<button class="icon-btn sm" id="' + targetId + '-max" title="Maximize">&#9723;</button>';
+    /* Trash icon — only on user-authored cards. Builtins never show it
+       so users can't accidentally delete a shipped model. */
+    if (card.source === "user") {
+        html += '<button class="icon-btn sm card-trash-btn" id="' + targetId + '-trash" title="Delete this user card">&#128465;</button>';
+    }
     html += '</div></div>';
 
     /* A `has-vis` class keeps the play button visible on vis cards by
@@ -1606,6 +1631,19 @@ function createCard(targetId, card, mgr, cardType) {
         titleEl.onclick = function () {
             container.classList.toggle("collapsed");
         };
+    }
+
+    /* Trash (user cards only) — stopPropagation so clicking the icon
+       doesn't also toggle selection/collapse like a body click would. */
+    if (card.source === "user") {
+        var trashBtn = document.getElementById(targetId + "-trash");
+        if (trashBtn) {
+            trashBtn.onclick = function (e) {
+                e.stopPropagation();
+                var tabId = mgr ? mgr.id : null;
+                deleteUserCard(tabId, card);
+            };
+        }
     }
 
     /* Maximize */
@@ -2182,6 +2220,29 @@ function buildCardsTab(panel, tab) {
         createCard("card-" + c.id, c, mgr, tab.cardType || "model");
     });
 
+    /* `+ New card` button — lets users author their own. For mesh
+       tabs with auto-subtabs the button lives inside the "create"
+       subtab so the first thing a user sees on that tab is how to
+       add something. For flat tabs it hangs off the bottom of the
+       tab content. _userCardTypeForTab returning null signals that
+       the tab isn't a known card-bearing type (e.g. dashboard), in
+       which case we skip it. */
+    if (_userCardTypeForTab(tab.id)) {
+        var newBtnHost = panel;
+        if (hasSubtabs) {
+            var createSubtab = cardContainer.querySelector("#subtab-create");
+            if (createSubtab) newBtnHost = createSubtab;
+        } else if (gridWrapper) {
+            newBtnHost = gridWrapper;
+        }
+        var newBtn = document.createElement("button");
+        newBtn.className = "new-card-btn";
+        newBtn.id = "btn-new-card-" + tab.id;
+        newBtn.innerHTML = "&#43; New " + (tab.cardType || "card") + " card";
+        newBtn.onclick = function () { newUserCard(tab.id); };
+        newBtnHost.appendChild(newBtn);
+    }
+
     /* No auto-selection on first render. Cards remain collapsed until the
        user clicks one. Dashboard summary fields show "Not selected" until
        then. Previously we defaulted to the first card which exposed its
@@ -2200,17 +2261,22 @@ var CARD_CATEGORIES = [
     { dir: "visualizations", tabId: "visualization" }
 ];
 
-async function _loadCategoryCards(dir) {
+async function _loadCategoryCards(dir, sessionId) {
     /* Load default + generated + user for one category, merge, deduplicate.
-       Delegates to ZoomyCLI.listCards, which reads from FetchStorage with
-       the same order (default -> generated -> user) and silently skips
-       missing files. */
+       ZoomyCLI.listCards handles the default -> generated -> user ->
+       session-user precedence (with later layers overriding earlier on
+       matching id). The extra `seen` pass here is redundant but harmless;
+       it's kept as a belt-and-braces guard in case a caller bypasses the
+       CLI's dedup in the future. */
     var cli = await getCli();
-    var list = await cli.listCards(dir);
+    var list = await cli.listCards(dir, { session: sessionId });
     var seen = {};
     var merged = [];
     list.forEach(function (c) {
-        if (!seen[c.id]) { seen[c.id] = true; merged.push(c); }
+        if (!c) return;
+        if (c.id && seen[c.id]) return;
+        if (c.id) seen[c.id] = true;
+        merged.push(c);
     });
     return merged;
 }
@@ -2219,6 +2285,26 @@ async function _loadAllCards() {
     /* Load tab metadata + all category cards. Returns config object. */
     var cli = await getCli();
     var tabsMeta = (await cli.listTabs().catch(function () { return null; })) || {};
+    /* Active session. Preference order:
+       1. sessionMgr.selectedId — normal case during runtime.
+       2. _project.sessions.activeId — set by initProject a moment before
+          this runs on boot (initApp → _loadAllCards → initProject).
+       3. localStorage default-session id — on first _loadAllCards,
+          neither (1) nor (2) are populated yet, but the default session
+          id is already persisted from previous visits. Reading it here
+          lets the initial DOM render include user cards without a
+          second reloadCards pass (which would clobber any in-flight
+          test interactions). */
+    var sessionId = null;
+    try {
+        if (typeof sessionMgr !== "undefined" && sessionMgr && sessionMgr.selectedId) {
+            sessionId = sessionMgr.selectedId;
+        } else if (typeof _project !== "undefined" && _project && _project.sessions && _project.sessions.activeId) {
+            sessionId = _project.sessions.activeId;
+        } else if (typeof window !== "undefined" && window.localStorage) {
+            sessionId = window.localStorage.getItem("zoomy-default-session-id");
+        }
+    } catch (e) { /* storage disabled; stay on null */ }
 
     /* Fallback: if tabs.json doesn't exist, use legacy cards.json */
     if (!tabsMeta || Object.keys(tabsMeta).length === 0) {
@@ -2233,7 +2319,7 @@ async function _loadAllCards() {
     tabs.push(tabsMeta.dashboard || { id: "dashboard", title: "Dashboard", type: "dashboard" });
 
     /* Load all card categories in parallel */
-    var allCards = await Promise.all(CARD_CATEGORIES.map(function (cat) { return _loadCategoryCards(cat.dir); }));
+    var allCards = await Promise.all(CARD_CATEGORIES.map(function (cat) { return _loadCategoryCards(cat.dir, sessionId); }));
 
     for (var i = 0; i < CARD_CATEGORIES.length; i++) {
         var cat = CARD_CATEGORIES[i];
@@ -2264,6 +2350,194 @@ async function _loadAllCards() {
     }
 
     return { tabs: tabs };
+}
+
+/* === User-authored cards ================================================
+
+   `+ New card` (per tab) and the trash icon on user cards are wired here.
+   All state lives under cards/sessions/<sessionId>/<type>/user/<cardId>/
+   in IndexedDB (browser) or on disk (CLI); the CLI's userCards helpers
+   provide the same shape on either storage. Session switching triggers
+   reloadCards() so the new session's user cards replace the departing
+   session's. */
+
+/* Map a tab id (as used by CARD_CATEGORIES and managers) to the card-type
+   string the rest of the GUI uses in createCard / state lookups. */
+function _userCardTypeForTab(tabId) {
+    switch (tabId) {
+        case "model":         return "model";
+        case "solver":        return "solver";
+        case "mesh":          return "mesh";
+        case "visualization": return "vis";
+        default:              return null;
+    }
+}
+
+/* Map a tab id to the storage "dir" key used by listCards / user_cards. */
+function _userCardDirForTab(tabId) {
+    for (var i = 0; i < CARD_CATEGORIES.length; i++) {
+        if (CARD_CATEGORIES[i].tabId === tabId) return CARD_CATEGORIES[i].dir;
+    }
+    return null;
+}
+
+function _slugify(s) {
+    return String(s || "").toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "card";
+}
+
+/* Starter meta + snippet for a freshly-minted user card. Keeps the
+   editor non-empty so the user sees a runnable skeleton instead of a
+   blank page. */
+function _userCardStarter(cardType, title) {
+    var description = "User-authored " + (cardType || "card") + ". Edit the code below and hit Run.";
+    if (cardType === "model") {
+        return {
+            meta: { title: title, description: description },
+            snippet:
+"from zoomy_core.model.models.sme_model import SMEInviscid\n" +
+"\n" +
+"# Subclass SMEInviscid (or any zoomy_core model) and tweak what you need.\n" +
+"class UserModel(SMEInviscid):\n" +
+"    pass\n" +
+"\n" +
+"model = UserModel(level=0)\n" +
+"display(model.describe())\n",
+        };
+    }
+    if (cardType === "solver") {
+        return {
+            meta: { title: title, description: description, requires_tag: "numpy" },
+            snippet:
+"# Solver card. `model` and `mesh` come from the currently selected\n" +
+"# Model and Mesh cards. Adjust t_end / reconstruction_order to taste.\n" +
+"from zoomy_core.solver.numpy_solver import NumpySolver\n" +
+"\n" +
+"solver = NumpySolver(model, mesh, t_end=1.0, reconstruction_order=1)\n" +
+"result = solver.run()\n" +
+"print('simulation finished — %d steps' % result.n_steps)\n",
+        };
+    }
+    if (cardType === "vis") {
+        return {
+            meta: { title: title, description: description },
+            snippet:
+"import matplotlib.pyplot as plt\n" +
+"\n" +
+"fig, ax = plt.subplots()\n" +
+"ax.set_title('" + title.replace(/'/g, "") + "')\n" +
+"ax.plot([0, 1, 2], [0, 1, 4])\n" +
+"display(fig)\n",
+        };
+    }
+    if (cardType === "mesh") {
+        return {
+            meta: { title: title, description: description, category: "User" },
+            snippet:
+"# Starter mesh card. Replace this with your mesh construction code,\n" +
+"# or use the 'Upload .msh' button on the Mesh tab to wrap a gmsh file.\n" +
+"from zoomy_core.mesh.structured_mesh import StructuredMesh\n" +
+"\n" +
+"mesh = StructuredMesh(dim=1, n_cells=100, x_min=0.0, x_max=1.0)\n" +
+"display(mesh)\n",
+        };
+    }
+    return { meta: { title: title, description: description }, snippet: "# New user card\n" };
+}
+
+/* Kick off a user-card creation flow for a tab. Prompts for a title,
+   writes the card through the CLI's user_cards helpers, then rebuilds
+   the tab so the new card appears. Returns the new card id, or null
+   if the user cancelled. */
+async function newUserCard(tabId) {
+    var cardType = _userCardTypeForTab(tabId);
+    var dir = _userCardDirForTab(tabId);
+    if (!cardType || !dir) return null;
+    var title = window.prompt("Name for new " + cardType + " card:");
+    if (title === null) return null;
+    title = String(title).trim();
+    if (!title) return null;
+
+    var sessionId = sessionMgr.selectedId;
+    if (!sessionId) { toast.error("No active session — create one first."); return null; }
+
+    var id = "user-" + _slugify(title) + "-" + Math.random().toString(36).slice(2, 6);
+    var starter = _userCardStarter(cardType, title);
+
+    try {
+        var cli = await getCli();
+        await cli.userCards.writeUserCard(cli.storage, {
+            session: sessionId, type: dir, id: id,
+            meta: starter.meta, snippet: starter.snippet,
+        });
+    } catch (e) {
+        toast.error("Couldn't create card: " + (e && e.message || e));
+        return null;
+    }
+
+    await reloadCards();
+    if (managers[tabId]) managers[tabId].select("card-" + id);
+    toast.success("Created '" + title + "'", { ttl: 1800 });
+    return id;
+}
+
+/* Tear down a user card from storage and the DOM. Confirms first so an
+   accidental trash-icon click doesn't nuke someone's work. */
+async function deleteUserCard(tabId, card) {
+    if (!card || card.source !== "user") return;
+    var dir = _userCardDirForTab(tabId);
+    if (!dir) return;
+    var sessionId = sessionMgr.selectedId;
+    if (!sessionId) return;
+    if (!window.confirm("Delete card '" + (card.title || card.id) + "'? This can't be undone.")) return;
+    try {
+        var cli = await getCli();
+        await cli.userCards.deleteUserCard(cli.storage, sessionId, dir, card.id);
+    } catch (e) {
+        toast.error("Couldn't delete card: " + (e && e.message || e));
+        return;
+    }
+    /* Drop per-card state so a ghost of the deleted card doesn't
+       linger in the next session's save/load ZIP. */
+    if (_project && _project.cardState && _project.cardState.cards) {
+        delete _project.cardState.cards["card-" + card.id];
+        delete _project.cardState.defaults["card-" + card.id];
+    }
+    await reloadCards();
+    toast.success("Deleted '" + (card.title || card.id) + "'", { ttl: 1500 });
+}
+
+/* Full rebuild of every cards-tab. Used on session switch and after
+   user-card CRUD. Dashboard is untouched. Selections are restored from
+   the active session so the arriving session's selected cards stay
+   highlighted. */
+async function reloadCards() {
+    var config;
+    try { config = await _loadAllCards(); }
+    catch (e) { console.error("reloadCards: _loadAllCards failed:", e); return; }
+
+    config.tabs.forEach(function (tab) {
+        if (tab.type !== "cards") return;
+        var panel = document.getElementById("tab-" + tab.id);
+        if (!panel) return;
+        panel.innerHTML = "";
+        buildCardsTab(panel, tab);
+    });
+
+    if (_project && _project.selections) {
+        var sel = _project.selections.toDict();
+        Object.keys(managers).forEach(function (tabId) {
+            var mgr = managers[tabId];
+            if (!mgr) return;
+            if (sel[tabId]) mgr.select(sel[tabId]);
+            else { mgr.selectedId = null; mgr.updateUI(); }
+        });
+    }
+
+    /* Dashboard numbers reflect the new selections. */
+    updateDashboardSummary();
 }
 
 async function initApp() {
@@ -2548,6 +2822,10 @@ document.addEventListener("DOMContentLoaded", function () {
             sessionMgr.selectedId = _project.sessions.activeId;
             renderSessionSidebar();
             renderDashboardSessionCard();
+            /* _loadAllCards already picked up the default session's
+               user cards via the localStorage fallback — no second
+               reload is needed on boot. Session switches still fire
+               reloadCards via sessionMgr.onSelect. */
         } else {
             createSession("Default session");
         }
