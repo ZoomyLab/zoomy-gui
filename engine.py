@@ -84,8 +84,54 @@ class ZoomyDisplay:
             self._emit({"mime": "text/html", "content": obj.to_html()})
         elif isinstance(obj, np.ndarray):
             self._emit({"mime": "text/plain", "content": repr(obj)})
+        elif self._emit_ipython_repr(obj):
+            # Handled via Jupyter-style _repr_mimebundle_ / _repr_*_.
+            pass
         else:
             self._emit({"mime": "text/plain", "content": str(obj)})
+
+    # Jupyter-style rich reprs. `display(model.describe())` returns a
+    # zoomy_core.misc.description.Description whose _repr_markdown_
+    # carries the rendered model docs (with embedded $$-math and
+    # optionally ```mermaid blocks). Without this path the object falls
+    # through to str(obj) and the frontend renders raw markdown source.
+    # Priority follows IPython's default: html > markdown > latex.
+    def _emit_ipython_repr(self, obj):
+        # _repr_mimebundle_ is the canonical multi-mime contract; it
+        # returns either a dict of mime→content or a (dict, metadata)
+        # tuple. We pick the richest mime we understand.
+        if hasattr(obj, "_repr_mimebundle_"):
+            try:
+                bundle = obj._repr_mimebundle_(include=None, exclude=None)
+                data = bundle[0] if isinstance(bundle, tuple) else bundle
+                if isinstance(data, dict):
+                    for src_mime, out_mime in (
+                        ("text/html",     "text/html"),
+                        ("text/markdown", "text/markdown"),
+                        ("text/latex",    "text/x-latex"),
+                    ):
+                        if src_mime in data and data[src_mime]:
+                            self._emit({"mime": out_mime,
+                                        "content": str(data[src_mime])})
+                            return True
+            except Exception:
+                pass
+        # Fall back to the individual _repr_*_ hooks. Each returns None
+        # if the object can't produce that mime; skip to the next.
+        for method, mime in (
+            ("_repr_html_",     "text/html"),
+            ("_repr_markdown_", "text/markdown"),
+            ("_repr_latex_",    "text/x-latex"),
+        ):
+            if hasattr(obj, method):
+                try:
+                    content = getattr(obj, method)()
+                    if content:
+                        self._emit({"mime": mime, "content": str(content)})
+                        return True
+                except Exception:
+                    continue
+        return False
 
     def _emit(self, cell):
         if hasattr(sys, "_zoomy_display_callback"):

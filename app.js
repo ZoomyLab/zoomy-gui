@@ -661,7 +661,57 @@ function renderOutputCell(cell, container) {
         case "text/html":
             div.className += " output-cell-html";
             div.innerHTML = cell.content;
+            /* HTML emitted by Jupyter-style _repr_html_ often contains
+               $$-math; auto-render picks it up if loaded. */
+            if (window.renderMathInElement) {
+                try { renderMathInElement(div, { throwOnError: false,
+                    delimiters: [{left:"$$",right:"$$",display:true},
+                                 {left:"$", right:"$", display:false}] }); } catch (e) {}
+            }
             break;
+        case "text/markdown":
+            div.className += " output-cell-markdown";
+            /* Markdown from zoomy_core.Description._repr_markdown_ often
+               contains three enrichments beyond plain CommonMark:
+                 • ```mermaid fenced diagrams
+                 • $$ … $$ / $…$ LaTeX math
+                 • <br/> literals (from derivation graphs)
+               We rescue mermaid blocks BEFORE miniMarkdown (which would
+               otherwise wrap them in <pre><code>), then run KaTeX's
+               auto-render for the math and mermaid.render for diagrams. */
+            var mdSrc = cell.content;
+            var _mermaidBlocks = [];
+            mdSrc = mdSrc.replace(/```mermaid\n([\s\S]*?)```/g, function (_m, src) {
+                var idx = _mermaidBlocks.push(src.trim()) - 1;
+                return '<!--MERMAID_PLACEHOLDER_' + idx + '-->';
+            });
+            var mdHtml = miniMarkdown(mdSrc).replace(/<!--MERMAID_PLACEHOLDER_(\d+)-->/g,
+                function (_m, i) { return '<div class="mermaid-block">' + _mermaidBlocks[+i] + '</div>'; });
+            div.innerHTML = mdHtml;
+            container.appendChild(div);
+            /* Render $$-math via KaTeX auto-render if it loaded. */
+            if (window.renderMathInElement) {
+                try { renderMathInElement(div, { throwOnError: false,
+                    delimiters: [{left:"$$",right:"$$",display:true},
+                                 {left:"$", right:"$", display:false}] }); } catch (e) {}
+            }
+            /* Render each .mermaid-block into an SVG. We skip mermaid's
+               own auto-scan (startOnLoad:false) and render manually so
+               each block gets a unique id and we get per-block error
+               handling. */
+            if (window.mermaid) {
+                if (!_mermaidReady) { mermaid.initialize({ startOnLoad: false, theme: "neutral" }); _mermaidReady = true; }
+                var blocks = div.querySelectorAll(".mermaid-block");
+                blocks.forEach(function (el, i) {
+                    var src = el.textContent;
+                    var id = "mermaid-" + Date.now() + "-" + i + "-" + Math.random().toString(36).slice(2, 6);
+                    mermaid.render(id, src).then(
+                        function (result) { el.innerHTML = result.svg; },
+                        function (err)    { el.textContent = "Mermaid render error: " + (err.message || err); }
+                    );
+                });
+            }
+            return;   /* already appended */
         case "image/svg+xml":
             div.className += " output-cell-svg";
             div.innerHTML = cell.content;
