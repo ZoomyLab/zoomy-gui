@@ -399,13 +399,20 @@ function makeAceEditor(id, code) {
     var e = ace.edit(id);
     e.setTheme("ace/theme/monokai");
     e.session.setMode("ace/mode/python");
+    /* Passing the Zoomy completer as an ARRAY (rather than the `true`
+       shorthand) tells Ace to use ONLY this completer — no Python
+       keyword list, no buffer-word completer. Jedi already covers
+       in-scope names, so the built-in completers only added noise
+       (`if`, `def`, `True`, random identifiers typed elsewhere in the
+       snippet). */
+    var onlyZoomy = window._zoomyCompleter ? [window._zoomyCompleter] : true;
     e.setOptions({
         fontSize: "14px",
         showPrintMargin: false,
         useSoftTabs: true,
         tabSize: 4,
-        enableBasicAutocompletion: true,
-        enableLiveAutocompletion: true,     // trigger on typing, not just Ctrl-Space
+        enableBasicAutocompletion: onlyZoomy,
+        enableLiveAutocompletion: onlyZoomy,     // trigger on typing, not just Ctrl-Space
         enableSnippets: false,
     });
     e.setValue(code, -1);
@@ -427,6 +434,24 @@ function makeAceEditor(id, code) {
  * JS. Trade: one worker round-trip per completion call (~30-200 ms).
  * jedi installs lazily on first completion via micropip. */
 
+/* Type-based ranking for jedi completions. Higher score = higher in
+   the popup. Jedi's `type` field: param, property, function / method,
+   class, module, statement, instance, keyword. The ordering here
+   reflects "what is the user most likely to want", with keyword-
+   arguments (type=param) pinned to the very top because those are
+   what you want when cursor is inside `fn(`. */
+var _ZOOMY_TYPE_SCORE = {
+    param:       1000,
+    property:     900,
+    function:     850,
+    method:       850,
+    instance:     800,
+    class:        700,
+    module:       600,
+    statement:    500,
+    keyword:      100,
+};
+
 function registerZoomyCompleter() {
     if (window._zoomyCompleterRegistered || !window.ace) return;
     var langTools;
@@ -441,12 +466,22 @@ function registerZoomyCompleter() {
                 /* Convert 0-indexed Ace (row, col) to jedi's 1-indexed line. */
                 var result = await cli.complete(session.getValue(), pos.row + 1, pos.column);
                 var items = (result && result.completions) || [];
-                callback(null, items.map(function (c) {
+                /* Hide dunders / privates unless the user typed `_`
+                   explicitly — fewer distractions in the common case. */
+                var wantPrivate = prefix && prefix.indexOf("_") === 0;
+                var filtered = items.filter(function (c) {
+                    if (!c.name) return false;
+                    if (!wantPrivate && c.name.indexOf("_") === 0) return false;
+                    return true;
+                });
+                callback(null, filtered.map(function (c) {
+                    var t = (c.type || "").toLowerCase();
+                    var base = _ZOOMY_TYPE_SCORE[t] != null ? _ZOOMY_TYPE_SCORE[t] : 400;
                     return {
                         caption: c.name,
                         value: c.name,
-                        meta: c.type || "member",
-                        score: 900,
+                        meta: t || "member",
+                        score: base,
                         docHTML: _zoomyDocHtml(c),
                     };
                 }));
