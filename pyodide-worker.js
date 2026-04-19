@@ -137,6 +137,47 @@ function installZoomyPlotting() {
     return _zpPromise;
 }
 
+/* --- Parso cache on IndexedDB -------------------------------------
+   Jedi's per-call cost is dominated by parso parsing every .py file
+   it touches. Parso pickles ASTs to $HOME/.cache/parso/ by default; in
+   Pyodide that path is ephemeral per tab. Mounting IDBFS at that path
+   persists the cache across page loads so the second+ visit skips the
+   ~20 s zoomy_core parse and cold-starts autocomplete in <1 s.
+
+   First visit: cache populated during priming → syncfs(false) flushes
+   to IDB. Subsequent visits: syncfs(true) populates FS from IDB →
+   priming becomes a pure cache hit.
+
+   Failure is silent and non-fatal — worst case we fall back to the
+   cold-priming path. */
+var _parsoCacheMounted = false;
+async function mountParsoCache() {
+    if (_parsoCacheMounted) return;
+    try {
+        var path = "/home/pyodide/.cache/parso";
+        py.FS.mkdirTree(path);
+        py.FS.mount(py.FS.filesystems.IDBFS, {}, path);
+        await new Promise(function (resolve, reject) {
+            py.FS.syncfs(true, function (err) { err ? reject(err) : resolve(); });
+        });
+        _parsoCacheMounted = true;
+        postMessage({ type: "log", level: "info", msg: "Parso cache mounted (IDBFS) — will populate from prior visits" });
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "Parso cache mount failed (cache will be in-memory only): " + (e.message || e) });
+    }
+}
+async function persistParsoCache() {
+    if (!_parsoCacheMounted) return;
+    try {
+        await new Promise(function (resolve, reject) {
+            py.FS.syncfs(false, function (err) { err ? reject(err) : resolve(); });
+        });
+        postMessage({ type: "log", level: "info", msg: "Parso cache persisted to IndexedDB" });
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "Parso cache persist failed: " + (e.message || e) });
+    }
+}
+
 var _jediPromise = null;
 function installJedi() {
     if (_jediPromise) return _jediPromise;
@@ -149,14 +190,15 @@ function installJedi() {
             postMessage({ type: "log", level: "warn", msg: "jedi failed: " + (e.message || e) });
             return;
         }
+        /* Mount the persistent parso cache BEFORE priming so jedi's
+           first parse of any zoomy_core module finds its pickled AST
+           (on 2nd+ visits) instead of re-parsing from source. */
+        await mountParsoCache();
         /* Prime jedi's parser cache with a representative zoomy_core
-           completion. Jedi does on-demand indexing: the first call over
-           an import graph (e.g. `from zoomy_core.model.models.sme_model
-           import SMEInviscid; model.describe`) takes 15-25 s on WASM as
-           it walks + parses every transitive module. Subsequent calls
-           reuse the cached ParserStates and return in ~50 ms. So we
-           front-load that cost here, before posting "jedi ready", so
-           the user's first Ctrl-Space in the editor is instant. */
+           completion. On a cold-cache run this takes 15-25 s (walking
+           + parsing every transitive module). On a warm-cache run
+           (IDBFS populated from a prior visit) it's <1 s. Either way,
+           subsequent user completions are ~50 ms. */
         postMessage({ type: "log", level: "info", msg: "Indexing zoomy_core for autocomplete…" });
         try {
             await installExec();   // pulls engine.py in so complete_code is available
@@ -176,6 +218,8 @@ function installJedi() {
                just with a slow first call. Log it so we notice in CI. */
             postMessage({ type: "log", level: "warn", msg: "jedi prime failed: " + (e.message || e) });
         }
+        /* Persist whatever parso just parsed so the NEXT visit starts warm. */
+        await persistParsoCache();
         postMessage({ type: "log", level: "info", msg: "jedi ready" });
     })();
     return _jediPromise;
