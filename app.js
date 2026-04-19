@@ -393,6 +393,14 @@ function _onAdapterLog(msg) {
        background_ready signal hides the toast when the final tier-2
        install finishes. */
     if (/^(Booting|Loading|Installing)\b/.test(msg.msg)) showToast(msg.msg);
+    /* Surface jedi's zoomy_core indexing phase in the autocomplete
+       toast specifically — this 15-25 s parser warm-up is the reason
+       "Autocomplete ready" is delayed vs. just "jedi installed". Users
+       otherwise see "Setting up autocomplete…" frozen for 20 s with
+       no explanation. */
+    if (msg.msg.indexOf("Indexing zoomy_core") !== -1) {
+        toast.update("autocomplete", { text: "Indexing zoomy_core for autocomplete (~20 s)…", sticky: true });
+    }
     /* Resolve the jedi gate when the worker announces the install is
        done. Worker logs "jedi ready" (see installJedi in pyodide-worker.js). */
     if (_resolveJediReady && msg.msg.indexOf("jedi ready") !== -1) {
@@ -532,6 +540,16 @@ function makeAceEditor(id, code) {
         enableSnippets: false,
     });
     e.setValue(code, -1);
+    /* Live autocompletion in Ace only opens the popup on word-character
+       keystrokes — typing `.` or `(` never triggers it. Force-open the
+       popup after those two punctuations so typing `model.` (or
+       `describe(`) shows completions / kwargs immediately. */
+    e.commands.on("afterExec", function (evt) {
+        if (!evt.command || evt.command.name !== "insertstring") return;
+        if (evt.args === "." || evt.args === "(") {
+            evt.editor.execCommand("startAutocomplete");
+        }
+    });
     return e;
 }
 
