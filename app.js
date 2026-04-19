@@ -60,7 +60,8 @@ function logDebug(level, msg) {
  * app.js routes every backend call through a single ZoomyCLI instance.
  * The CLI owns the Pyodide worker (via PyodideAdapter) and any HTTP
  * backends (HttpAdapter, registered at connect time). No more direct
- * _pyWorker.postMessage or ZoomyBackend.* calls from app.js.
+ * _pyWorker.postMessage or legacy ZoomyBackend calls from app.js —
+ * everything flows through cli.* methods.
  *
  * The GUI is not itself a module, so the CLI loads via dynamic
  * import(). Every worker-bound action goes through `await getCli()`
@@ -138,6 +139,18 @@ getCli();
    backend interaction goes through the CLI façade (cli.runCode,
    cli.extractParams, cli.describeModel, cli.writeHdf5Bytes,
    cli.submitCase, cli.cancel). The old wrappers used to live here. */
+
+/* Thin sync helpers for the "is this tag connected?" and "what URL"
+   checks that card rendering does on every card. The CLI might not yet
+   be constructed (dynamic import is async), so we fall back to the
+   single-source answer: Pyodide ("numpy") is always connected. */
+function _cliIsTagConnected(tag) {
+    if (tag === "numpy") return true;
+    return !!(_cli && _cli.isTagConnected(tag));
+}
+function _cliGetUrlForTag(tag) {
+    return (_cli && _cli.getUrlForTag(tag)) || null;
+}
 
 /* === Ace + Plotly (still main thread, they need DOM access) === */
 
@@ -778,16 +791,17 @@ function renderDashboardSessionCard() {
 
 function renderDashboardConnections() {
     var el = document.getElementById("dashboard-connections");
-    if (!el) return;
+    if (!el || !_cli) return;
     var html = '<span class="session-conn-tag">numpy (pyodide)</span>';
-    Object.keys(ZoomyBackend.connections).forEach(function (tag) {
+    for (var tag of _cli.http.keys()) {
+        if (!_cli.isHttpConnected(tag)) continue;
         html += '<span class="session-conn-tag">' + tag + ' <button class="session-conn-x" data-tag="' + tag + '">&times;</button></span>';
-    });
+    }
     el.innerHTML = html;
     el.querySelectorAll(".session-conn-x").forEach(function (btn) {
         btn.onclick = function (e) {
             e.stopPropagation();
-            ZoomyBackend.disconnect(this.dataset.tag);
+            if (_cli) _cli.disconnect(this.dataset.tag);
         };
     });
 }
@@ -920,7 +934,7 @@ function createCard(targetId, card, mgr, cardType) {
     container.className = "card" + (hasPlay ? " has-code" : " slot-only");
     if (card.requires_tag) {
         container.dataset.requiresTag = card.requires_tag;
-        if (!ZoomyBackend.isTagConnected(card.requires_tag)) container.classList.add("disabled");
+        if (!_cliIsTagConnected(card.requires_tag)) container.classList.add("disabled");
     }
     if (mgr) container.dataset.mgr = mgr.id;
 
@@ -930,7 +944,7 @@ function createCard(targetId, card, mgr, cardType) {
     var html = '<div class="card-header"><span class="card-title">' + card.title + '</span>';
     html += '<div class="card-header-actions">';
     if (hasConnectionStatus) {
-        var tagConnected = ZoomyBackend.isTagConnected(card.requires_tag);
+        var tagConnected = _cliIsTagConnected(card.requires_tag);
         html += '<span class="card-connection-status' + (tagConnected ? ' connected' : '') + '">' +
                 (tagConnected ? 'Connected' : 'Disconnected') + '</span>';
     }
@@ -1589,7 +1603,7 @@ async function initApp() {
            so the existing single-URL probe still works before any
            adapters are registered. */
         try {
-            var regUrl = (ZoomyBackend.getUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
+            var regUrl = (_cliGetUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
             var cliReg = await getCli().then(function (cli) { return cli.listRegistry("numpy"); }).catch(function () { return null; });
             var registry = cliReg || await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
             if (registry && registry.tabs) {
@@ -1653,9 +1667,15 @@ document.addEventListener("DOMContentLoaded", function () {
         input.onchange = function () { if (input.files[0]) loadProject(input.files[0]); };
         input.click();
     };
-    document.getElementById("btn-connect").onclick = function () {
+    document.getElementById("btn-connect").onclick = async function () {
         var url = document.getElementById("backend-url").value.replace(/\/+$/, "");
-        ZoomyBackend.connect(url);
+        var cli = await getCli();
+        var adapter = await cli.connect(url);
+        if (adapter) {
+            logDebug("info", "Backend connected: " + adapter.tag + " at " + url);
+        } else {
+            logDebug("warn", "Backend not reachable: " + url);
+        }
     };
     document.getElementById("btn-run-sim").onclick = async function () {
         /* Button is a toggle: while a sim is running it stops instead. */
@@ -1673,7 +1693,7 @@ document.addEventListener("DOMContentLoaded", function () {
         var tag = solverCard.requires_tag || "numpy";
 
         /* Pyodide (in-browser numpy): concatenate editor code from all 3 cards */
-        if (tag === "numpy" && !ZoomyBackend.getUrlForTag("numpy")) {
+        if (tag === "numpy" && !_cliGetUrlForTag("numpy")) {
             var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
             var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
             var solverState = getCardState("card-" + solverCard.id, solverCard, "solver", "");
@@ -1770,7 +1790,7 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
 
-        if (!ZoomyBackend.isTagConnected(tag)) { showToast("Backend '" + tag + "' not connected"); setTimeout(hideToast, 2000); return; }
+        if (!_cliIsTagConnected(tag)) { showToast("Backend '" + tag + "' not connected"); setTimeout(hideToast, 2000); return; }
 
         var zoomyCase = {
             version: "1.0",
@@ -1779,32 +1799,18 @@ document.addEventListener("DOMContentLoaded", function () {
             solver: { time_end: 0.1, cfl: 0.45, output_snapshots: 10 }
         };
 
-        logDebug("info", "Submitting job to " + tag + " (" + ZoomyBackend.getUrlForTag(tag) + ")");
+        logDebug("info", "Submitting job to " + tag + " (" + _cliGetUrlForTag(tag) + ")");
         logDebug("info", "Case: " + JSON.stringify(zoomyCase).substring(0, 200));
         showToast("Submitting job...");
+        _runningMode = "server";
+        setRunBtnState(true);
         try {
-            /* Make sure the CLI has an HttpAdapter registered for this tag
-               (ZoomyBackend already knew the URL; we bridge it to the CLI
-               on demand, which keeps backward compat with existing
-               discover()/connect() flows that only touched ZoomyBackend). */
             var cli = await getCli();
-            if (!cli.isHttpConnected(tag)) {
-                var backendUrl = ZoomyBackend.getUrlForTag(tag);
-                if (backendUrl) {
-                    try { await cli.connectHttp(backendUrl, cli.constructor.HttpAdapter || (await import("./zoomy_cli/browser.mjs")).HttpAdapter); }
-                    catch (e) { logDebug("warn", "CLI HttpAdapter connect failed, falling back to ZoomyBackend.submit: " + (e.message || e)); }
-                }
-            }
-
-            /* Prefer the CLI path (submit → poll → download HDF5 → write
-               to Pyodide VFS, all in one call). Falls back to the legacy
-               ZoomyBackend pathway if no HttpAdapter is available. */
-            _runningMode = "server";
-            setRunBtnState(true);
-
-            if (cli.isHttpConnected(tag)) {
-                var jobId = null;
-                var _onStatus = function (status) {
+            var jobId = null;
+            var outcome = await cli.submitCase({
+                tag: tag,
+                case: zoomyCase,
+                onStatus: function (status) {
                     if (!_activeJob && status.job_id) {
                         _activeJob = { jobId: status.job_id, tag: tag, startTime: Date.now() };
                         jobId = status.job_id;
@@ -1812,76 +1818,27 @@ document.addEventListener("DOMContentLoaded", function () {
                         showToast("Job " + jobId + " running...");
                     }
                     updateDashboardJob(status);
-                };
-                try {
-                    var outcome = await cli.submitCase({
-                        tag: tag,
-                        case: zoomyCase,
-                        onStatus: _onStatus,
-                    });
-                    /* submitCase already piped the HDF5 into Pyodide's VFS
-                       via the CLI — viz cards can open_hdf5 it directly. */
-                    if (outcome.mode === "http" && outcome.result.status === "complete") {
-                        var id = outcome.result.job_id;
-                        logDebug("info", "Job " + id + " complete (HDF5 "
-                                 + (outcome.result.hdf5 ? outcome.result.hdf5.byteLength + " bytes" : "missing")
-                                 + ")");
-                        showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
-                        updateDashboardJob({ job_id: id, status: "complete" });
-                    } else if (outcome.result && outcome.result.status === "cancelled") {
-                        logDebug("info", "Job " + (jobId || "?") + " cancelled");
-                        updateDashboardJob({ job_id: jobId || "?", status: "cancelled" });
-                    }
-                } catch (err) {
-                    logDebug("error", "Job failed: " + (err.message || err));
-                    showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
-                    updateDashboardJob({ job_id: jobId || "?", status: "failed" });
-                } finally {
-                    _activeJob = null; _runningMode = null; setRunBtnState(false);
-                }
-            } else {
-                /* Legacy ZoomyBackend pathway — kept until the final
-                   cleanup commit of Phase 3 deletes backend.js. */
-                var resp = await ZoomyBackend.submit(tag, zoomyCase);
-                _activeJob = { jobId: resp.job_id, tag: tag, startTime: Date.now() };
-                logDebug("info", "Job submitted: " + resp.job_id);
-                showToast("Job " + resp.job_id + " running...");
-                updateDashboardJob({ job_id: resp.job_id, status: "queued" });
-                ZoomyBackend.poll(tag, resp.job_id, function (status) {
-                    updateDashboardJob(status);
-                    if (status.status === "complete") {
-                        logDebug("info", "Job " + resp.job_id + " complete");
-                        showToast("Job complete — downloading HDF5…");
-                        var url = ZoomyBackend.getUrlForTag(tag) +
-                                  "/api/v1/jobs/" + resp.job_id + "/results/hdf5";
-                        fetch(url).then(function (r) {
-                            if (!r.ok) throw new Error("HTTP " + r.status);
-                            return r.arrayBuffer();
-                        }).then(function (buf) {
-                            logDebug("info", "HDF5 downloaded: " + buf.byteLength + " bytes");
-                            return cli.writeHdf5Bytes("/tmp/zoomy_sim/" + resp.job_id + ".h5", new Uint8Array(buf));
-                        }).then(function () {
-                            showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
-                        }).catch(function (err) {
-                            logDebug("error", "Failed to fetch HDF5: " + err);
-                            showToast("HDF5 download failed — see Log"); setTimeout(hideToast, 3000);
-                        });
-                        _activeJob = null; _runningMode = null; setRunBtnState(false);
-                    } else if (status.status === "failed") {
-                        logDebug("error", "Job " + resp.job_id + " failed:\n" + (status.error || "unknown"));
-                        showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
-                        _activeJob = null; _runningMode = null; setRunBtnState(false);
-                    } else if (status.status === "cancelled") {
-                        logDebug("info", "Job " + resp.job_id + " cancelled");
-                        _activeJob = null; _runningMode = null; setRunBtnState(false);
-                    }
-                });
+                },
+            });
+            /* submitCase writes the downloaded HDF5 into Pyodide's VFS
+               itself, so viz cards can open_hdf5 the result immediately. */
+            if (outcome.mode === "http" && outcome.result.status === "complete") {
+                var id = outcome.result.job_id;
+                logDebug("info", "Job " + id + " complete (HDF5 "
+                         + (outcome.result.hdf5 ? outcome.result.hdf5.byteLength + " bytes" : "missing")
+                         + ")");
+                showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
+                updateDashboardJob({ job_id: id, status: "complete" });
+            } else if (outcome.result && outcome.result.status === "cancelled") {
+                logDebug("info", "Job " + (jobId || "?") + " cancelled");
+                updateDashboardJob({ job_id: jobId || "?", status: "cancelled" });
             }
         } catch (err) {
-            logDebug("error", "Submit failed: " + err);
-            showToast("Submit failed — see Log on Dashboard"); setTimeout(hideToast, 3000);
-            _runningMode = null;
-            setRunBtnState(false);
+            logDebug("error", "Job failed: " + (err.message || err));
+            showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
+            updateDashboardJob({ job_id: "?", status: "failed" });
+        } finally {
+            _activeJob = null; _runningMode = null; setRunBtnState(false);
         }
     };
 
@@ -1901,6 +1858,37 @@ document.addEventListener("DOMContentLoaded", function () {
         checkUrlProject();
     });
 
-    /* Auto-discover backend */
-    ZoomyBackend.discover();
+    /* Auto-discover a local backend via the CLI. Failure is silent — a
+       user without a running zoomy_server will just see "numpy (pyodide)"
+       as the only available backend. */
+    getCli().then(function (cli) {
+        cli.onConnectionsChange(function () {
+            if (window.renderDashboardConnections) renderDashboardConnections();
+            _updateBackendIndicator();
+            _updateSolverCardBadges();
+        });
+        cli.discover();
+    });
 });
+
+/* Navbar indicator + card-disabled badges. Previously lived in
+   ZoomyBackend._updateAll; now triggered by the CLI's
+   onConnectionsChange callback. */
+function _updateBackendIndicator() {
+    var el = document.getElementById("backend-indicator");
+    if (!el || !_cli) return;
+    el.textContent = _cli.availableTags().join(" | ");
+    el.className = "backend-indicator connected";
+}
+function _updateSolverCardBadges() {
+    document.querySelectorAll(".card[data-requires-tag]").forEach(function (c) {
+        var tag = c.dataset.requiresTag;
+        var connected = _cliIsTagConnected(tag);
+        c.classList.toggle("disabled", !connected);
+        var indicator = c.querySelector(".card-connection-status");
+        if (indicator) {
+            indicator.textContent = connected ? "Connected" : "Disconnected";
+            indicator.className = "card-connection-status" + (connected ? " connected" : "");
+        }
+    });
+}

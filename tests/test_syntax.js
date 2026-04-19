@@ -19,7 +19,7 @@ function check(label, fn) {
 }
 
 console.log("JS syntax:");
-for (const f of ["core.js", "app.js", "backend.js", "param_widgets.js", "pyodide-worker.js", "sw.js"]) {
+for (const f of ["core.js", "app.js", "param_widgets.js", "pyodide-worker.js", "sw.js"]) {
     check(f, () => new Function(fs.readFileSync(path.join(GUI_DIR, f), "utf8")));
 }
 
