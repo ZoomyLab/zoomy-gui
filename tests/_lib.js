@@ -7,10 +7,16 @@ const fs = require("fs");
 const path = require("path");
 
 const GUI_DIR = path.resolve(__dirname, "..");
+/* library/zoomy_cli/ is served at the /zoomy_cli/ prefix so the GUI can
+   import the isomorphic CLI as `./zoomy_cli/browser.mjs`, matching the
+   deploy layout (render-webpage.yml copies the package into gui/ at
+   build time). Resolves to the sibling directory in the repo. */
+const CLI_DIR = path.resolve(__dirname, "..", "..", "zoomy_cli");
 const MIME = {
     ".html": "text/html",
     ".css": "text/css",
     ".js": "application/javascript",
+    ".mjs": "application/javascript",
     ".json": "application/json",
     ".py": "text/x-python",
     ".svg": "image/svg+xml",
@@ -30,9 +36,18 @@ function startServer(options) {
         const server = http.createServer((req, res) => {
             let urlPath = req.url.split("?")[0];
             if (urlPath === "/") urlPath = "/index.html";
-            const filePath = path.join(GUI_DIR, urlPath);
-            if (!filePath.startsWith(GUI_DIR) || !fs.existsSync(filePath)) {
-                res.writeHead(404); res.end("Not Found"); return;
+            /* Route /zoomy_cli/* to the sibling library/zoomy_cli/ dir. */
+            let filePath;
+            if (urlPath.startsWith("/zoomy_cli/")) {
+                filePath = path.join(CLI_DIR, urlPath.substring("/zoomy_cli/".length));
+                if (!filePath.startsWith(CLI_DIR) || !fs.existsSync(filePath)) {
+                    res.writeHead(404); res.end("Not Found"); return;
+                }
+            } else {
+                filePath = path.join(GUI_DIR, urlPath);
+                if (!filePath.startsWith(GUI_DIR) || !fs.existsSync(filePath)) {
+                    res.writeHead(404); res.end("Not Found"); return;
+                }
             }
             const ext = path.extname(filePath);
             const headers = {
