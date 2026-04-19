@@ -2423,67 +2423,14 @@ function _slugify(s) {
         .slice(0, 40) || "card";
 }
 
-/* Starter meta + snippet for a freshly-minted user card. Keeps the
-   editor non-empty so the user sees a runnable skeleton instead of a
-   blank page. */
+/* Starter meta + snippet for a freshly-minted user card. Delegates to
+   the shared `cardStarter` in zoomy_cli so the GUI and CLI (`zoomy card
+   new`) produce identical skeletons. */
 function _userCardStarter(cardType, title) {
-    var description = "User-authored " + (cardType || "card") + ". Edit the code below and hit Run.";
-    if (cardType === "model") {
-        return {
-            meta: { title: title, description: description },
-            snippet:
-"from zoomy_core.model.models.sme_model import SMEInviscid\n" +
-"\n" +
-"# Subclass SMEInviscid (or any zoomy_core model) and tweak what you need.\n" +
-"class UserModel(SMEInviscid):\n" +
-"    pass\n" +
-"\n" +
-"model = UserModel(level=0)\n" +
-"display(model.describe())\n",
-        };
-    }
-    if (cardType === "solver") {
-        return {
-            meta: { title: title, description: description, requires_tag: "numpy" },
-            snippet:
-"# Solver card. `model` and `mesh` come from the currently selected\n" +
-"# Model and Mesh cards. Adjust t_end / reconstruction_order to taste.\n" +
-"from zoomy_core.solver.numpy_solver import NumpySolver\n" +
-"\n" +
-"solver = NumpySolver(model, mesh, t_end=1.0, reconstruction_order=1)\n" +
-"result = solver.run()\n" +
-"print('simulation finished — %d steps' % result.n_steps)\n",
-        };
-    }
-    if (cardType === "vis") {
-        return {
-            meta: { title: title, description: description },
-            snippet:
-"import matplotlib.pyplot as plt\n" +
-"\n" +
-"fig, ax = plt.subplots()\n" +
-"ax.set_title('" + title.replace(/'/g, "") + "')\n" +
-"ax.plot([0, 1, 2], [0, 1, 4])\n" +
-"display(fig)\n",
-        };
-    }
-    if (cardType === "mesh") {
-        /* No `category` so the new card lands in the same "Create"
-           subtab the + New card button lives in. Uploaded-mesh cards
-           (uploadMeshFile) keep category: "Uploaded" so they get their
-           own subtab — it's expected behaviour for that path. */
-        return {
-            meta: { title: title, description: description },
-            snippet:
-"# Starter mesh card. Replace this with your mesh construction code,\n" +
-"# or use the 'Upload .msh' button on the Mesh tab to wrap a gmsh file.\n" +
-"from zoomy_core.mesh.structured_mesh import StructuredMesh\n" +
-"\n" +
-"mesh = StructuredMesh(dim=1, n_cells=100, x_min=0.0, x_max=1.0)\n" +
-"display(mesh)\n",
-        };
-    }
-    return { meta: { title: title, description: description }, snippet: "# New user card\n" };
+    /* cli.userCards is set by getCli() once the CLI's ESM has been
+       imported. This function is only called from newUserCard which
+       already awaits getCli(), so _cli is populated when we get here. */
+    return _cli.userCards.cardStarter(cardType, title);
 }
 
 /* Kick off a user-card creation flow for a tab. Prompts for a title,
@@ -2551,25 +2498,12 @@ async function uploadMeshFile(file) {
         await cli.userCards.writeUserFile(
             cli.storage, sessionId, "meshes", id, "mesh.msh", bytes,
         );
+        var starter = cli.userCards.uploadedMeshStarter({
+            title: title, filename: file.name, vpath: vpath, size: bytes.byteLength,
+        });
         await cli.userCards.writeUserCard(cli.storage, {
             session: sessionId, type: "meshes", id: id,
-            meta: {
-                title: title,
-                description: "Uploaded mesh: " + file.name + " (" + bytes.byteLength + " bytes)",
-                category: "Uploaded",
-                mesh_file: "mesh.msh",
-                mesh_vpath: vpath,
-            },
-            snippet:
-"# Auto-generated for an uploaded .msh. The bytes are re-hydrated into\n" +
-"# Pyodide's VFS by the GUI before this snippet runs.\n" +
-"import meshio\n" +
-"\n" +
-"mesh = meshio.read(\"" + vpath + "\")\n" +
-"n_pts = mesh.points.shape[0]\n" +
-"n_cells = sum(len(c.data) for c in mesh.cells)\n" +
-"print(f\"Loaded " + file.name.replace(/"/g, '\\"') + ": {n_pts} points, {n_cells} cells\")\n" +
-"display(mesh)\n",
+            meta: starter.meta, snippet: starter.snippet,
         });
     } catch (e) {
         toast.error("Couldn't save uploaded mesh: " + (e && e.message || e));
