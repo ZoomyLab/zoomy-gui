@@ -192,6 +192,9 @@ button { margin-bottom: 0; }
     flex-shrink: 0;
 }
 .icon-btn.sm { width: 28px; height: 28px; font-size: 1rem; }
+/* Trash icon on user-authored cards. Red on hover so accidental clicks
+   stand out before the confirm() prompt fires. */
+.icon-btn.card-trash-btn:hover { background: #c0392b; color: #fff; border-color: #a93226; }
 .icon-btn:hover { background: var(--c-hover); color: var(--c-text); }
 .icon-btn.open { background: var(--c-accent); color: var(--c-surface); border-color: var(--c-accent); }
 .icon-btn:disabled { opacity: 0.3; cursor: wait; }
@@ -486,4 +489,27 @@ button { margin-bottom: 0; }
     .card-header { padding: 0.4rem 0.5rem; }
     .footer { padding: 0.5rem 1rem; }
     .card.maximized .editor-layout { flex-direction: column; }
+}
+
+/* `+ New card` button at the bottom of each cards tab (or, for mesh,
+   inside the Create subtab). Dashed border signals its role as an
+   affordance rather than a content element. */
+.new-card-btn {
+    display: block;
+    width: 100%;
+    margin: 0.75rem 0 0.5rem;
+    padding: 0.6rem 1rem;
+    background: transparent;
+    color: var(--c-muted);
+    border: 1px dashed var(--c-border);
+    border-radius: 6px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.new-card-btn:hover {
+    background: var(--c-hover);
+    color: var(--c-text);
+    border-color: var(--c-accent);
+    border-style: solid;
 }

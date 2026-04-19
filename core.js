@@ -93,7 +93,11 @@ function SessionManager() {
 SessionManager.prototype.create = function (title, project) {
     /* Snapshot departing session before creating new one */
     if (project && this.activeId) this.snapshotSession(project);
-    var id = "s-" + Date.now() + "-" + (++_sessionCounter);
+    /* timestamp + counter + small random suffix. The counter alone would
+       clash across tabs (each tab has its own _sessionCounter) which
+       matters now that session ids are folder names in IndexedDB. */
+    var id = "s-" + Date.now() + "-" + (++_sessionCounter) + "-" +
+             Math.random().toString(36).slice(2, 6);
     var session = { id: id, title: title, description: "Simulation session.", selections: {}, cardOverrides: {} };
     /* Clone current selections as the new session's starting point */
     if (project) {
@@ -394,8 +398,39 @@ Project.fromConfig = function (config) {
         }
         if (firstId) proj.selections.select(tabId, firstId);
     }
-    /* Create default session with initial selections */
-    proj.sessions.create("Default session", proj);
+    /* Create default session with initial selections. The id is
+       persisted in localStorage and reused on subsequent visits so
+       user-authored cards written under it (keyed by session id inside
+       IndexedDB) are still discoverable after a reload. SessionManager.
+       create would otherwise mint a fresh random id every page load and
+       strand previously-saved user cards under a dead key. */
+    var persistedId = null;
+    try {
+        persistedId = (typeof window !== "undefined" && window.localStorage)
+            ? window.localStorage.getItem("zoomy-default-session-id")
+            : null;
+    } catch (e) { /* localStorage disabled */ }
+
+    if (persistedId) {
+        /* Cheap inline equivalent of sessions.create that honours the
+           persisted id. Matches the record shape the rest of the
+           codebase expects. */
+        proj.sessions.sessions.push({
+            id: persistedId,
+            title: "Default session",
+            description: "Simulation session.",
+            selections: proj.selections.toDict(),
+            cardOverrides: {},
+        });
+        proj.sessions.activeId = persistedId;
+    } else {
+        var s = proj.sessions.create("Default session", proj);
+        try {
+            if (typeof window !== "undefined" && window.localStorage) {
+                window.localStorage.setItem("zoomy-default-session-id", s.id);
+            }
+        } catch (e) { /* localStorage disabled */ }
+    }
     return proj;
 };
 
