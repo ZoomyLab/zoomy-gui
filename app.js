@@ -370,16 +370,228 @@ function _cliGetUrlForTag(tag) {
 
 /* === Ace + Plotly (still main thread, they need DOM access) === */
 
-function ensureAce() { if (!window._aceReady) window._aceReady = (async function () { logDebug("info","Loading Ace editor..."); showToast("Loading editor..."); await loadScript("https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js"); logDebug("info","Ace editor ready"); hideToast(); })(); return window._aceReady; }
+function ensureAce() {
+    if (!window._aceReady) window._aceReady = (async function () {
+        logDebug("info", "Loading Ace editor...");
+        showToast("Loading editor...");
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js");
+        /* Pull in language_tools to enable Ace's autocomplete framework.
+           Our custom zoomy_core completer is registered via
+           registerZoomyCompleter() below, which adds a completer that
+           reads types.json + the buffer to answer `.method` queries. */
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ext-language_tools.js");
+        registerZoomyCompleter();
+        logDebug("info", "Ace editor ready");
+        hideToast();
+    })();
+    return window._aceReady;
+}
 function ensurePlotly() { if (!window._plotlyReady) window._plotlyReady = (async function () { logDebug("info","Loading Plotly..."); showToast("Loading plotting..."); await loadScript("https://cdn.plot.ly/plotly-2.27.0.min.js"); logDebug("info","Plotly ready"); hideToast(); })(); return window._plotlyReady; }
 
 function makeAceEditor(id, code) {
     var e = ace.edit(id);
     e.setTheme("ace/theme/monokai");
     e.session.setMode("ace/mode/python");
-    e.setOptions({ fontSize: "14px", showPrintMargin: false, useSoftTabs: true, tabSize: 4 });
+    e.setOptions({
+        fontSize: "14px",
+        showPrintMargin: false,
+        useSoftTabs: true,
+        tabSize: 4,
+        enableBasicAutocompletion: true,
+        enableLiveAutocompletion: true,     // trigger on typing, not just Ctrl-Space
+        enableSnippets: false,
+    });
     e.setValue(code, -1);
     return e;
+}
+
+/* === zoomy_core autocomplete (pre-baked types.json + buffer-scope resolver) ===
+ *
+ * Goal: when the user types `model.describe(` inside a card editor we
+ * want to pop up a completion list (methods of whatever class `model`
+ * actually is) plus a tooltip showing the signature and docstring.
+ *
+ * Strategy (method 2 from the design discussion):
+ *   - CI runs generate_type_index.py against the published zoomy_core
+ *     (and zoomy_plotting) packages, emits types.json with `symbols`
+ *     (fully-qualified dotted path -> class/method metadata) and
+ *     `imports` (short name -> dotted path).
+ *   - The CLI loads types.json on demand via cli.storage.readJson.
+ *   - On each completion request we build an ad-hoc "buffer scope"
+ *     map by parsing the user's code for `from X import Y` lines and
+ *     `var = SomeClass(...)` assignments. That map plus the library's
+ *     imports map lets us resolve the receiver of `.method` to a
+ *     fully-qualified class path, which we then look up in the symbol
+ *     table to produce completions.
+ *
+ * Limitations (by design): we only know classes shipped in the
+ * packages CI indexed. User-defined subclasses and dynamic
+ * attributes aren't resolved; Ace's default buffer-word completer
+ * still runs, so those fall back to plain prefix matches. The
+ * completer degrades silently when types.json is unavailable. */
+
+var _zoomyTypeIndex = null;
+async function _loadTypeIndex() {
+    if (_zoomyTypeIndex) return _zoomyTypeIndex;
+    try {
+        var cli = await getCli();
+        _zoomyTypeIndex = await cli.storage.readJson("types.json");
+    } catch (e) {
+        _zoomyTypeIndex = { symbols: {}, imports: {} };
+        logDebug("warn", "types.json missing; zoomy_core autocomplete disabled");
+    }
+    return _zoomyTypeIndex;
+}
+
+/* Build a { localName -> fullyQualifiedClassPath } map by parsing
+   import lines and constructor-like assignments in the buffer. Light
+   regex rather than a real parser: covers the 95% case (explicit
+   import + simple assignment), silently ignores the rest. */
+function _resolveBufferScope(code, idx) {
+    var scope = {};
+    var fromImportRe = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(.+)$/gm;
+    var importRe     = /^[ \t]*import[ \t]+([\w.]+)(?:[ \t]+as[ \t]+(\w+))?/gm;
+    var m;
+    while ((m = fromImportRe.exec(code)) !== null) {
+        var mod = m[1];
+        m[2].split(",").forEach(function (part) {
+            var bits = part.trim().split(/\s+as\s+/);
+            var orig = bits[0].trim();
+            var alias = (bits[1] || bits[0]).trim();
+            if (orig && alias) scope[alias] = mod + "." + orig;
+        });
+    }
+    while ((m = importRe.exec(code)) !== null) {
+        var modPath = m[1];
+        var alias = m[2] || modPath.split(".").pop();
+        scope[alias] = modPath;
+    }
+    /* Assignments: `name = SomeClass(...)`. The constructor can be a
+       dotted path (e.g. zp.SimulationStore) — resolve each segment via
+       scope then the library imports map. */
+    var assignRe = /^[ \t]*(\w+)[ \t]*=[ \t]*([\w.]+)[ \t]*\(/gm;
+    while ((m = assignRe.exec(code)) !== null) {
+        var varName = m[1];
+        var ctor = m[2];
+        var resolved = _resolveDotted(ctor, scope, idx);
+        if (resolved) scope[varName] = resolved;
+    }
+    return scope;
+}
+
+/* Resolve a dotted expression like `zp.SimulationStore` to a symbol
+   path. Walks the prefix through `scope` then checks idx.imports. */
+function _resolveDotted(expr, scope, idx) {
+    if (!expr) return null;
+    var parts = expr.split(".");
+    var head = parts[0];
+    var basePath = scope[head]
+        || (idx && idx.imports && idx.imports[head])
+        || null;
+    if (!basePath) return null;
+    if (parts.length === 1) return basePath;
+    return basePath + "." + parts.slice(1).join(".");
+}
+
+/* All members of a class, including ones inherited through bases we
+   indexed. De-duplicates on name — subclass overrides win. */
+function _completionsForClass(classPath, idx) {
+    if (!idx || !idx.symbols) return [];
+    var out = [];
+    var seen = {};
+    var visited = {};
+    function walk(path) {
+        if (visited[path]) return;
+        visited[path] = true;
+        var s = idx.symbols[path];
+        if (!s || s.kind !== "class") return;
+        for (var name in s.members) {
+            if (seen[name]) continue;
+            seen[name] = true;
+            var m = s.members[name];
+            out.push({
+                caption: name,
+                value: name,
+                meta: m.kind || "member",
+                score: 900,
+                docHTML: _docHtmlForMember(name, m, path),
+            });
+        }
+        (s.bases || []).forEach(walk);
+    }
+    walk(classPath);
+    return out;
+}
+
+function _escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+}
+function _docHtmlForMember(name, m, classPath) {
+    var sig = m.signature ? _escapeHtml(m.signature) : _escapeHtml(name);
+    var doc = _escapeHtml(m.doc || "").replace(/\n/g, "<br>");
+    return "<div style='max-width:480px'>"
+         + "<div style='font-family:monospace;font-weight:600'>" + sig + "</div>"
+         + "<div style='font-size:11px;color:#888;margin:4px 0'>" + _escapeHtml(classPath) + "</div>"
+         + (doc ? "<div>" + doc + "</div>" : "")
+         + "</div>";
+}
+
+function registerZoomyCompleter() {
+    if (window._zoomyCompleterRegistered || !window.ace) return;
+    var langTools;
+    try { langTools = ace.require("ace/ext/language_tools"); } catch (e) { return; }
+    if (!langTools || !langTools.addCompleter) return;
+    window._zoomyCompleterRegistered = true;
+
+    var completer = {
+        /* Called by Ace when a completion popup should appear. We
+           only answer for member-access queries (`foo.<prefix>`);
+           other positions fall through to Ace's word-buffer completer. */
+        getCompletions: function (editor, session, pos, prefix, callback) {
+            var line = session.getLine(pos.row).substring(0, pos.column);
+            var dotMatch = /([\w.]+)\.(\w*)$/.exec(line);
+            if (!dotMatch) { callback(null, []); return; }
+            var receiver = dotMatch[1];
+            var code = session.getValue();
+            _loadTypeIndex().then(function (idx) {
+                var scope = _resolveBufferScope(code, idx);
+                /* If the receiver is a known short name in the library
+                   (e.g. a standalone module like `zp`) fall back to
+                   idx.imports too. */
+                var typePath = _resolveDotted(receiver, scope, idx);
+                if (!typePath) { callback(null, []); return; }
+                /* If the path points at a class, list members. If it
+                   points at a module, list top-level symbols in that
+                   module (best-effort filter on symbol dotted-path). */
+                var s = idx.symbols[typePath];
+                if (s && s.kind === "class") {
+                    callback(null, _completionsForClass(typePath, idx));
+                    return;
+                }
+                var modMembers = [];
+                Object.keys(idx.symbols).forEach(function (sp) {
+                    if (sp.startsWith(typePath + ".") && sp.lastIndexOf(".") === typePath.length) {
+                        var short = sp.substring(typePath.length + 1);
+                        modMembers.push({
+                            caption: short,
+                            value: short,
+                            meta: idx.symbols[sp].kind || "symbol",
+                            score: 800,
+                            docHTML: _docHtmlForMember(short, idx.symbols[sp], typePath),
+                        });
+                    }
+                });
+                callback(null, modMembers);
+            });
+        },
+        getDocTooltip: function (item) {
+            return { docHTML: item.docHTML };
+        },
+    };
+    langTools.addCompleter(completer);
+    window._zoomyCompleter = completer;   // exposed for tests
 }
 
 /* === Output Cells (notebook-style display) === */
