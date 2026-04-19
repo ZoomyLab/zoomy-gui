@@ -44,6 +44,18 @@ async function main() {
         return logs && logs.textContent.includes("Python runtime ready");
     }, { timeout: 240000 });
 
+    /* Cards start collapsed with no auto-selection. Explicitly select
+       one model / mesh / solver before hitting Run so the button has
+       something to assemble. */
+    console.log("Selecting default model / mesh / solver cards...");
+    await page.evaluate(() => {
+        ["model", "mesh", "solver"].forEach(tabId => {
+            const mgr = window.managers[tabId];
+            if (mgr && mgr.cards.length) mgr.select("card-" + mgr.cards[0].id);
+        });
+    });
+    await new Promise(r => setTimeout(r, 200));
+
     // Click Run Simulation
     console.log("Clicking btn-run-sim...");
     await page.click("#btn-run-sim");

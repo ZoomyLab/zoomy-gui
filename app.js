@@ -992,8 +992,16 @@ function createCard(targetId, card, mgr, cardType) {
     /* A `has-vis` class keeps the play button visible on vis cards by
        default (it's hidden elsewhere until the edit panel opens).
        `edit-open` is toggled by exclusiveToggle when the editor
-       expandable opens; see the CSS rules under .card-play-btn. */
+       expandable opens; see the CSS rules under .card-play-btn.
+
+       Every code-bearing card starts COLLAPSED. The tab-level
+       CardManager runs with collapseUnselected=true, so selection
+       state (body click or title click) is what toggles visibility.
+       The CardManager normally wouldn't add .collapsed to every card
+       at render time — only to unselected ones during updateUI — so
+       we apply it here to cover the just-rendered state. */
     if (cardType === "vis") container.classList.add("has-vis");
+    container.classList.add("collapsed");
 
     html += '<div class="card-body">';
     if (card.description) html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
@@ -1527,12 +1535,16 @@ function createDashboard(panel) {
 
 function buildCardsTab(panel, tab) {
     var isVis = tab.cardType === "vis";
+    /* collapseUnselected:true — deselecting a card auto-collapses it and
+       selecting one expands it. Combined with the initial .collapsed
+       class set in createCard this gives "everything closed on load,
+       only the active card is open". */
     var mgr = new CardManager(tab.id, {
         layout: tab.layout || (isVis ? "stack" : "stack"),
         columns: tab.columns || 2,
         /* Viz cards stay expanded so users can compare multiple plots
            side-by-side. Mesh/model/solver tabs keep single-selection behaviour. */
-        collapseUnselected: false,
+        collapseUnselected: true,
         onSelect: function () { mgr.updateUI(); updateDashboardSummary(); }
     });
     managers[tab.id] = mgr;
@@ -1590,7 +1602,11 @@ function buildCardsTab(panel, tab) {
         createCard("card-" + c.id, c, mgr, tab.cardType || "model");
     });
 
-    if (tab.cards.length > 0) mgr.select("card-" + tab.cards[0].id);
+    /* No auto-selection on first render. Cards remain collapsed until the
+       user clicks one. Dashboard summary fields show "Not selected" until
+       then. Previously we defaulted to the first card which exposed its
+       gear / editor as the "initial state" — the user wants a clean,
+       collapsed catalog instead. */
 }
 
 /* === Init === */
@@ -1867,7 +1883,14 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
 
-        if (!_cliIsTagConnected(tag)) { showToast("Backend '" + tag + "' not connected"); setTimeout(hideToast, 2000); return; }
+        if (!_cliIsTagConnected(tag)) {
+            /* The card is clickable even when its backend is offline so
+               the user can still inspect params/code; running it is
+               what we refuse — loud and visible, not a silent toast. */
+            logDebug("error", "Cannot run: backend '" + tag + "' is not connected. Connect to a server that provides the '" + tag + "' solver first.");
+            showToast("Backend '" + tag + "' not connected"); setTimeout(hideToast, 3000);
+            return;
+        }
 
         var zoomyCase = {
             version: "1.0",
