@@ -182,6 +182,7 @@ async function _ensureSessionPyodide(session) {
             onLog: _onAdapterLog,
             onDisplay: _onAdapterDisplay,
             onReady: function () { hideToast(); logDebug("info", "Worker for '" + session.title + "' ready"); },
+            onBackgroundReady: function () { hideToast(); },
         });
         adapter._ensureWorker();
         adapter._sessionInterruptBuffer = ib;
@@ -332,6 +333,12 @@ function getCli() {
             onLog: _onAdapterLog,
             onDisplay: _onAdapterDisplay,
             onReady: function () { hideToast(); },
+            /* Tier-2 installs (matplotlib / jedi / zoomy-plotting) finish
+               after fully_ready; each one individually retriggers the
+               toast via "Installing…" log lines. Hide it for good once
+               the last of them resolves so a user sitting idle on the
+               page sees the banner vanish on its own. */
+            onBackgroundReady: function () { hideToast(); },
         });
         /* Boot the worker immediately — matches the legacy behaviour
            of creating the Worker at top-of-app.js. Without this, the
