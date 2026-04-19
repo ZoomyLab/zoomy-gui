@@ -100,7 +100,7 @@ function installExec() {
 function installMatplotlib() {
     if (_mplPromise) return _mplPromise;
     _mplPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing matplotlib (first mpl viz)…" });
+        postMessage({ type: "log", level: "info", msg: "Installing matplotlib in background…" });
         try {
             await py.loadPackage(["matplotlib"]);
             postMessage({ type: "log", level: "info", msg: "matplotlib ready" });
@@ -114,7 +114,7 @@ function installMatplotlib() {
 function installPlotly() {
     if (_plotlyPromise) return _plotlyPromise;
     _plotlyPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing plotly (first plotly viz)…" });
+        postMessage({ type: "log", level: "info", msg: "Installing plotly (optional — first plotly viz)…" });
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["plotly"]);
@@ -130,7 +130,7 @@ var _jediPromise = null;
 function installJedi() {
     if (_jediPromise) return _jediPromise;
     _jediPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing jedi (first autocomplete)…" });
+        postMessage({ type: "log", level: "info", msg: "Installing jedi in background…" });
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["jedi"]);
@@ -319,4 +319,22 @@ onmessage = async function (e) {
     await installExec();
     postMessage({ type: "log", level: "info", msg: "Python runtime ready" });
     postMessage({ type: "fully_ready" });
+
+    /* --- Install tiers ---
+     *   1. CORE (boot-blocking, above): zoomy-core, sympy, param, h5py,
+     *      zoomy-plotting, engine.py + display hook. Without these the
+     *      user can't select / extract params / open a store.
+     *   2. BACKGROUND (eager but non-blocking, here): matplotlib, jedi.
+     *      Kick off AFTER posting "fully_ready" so the GUI becomes
+     *      interactive immediately while the worker uses idle time to
+     *      warm up packages the user is likely to need soon. The lazy
+     *      triggers in run_code / complete_code await the same promise,
+     *      so a click that arrives early just waits on the already-in-
+     *      flight install instead of starting a new one.
+     *   3. OPTIONAL (fully lazy, in run_code): plotly. Many snippets
+     *      never touch it, so we don't spend the install budget until
+     *      a snippet actually imports it.
+     */
+    installMatplotlib();     // fire-and-forget, promise-guarded
+    installJedi();           // fire-and-forget, promise-guarded
 })();
