@@ -1032,17 +1032,26 @@ function createCard(targetId, card, mgr, cardType) {
 
     container.innerHTML = html;
 
-    /* Collapse / expand on title-bar click. Intentionally scoped to
-       the title only — clicking the card body no longer selects or
-       toggles anything, so users can interact with widgets below the
-       title without the whole card animating away. */
+    /* Click anywhere on the card body → select. The filter below skips
+       interactive widgets so clicking a button/select/slider/output
+       cell doesn't also reselect. Title click still bubbles through
+       this handler (it's not in the skip list), so selecting via the
+       title works the same as selecting by clicking the body. */
+    if (mgr) {
+        container.onclick = function (e) {
+            if (e.target.closest(".icon-btn,.expandable,select,.card-timeline,.card-play,.card-output,.play-btn,.output-cells")) return;
+            mgr.select(targetId);
+        };
+    }
+
+    /* Title click ALSO toggles .collapsed. Don't stopPropagation — we
+       want the container click handler above to still fire so the
+       card also becomes the selection when its title is clicked. */
     var titleEl = container.querySelector(".card-title");
     if (titleEl) {
         titleEl.style.cursor = "pointer";
-        titleEl.onclick = function (e) {
-            e.stopPropagation();
+        titleEl.onclick = function () {
             container.classList.toggle("collapsed");
-            if (mgr) mgr.select(targetId);
         };
     }
 
