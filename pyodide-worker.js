@@ -121,6 +121,29 @@ function installPlotly() {
     return _plotlyPromise;
 }
 
+var _meshioPromise = null;
+/* Lazy install for meshio — only needed when a user uploads a .msh
+   file and the generated mesh-card snippet runs. Pure-Python wheel (~1 MB)
+   so we don't pay it unless someone actually touches the path. */
+function installMeshio() {
+    if (_meshioPromise) return _meshioPromise;
+    _meshioPromise = (async function () {
+        postMessage({ type: "log", level: "info", msg: "Installing meshio (for uploaded .msh files)…" });
+        try {
+            var mp = py.pyimport("micropip");
+            /* meshio's submodules import `rich` unconditionally (for
+               pretty CLI output), so it has to come along for the ride
+               even when we only care about `meshio.read`. */
+            await mp.install(["meshio", "rich"]);
+            postMessage({ type: "log", level: "info", msg: "meshio ready" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "meshio failed: " + (e.message || e) });
+            throw e;
+        }
+    })();
+    return _meshioPromise;
+}
+
 var _zpPromise = null;
 function installZoomyPlotting() {
     if (_zpPromise) return _zpPromise;
@@ -231,6 +254,7 @@ function installJedi() {
    promise so a snippet that arrives mid-install just waits its turn. */
 var _MPL_RE    = /\b(import\s+matplotlib|from\s+matplotlib|matplotlib\.)/;
 var _PLOTLY_RE = /\b(import\s+plotly|from\s+plotly)/;
+var _MESHIO_RE = /\b(import\s+meshio|from\s+meshio)/;
 /* zoomy-plotting is used via engine.open_hdf5 — every solver-template
    snippet ends with `open_hdf5(path)`, which lazy-imports zp inside
    Python. Run_code must block on the zp install if the snippet needs it. */
@@ -241,6 +265,7 @@ async function ensureVizDeps(code) {
     if (_ZP_RE.test(code))     needs.push(installZoomyPlotting());
     if (_MPL_RE.test(code))    needs.push(installMatplotlib());
     if (_PLOTLY_RE.test(code)) needs.push(installPlotly());
+    if (_MESHIO_RE.test(code)) needs.push(installMeshio());
     if (needs.length) await Promise.all(needs);
 }
 
@@ -341,6 +366,16 @@ onmessage = async function (e) {
             if (dir) py.FS.mkdirTree(dir);
             py.FS.writeFile(msg.path, new Uint8Array(msg.bytes));
             py.globals.get("open_hdf5")(msg.path);
+            postMessage({ type: "result", id: msg.id, data: "ok" });
+
+        } else if (msg.cmd === "write_user_mesh") {
+            /* Materialise a user-uploaded gmsh .msh into the VFS at
+               `msg.path`. The card's snippet then calls
+               `meshio.read(msg.path)`; ensure meshio is installed first. */
+            await installMeshio();
+            var mdir = msg.path.replace(/\/[^\/]*$/, "");
+            if (mdir) py.FS.mkdirTree(mdir);
+            py.FS.writeFile(msg.path, new Uint8Array(msg.bytes));
             postMessage({ type: "result", id: msg.id, data: "ok" });
 
         } else if (msg.cmd === "describe_model") {

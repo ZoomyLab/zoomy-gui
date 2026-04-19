@@ -873,6 +873,12 @@ async function executeCard(targetId, card, options) {
     if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = "&hellip;"; }
 
     try {
+        /* Uploaded-mesh cards need their .msh bytes in the worker's VFS
+           before the snippet's meshio.read() call lands. Happens here
+           (and not once at boot) so mesh data survives worker restarts
+           and session switches without any extra plumbing. */
+        await _hydrateUserMeshIfAny(card);
+
         var code = await resolveCardCode(targetId, card);
 
         /* Timeline + field-selector injection — only present on vis cards. */
@@ -1522,7 +1528,12 @@ function createCard(targetId, card, mgr, cardType) {
     var container = document.getElementById(targetId);
     if (!container) return;
 
-    var hasEdit     = cardType === "model" || cardType === "solver" || cardType === "vis" || (cardType === "mesh" && !!card.template);
+    /* Code-bearing mesh cards — shipped builtins use `template`, but
+       user-authored / uploaded mesh cards store their code under
+       `snippet` (written by userCards.writeUserCard). Either form
+       should grant Edit + Play. */
+    var meshHasCode = cardType === "mesh" && (!!card.template || !!card.snippet || !!card["class"]);
+    var hasEdit     = cardType === "model" || cardType === "solver" || cardType === "vis" || meshHasCode;
     var hasPlay     = hasEdit;                          // every code-bearing card gets the unified play button
     var hasSizes    = cardType === "mesh" && card.mesh_sizes && card.mesh_sizes.length > 0;
     var hasTimeline = cardType === "vis" && !!card.has_timeline;
@@ -2241,6 +2252,30 @@ function buildCardsTab(panel, tab) {
         newBtn.innerHTML = "&#43; New " + (tab.cardType || "card") + " card";
         newBtn.onclick = function () { newUserCard(tab.id); };
         newBtnHost.appendChild(newBtn);
+
+        /* Mesh tab gets an extra "Upload .msh" button alongside the
+           + New card button — uploading is usually the shorter path to
+           a working mesh card than hand-editing a snippet. */
+        if (tab.cardType === "mesh") {
+            var upInput = document.createElement("input");
+            upInput.type = "file";
+            upInput.accept = ".msh";
+            upInput.style.display = "none";
+            upInput.id = "btn-mesh-upload-input-" + tab.id;
+            upInput.onchange = function () {
+                if (upInput.files && upInput.files[0]) {
+                    uploadMeshFile(upInput.files[0]);
+                    upInput.value = "";  // let the user re-upload the same file next time
+                }
+            };
+            var upBtn = document.createElement("button");
+            upBtn.className = "new-card-btn";
+            upBtn.id = "btn-mesh-upload-" + tab.id;
+            upBtn.innerHTML = "&#8682; Upload .msh\u2026";
+            upBtn.onclick = function () { upInput.click(); };
+            newBtnHost.appendChild(upInput);
+            newBtnHost.appendChild(upBtn);
+        }
     }
 
     /* No auto-selection on first render. Cards remain collapsed until the
@@ -2433,8 +2468,12 @@ function _userCardStarter(cardType, title) {
         };
     }
     if (cardType === "mesh") {
+        /* No `category` so the new card lands in the same "Create"
+           subtab the + New card button lives in. Uploaded-mesh cards
+           (uploadMeshFile) keep category: "Uploaded" so they get their
+           own subtab — it's expected behaviour for that path. */
         return {
-            meta: { title: title, description: description, category: "User" },
+            meta: { title: title, description: description },
             snippet:
 "# Starter mesh card. Replace this with your mesh construction code,\n" +
 "# or use the 'Upload .msh' button on the Mesh tab to wrap a gmsh file.\n" +
@@ -2481,6 +2520,82 @@ async function newUserCard(tabId) {
     if (managers[tabId]) managers[tabId].select("card-" + id);
     toast.success("Created '" + title + "'", { ttl: 1800 });
     return id;
+}
+
+/* Upload-a-gmsh-file path. Writes the .msh bytes into IndexedDB under
+   the new mesh card's folder, generates a `meshio.read(vpath)` snippet,
+   and marks the card with `mesh_file` + `mesh_vpath` so executeCard
+   hydrates the bytes into Pyodide's VFS before each run. Returns the
+   new card id, or null on cancel / failure. */
+async function uploadMeshFile(file) {
+    if (!file) return null;
+    if (!/\.msh$/i.test(file.name)) {
+        toast.error("Not a .msh file: " + file.name);
+        return null;
+    }
+    var sessionId = sessionMgr.selectedId;
+    if (!sessionId) { toast.error("No active session — create one first."); return null; }
+
+    var title = file.name.replace(/\.msh$/i, "") || "Uploaded mesh";
+    var id = "user-mesh-" + _slugify(title) + "-" + Math.random().toString(36).slice(2, 6);
+    /* VFS path lives under /tmp/zoomy_user/ (ephemeral) because the
+       worker re-hydrates it from IDB on every run anyway. */
+    var vpath = "/tmp/zoomy_user/" + sessionId + "/meshes/" + id + ".msh";
+
+    var bytes;
+    try { bytes = await file.arrayBuffer(); }
+    catch (e) { toast.error("Couldn't read file: " + (e && e.message || e)); return null; }
+
+    try {
+        var cli = await getCli();
+        await cli.userCards.writeUserFile(
+            cli.storage, sessionId, "meshes", id, "mesh.msh", bytes,
+        );
+        await cli.userCards.writeUserCard(cli.storage, {
+            session: sessionId, type: "meshes", id: id,
+            meta: {
+                title: title,
+                description: "Uploaded mesh: " + file.name + " (" + bytes.byteLength + " bytes)",
+                category: "Uploaded",
+                mesh_file: "mesh.msh",
+                mesh_vpath: vpath,
+            },
+            snippet:
+"# Auto-generated for an uploaded .msh. The bytes are re-hydrated into\n" +
+"# Pyodide's VFS by the GUI before this snippet runs.\n" +
+"import meshio\n" +
+"\n" +
+"mesh = meshio.read(\"" + vpath + "\")\n" +
+"n_pts = mesh.points.shape[0]\n" +
+"n_cells = sum(len(c.data) for c in mesh.cells)\n" +
+"print(f\"Loaded " + file.name.replace(/"/g, '\\"') + ": {n_pts} points, {n_cells} cells\")\n" +
+"display(mesh)\n",
+        });
+    } catch (e) {
+        toast.error("Couldn't save uploaded mesh: " + (e && e.message || e));
+        return null;
+    }
+
+    await reloadCards();
+    if (managers.mesh) managers.mesh.select("card-" + id);
+    toast.success("Uploaded '" + file.name + "'", { ttl: 2500 });
+    return id;
+}
+
+/* Called by executeCard before running a user mesh card. Reads the
+   card's .msh bytes from IDB and pushes them to the worker's VFS so
+   `meshio.read(...)` can find them. No-op for non-user / non-mesh /
+   non-uploaded cards. */
+async function _hydrateUserMeshIfAny(card) {
+    if (!card || card.source !== "user" || !card.mesh_file || !card.mesh_vpath) return;
+    var sessionId = sessionMgr.selectedId;
+    if (!sessionId) return;
+    var cli = await getCli();
+    var bytes = await cli.userCards.readUserFile(
+        cli.storage, sessionId, "meshes", card.id, card.mesh_file,
+    );
+    if (!bytes) throw new Error("Uploaded mesh data is missing for card " + card.id);
+    await cli.pyodide.writeUserMesh(card.mesh_vpath, new Uint8Array(bytes));
 }
 
 /* Tear down a user card from storage and the DOM. Confirms first so an
