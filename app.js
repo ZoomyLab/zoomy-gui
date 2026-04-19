@@ -1059,6 +1059,55 @@ function isCardModified(cardId) {
     return _project.cardState.isModified(cardId);
 }
 
+/* Exposed on window so tests can drive a round-trip without the
+   browser-download intercept. Production callers use saveProject.
+   (We capture references first because assigning onto window would
+   shadow the hoisted function declarations and make the wrappers
+   recurse into themselves.) */
+var _buildProjectZipImpl = buildProjectZip;
+var _loadProjectImpl     = loadProject;
+window._zoomyBuildProjectZipWithUserCards = async function () {
+    var zip = _buildProjectZipImpl();
+    await _addUserCardsToZip(zip);
+    return zip;
+};
+window._zoomyLoadProject = function (file) { return _loadProjectImpl(file); };
+
+/* Path suffixes that should round-trip as raw bytes in the ZIP —
+   otherwise JSZip will treat them as text and mangle non-UTF8 data.
+   .msh is the only binary payload users produce today. */
+var _USER_CARD_BINARY_SUFFIXES = [".msh"];
+function _isUserCardBinary(p) {
+    for (var i = 0; i < _USER_CARD_BINARY_SUFFIXES.length; i++) {
+        if (p.endsWith(_USER_CARD_BINARY_SUFFIXES[i])) return true;
+    }
+    return false;
+}
+
+/* Collect every user-authored card / snippet / mesh file from the
+   IndexedDB overlay and stage it into the ZIP under its real path
+   (cards/sessions/<sess>/...). Returns the number of files added so
+   the save log can report it. No-op when the CLI doesn't have a
+   writable overlay (e.g. IndexedDB disabled). */
+async function _addUserCardsToZip(zip) {
+    var cli;
+    try { cli = await getCli(); }
+    catch (e) { return 0; }
+    if (!cli.storage || !cli.storage.allPaths) return 0;
+    var paths = await cli.storage.allPaths("cards/sessions/");
+    for (var i = 0; i < paths.length; i++) {
+        var p = paths[i];
+        if (_isUserCardBinary(p)) {
+            var ab = await cli.storage.readBytes(p);
+            zip.file(p, ab, { binary: true });
+        } else {
+            var txt = await cli.storage.readText(p);
+            zip.file(p, txt);
+        }
+    }
+    return paths.length;
+}
+
 function buildProjectZip() {
     /* Sync UI selections into core project */
     Object.keys(managers).forEach(function (tabId) {
@@ -1084,6 +1133,11 @@ function buildProjectZip() {
 
 async function saveProject() {
     var zip = buildProjectZip();
+    /* User-authored cards are staged asynchronously via IDB reads, so
+       the add has to happen after buildProjectZip returns — JSZip
+       tolerates late additions up until generateAsync. */
+    var userFiles = await _addUserCardsToZip(zip);
+    if (userFiles) logDebug("info", "Project: " + userFiles + " user-card file(s) included");
     var blob = await zip.generateAsync({ type: "blob" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1107,11 +1161,46 @@ async function loadProject(file) {
             project = JSON.parse(await projectFile.async("string"));
         }
 
+        /* First pass: replay user-authored card entries (cards/sessions/…)
+           into IndexedDB. These don't flow through applySaveData — they
+           live in the CLI's storage layer and get picked up by the next
+           _loadAllCards via cli.listCards. */
+        var userCardEntries = [];
+        zip.forEach(function (relativePath, entry) {
+            if (entry.dir) return;
+            if (relativePath.indexOf("cards/sessions/") === 0) {
+                userCardEntries.push({ path: relativePath, entry: entry });
+            }
+        });
+        if (userCardEntries.length) {
+            var cli0 = await getCli();
+            for (var ui = 0; ui < userCardEntries.length; ui++) {
+                var uce = userCardEntries[ui];
+                if (_isUserCardBinary(uce.path)) {
+                    var ab = await uce.entry.async("arraybuffer");
+                    await cli0.storage.writeBytes(uce.path, ab);
+                } else if (uce.path.endsWith(".json")) {
+                    var js = await uce.entry.async("string");
+                    /* Stored as JSON record so tryReadJson returns an
+                       object directly (matches writeUserCard's shape). */
+                    try { await cli0.storage.writeJson(uce.path, JSON.parse(js)); }
+                    catch (e) { await cli0.storage.writeText(uce.path, js); }
+                } else {
+                    var tx = await uce.entry.async("string");
+                    await cli0.storage.writeText(uce.path, tx);
+                }
+            }
+            logDebug("info", "Project: restored " + userCardEntries.length + " user-card file(s) to IndexedDB");
+        }
+
         /* Parse card files from ZIP */
         var cardFiles = {};
         zip.forEach(function (relativePath, entry) {
             if (entry.dir) return;
             if (relativePath.endsWith("project.json")) return;
+            /* user-card entries were handled above; don't re-process
+               them as modified builtin-card state. */
+            if (relativePath.indexOf("cards/sessions/") === 0) return;
             var parts = relativePath.split("/");
             var filename = parts[parts.length - 1];
             var folderParts = parts.slice(0, -1);
@@ -1153,6 +1242,15 @@ async function loadProject(file) {
         sessionMgr.selectedId = _project.sessions.activeId;
         renderSessionSidebar();
         renderDashboardSessionCard();
+
+        /* Rebuild the cards tabs — the user-card entries we just wrote
+           to IndexedDB aren't visible until _loadAllCards runs again.
+           reloadCards also restores selections from the active session,
+           but do an explicit manager sync below for the cards that
+           applySaveData already synced into _project.selections. */
+        if (userCardEntries.length && typeof reloadCards === "function") {
+            await reloadCards();
+        }
 
         /* Sync UI managers with restored selections */
         var sel = _project.selections.toDict();
