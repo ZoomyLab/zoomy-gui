@@ -21,23 +21,81 @@ function loadScript(src) {
 function showToast(msg) { var t = document.getElementById("loading-toast"); if (t) { t.style.display = "block"; t.textContent = msg; } }
 function hideToast() { var t = document.getElementById("loading-toast"); if (t) t.style.display = "none"; }
 
-/* Minimal markdown → HTML (headings, bold, italic, newlines, code, math blocks) */
+/* Minimal markdown → HTML.
+ * Handles: headers (# .. ####), bold, italic, inline code, fenced code
+ * blocks, ordered / unordered lists, horizontal rules, $$…$$ display
+ * math (KaTeX picks it up), paragraph breaks, and preserves single
+ * newlines inside paragraphs as <br>. Good enough for model
+ * describe() output which is the main consumer post-Phase-2. */
 function miniMarkdown(s) {
     if (!s) return "";
     /* Already contains HTML tags → pass through */
     if (/<[a-z][\s\S]*>/i.test(s)) return s;
+
     /* Protect $$ math blocks: wrap in div so KaTeX renders them as display math */
     s = s.replace(/\$\$([\s\S]*?)\$\$/g, function (_, math) {
         return '\n<div class="math-block">$$' + math + '$$</div>\n';
     });
+
+    /* Fenced code blocks ``` → <pre><code>. Done before the inline
+       passes so backticks inside don't get double-processed. */
+    s = s.replace(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, body) {
+        var esc = body.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return '<pre class="md-code"><code>' + esc + '</code></pre>';
+    });
+
+    /* Split into blocks separated by blank lines — each block becomes a
+       paragraph, header, list, or hr. Keep list items contiguous so we
+       can wrap them in <ul> / <ol> below. */
+    var blocks = s.split(/\n{2,}/);
+    var out = [];
+    blocks.forEach(function (block) {
+        var trimmed = block.trim();
+        if (!trimmed) return;
+
+        /* Skip already-promoted HTML blocks (pre, div.math-block). */
+        if (/^<(pre|div)\b/.test(trimmed)) { out.push(trimmed); return; }
+
+        /* Headers. */
+        var h = /^(#{1,4})\s+(.+)$/.exec(trimmed);
+        if (h && !trimmed.includes("\n")) {
+            var level = h[1].length + 1;   // # -> h2
+            out.push('<h' + level + '>' + _inlineMd(h[2]) + '</h' + level + '>');
+            return;
+        }
+
+        /* Horizontal rule. */
+        if (/^(-{3,}|\*{3,})$/.test(trimmed)) { out.push('<hr>'); return; }
+
+        /* Lists: bullet (-, *) or ordered (1.). Must hit every line of
+           the block for the block to count as a list. */
+        var lines = trimmed.split("\n");
+        var ulItems = lines.every(function (l) { return /^\s*[-*]\s+/.test(l); });
+        var olItems = lines.every(function (l) { return /^\s*\d+\.\s+/.test(l); });
+        if (ulItems) {
+            out.push('<ul>' + lines.map(function (l) {
+                return '<li>' + _inlineMd(l.replace(/^\s*[-*]\s+/, "")) + '</li>';
+            }).join("") + '</ul>');
+            return;
+        }
+        if (olItems) {
+            out.push('<ol>' + lines.map(function (l) {
+                return '<li>' + _inlineMd(l.replace(/^\s*\d+\.\s+/, "")) + '</li>';
+            }).join("") + '</ol>');
+            return;
+        }
+
+        /* Default: paragraph. Preserve internal newlines as <br>. */
+        out.push('<p>' + _inlineMd(trimmed).replace(/\n/g, '<br>') + '</p>');
+    });
+    return out.join("\n");
+}
+
+function _inlineMd(s) {
     return s
-        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/\n/g, '<br>');
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
 /* === Debug log === */
@@ -278,28 +336,6 @@ async function resolveCardCode(targetId, card) {
     return "# edit here\n";
 }
 
-/* Append (or re-use) a plot cell in a card's shared output-cells list.
-   Plots want to grow to a decent size, so we look for the LAST
-   .output-cell-plotly / .output-cell-svg and update that rather than
-   appending a fresh one — this is what makes timeline-slider scrubbing
-   feel like one live plot instead of a growing gallery. */
-function _upsertPlotCell(cells, mime, content) {
-    if (mime === "application/vnd.plotly+json") {
-        var plotData = JSON.parse(content);
-        var existing = cells.querySelector(".output-cell-plotly:last-of-type");
-        if (existing && window.Plotly) {
-            try {
-                Plotly.react(existing, plotData.data || [], plotData.layout || {}, { responsive: true });
-                return;
-            } catch (e) { /* fall through to append */ }
-        }
-    } else if (mime === "image/svg+xml") {
-        var existingSvg = cells.querySelector(".output-cell-svg:last-of-type");
-        if (existingSvg) { existingSvg.innerHTML = content; return; }
-    }
-    renderOutputCell({ mime: mime, content: content }, cells);
-}
-
 /* Unified play handler. Replaces both the old setupOutputPanel.run
    button and the vis refresh button. Knows how to inject time_step /
    field_name for viz cards, updates timeline + field selector from
@@ -319,6 +355,14 @@ async function executeCard(targetId, card, options) {
     container._running = true;
     _activeOutputTarget = targetId + "-output";
 
+    /* Clear the output cell list at the START of every run. The only way
+       a snippet publishes output is through display() (engine.py no longer
+       sniffs the scope for a `fig` variable); display callbacks fire
+       asynchronously while process_code runs and append cells into this
+       container, so clearing up front means "one plot in, one plot out"
+       even when the snippet produces multiple display() calls. */
+    cells.innerHTML = "";
+
     var runBtn = document.getElementById(targetId + "-run");
     var prevLabel = runBtn ? runBtn.innerHTML : "";
     if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = "&hellip;"; }
@@ -337,31 +381,25 @@ async function executeCard(targetId, card, options) {
         }
 
         /* Plotly is needed only when the snippet imports it; ensure it's
-           loaded before we get a result to render. For simple stdout-only
-           runs this is a no-op cache hit. */
+           loaded before the first display() callback arrives. For simple
+           stdout-only runs this is a no-op cache hit. */
         if (/\bplotly\b/.test(code)) await ensurePlotly();
 
         var cli = await getCli();
         var resultJson = await cli.runCode(code);
         var result = JSON.parse(resultJson);
 
-        /* Clear the cells on a fresh run but preserve the last plot cell
-           if the incoming result is going to re-use it (Plotly.react). */
-        var willReusePlot = (result.plot_type === "plotly" || result.plot_type === "matplotlib") &&
-                            result.plot_data &&
-                            !!cells.querySelector(".output-cell-plotly, .output-cell-svg");
-        if (!willReusePlot) cells.innerHTML = "";
-
+        /* stdout (print) lands here — display()-produced plots have
+           already been appended by the display callback during runCode. */
         if (result.output && result.output.trim()) {
             renderOutputCell({ mime: "text/plain", content: result.output }, cells);
         }
-        if (result.plot_type === "plotly" && result.plot_data) {
-            _upsertPlotCell(cells, "application/vnd.plotly+json", result.plot_data);
-        } else if (result.plot_type === "matplotlib" && result.plot_data) {
-            _upsertPlotCell(cells, "image/svg+xml", atob(result.plot_data));
-        }
         if (result.status === "error") {
-            renderOutputCell({ mime: "text/plain", content: result.output }, cells);
+            /* result.output already contains the traceback; but if it was
+               empty we still want a visible error marker. */
+            if (!result.output || !result.output.trim()) {
+                renderOutputCell({ mime: "text/plain", content: "(error — no message)" }, cells);
+            }
         }
         if (result.status === "cancelled") {
             renderOutputCell({ mime: "text/plain", content: "(cancelled)" }, cells);
@@ -951,15 +989,24 @@ function createCard(targetId, card, mgr, cardType) {
     if (hasMaximize) html += '<button class="icon-btn sm" id="' + targetId + '-max" title="Maximize">&#9723;</button>';
     html += '</div></div>';
 
+    /* A `has-vis` class keeps the play button visible on vis cards by
+       default (it's hidden elsewhere until the edit panel opens).
+       `edit-open` is toggled by exclusiveToggle when the editor
+       expandable opens; see the CSS rules under .card-play-btn. */
+    if (cardType === "vis") container.classList.add("has-vis");
+
     html += '<div class="card-body">';
     if (card.description) html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
 
-    /* --- Controls bar: per-frame controls + gear/edit/size --- */
+    /* --- Controls bar: gear / edit / play live together. Play is
+       hidden by default for non-vis cards; CSS reveals it only when
+       the edit panel is open, or when the card is a vis card. --- */
     html += '<div class="card-controls">';
     if (hasTimeline) html += '<div class="card-timeline"><input type="range" min="0" max="100" value="0" id="' + targetId + '-tl"><span id="' + targetId + '-ts">0</span></div>';
     if (cardType === "vis") html += '<select class="card-select" id="' + targetId + '-field-select" disabled title="Field"><option>\u2014</option></select>';
     if (hasGear) html += '<button class="icon-btn" id="' + targetId + '-gear" title="Parameters">&#9881;</button>';
     if (hasEdit) html += '<button class="icon-btn" id="' + targetId + '-edit" title="Edit code">&#9998;</button>';
+    if (hasPlay) html += '<button class="icon-btn card-play-btn" id="' + targetId + '-run" title="Run">&#9654;</button>';
     if (hasSizes) {
         html += '<select class="card-select" id="' + targetId + '-size">';
         card.mesh_sizes.forEach(function (s) { html += '<option>' + s + '</option>'; });
@@ -967,7 +1014,11 @@ function createCard(targetId, card, mgr, cardType) {
     }
     html += '</div>';
 
-    /* --- Output list (always present for code-bearing cards) --- */
+    /* --- Expandable panels (params + code), before the output cell. --- */
+    if (hasGear) html += '<div class="expandable" id="' + targetId + '-params"></div>';
+    if (hasEdit) html += '<div class="expandable card-code" id="' + targetId + '-editor-wrap"></div>';
+
+    /* --- Output list (always at the bottom for code-bearing cards). --- */
     if (hasPlay) {
         html += '<div class="card-output"><div class="output-cells" id="' + targetId + '-output">';
         /* Preview image appears initially when no output exists. Cleared on first run. */
@@ -977,25 +1028,21 @@ function createCard(targetId, card, mgr, cardType) {
         html += '</div></div>';
     }
 
-    if (hasGear) html += '<div class="expandable" id="' + targetId + '-params"></div>';
-    if (hasEdit) html += '<div class="expandable card-code" id="' + targetId + '-editor-wrap"></div>';
-
-    /* --- Play button under the code, not inside the output toolbar --- */
-    if (hasPlay) {
-        html += '<div class="card-play"><button class="play-btn" id="' + targetId + '-run" title="Run">&#9654;</button></div>';
-    }
-
     html += '</div>';   /* .card-body */
 
     container.innerHTML = html;
 
-    /* Selection: clicking anywhere on the card body selects it, except
-       when the click lands on an interactive control (buttons, selects,
-       expandables, timeline slider, play button, output cells). */
-    if (mgr) {
-        container.onclick = function (e) {
-            if (e.target.closest(".icon-btn,.expandable,select,.card-timeline,.card-play,.card-output,.play-btn")) return;
-            mgr.select(targetId);
+    /* Collapse / expand on title-bar click. Intentionally scoped to
+       the title only — clicking the card body no longer selects or
+       toggles anything, so users can interact with widgets below the
+       title without the whole card animating away. */
+    var titleEl = container.querySelector(".card-title");
+    if (titleEl) {
+        titleEl.style.cursor = "pointer";
+        titleEl.onclick = function (e) {
+            e.stopPropagation();
+            container.classList.toggle("collapsed");
+            if (mgr) mgr.select(targetId);
         };
     }
 
@@ -1098,15 +1145,29 @@ function createCard(targetId, card, mgr, cardType) {
             descWrap.innerHTML = descHtml;
             paramsDiv.appendChild(descWrap);
 
-            /* Shared: render description from markdown text */
+            /* Shared: render description from markdown text. If the card
+               had no baked-in description the descEl doesn't exist yet,
+               so create it on-demand above .card-controls so fetched
+               describe() output has somewhere to land. */
             var _descEditor = null;
             function _renderDescription(mdText) {
                 cState.description = mdText;
                 var descEl = container.querySelector(".card-description");
-                if (descEl) {
-                    descEl.innerHTML = miniMarkdown(mdText);
-                    if (window.renderMathInElement) renderMathInElement(descEl, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}] });
+                if (!descEl) {
+                    descEl = document.createElement("div");
+                    descEl.className = "card-description";
+                    var body = container.querySelector(".card-body");
+                    var firstControls = body ? body.querySelector(".card-controls") : null;
+                    if (body) body.insertBefore(descEl, firstControls || body.firstChild);
                 }
+                descEl.innerHTML = miniMarkdown(mdText);
+                if (window.renderMathInElement) renderMathInElement(descEl, {
+                    delimiters: [
+                        { left: "$$", right: "$$", display: true },
+                        { left: "$",  right: "$",  display: false },
+                    ],
+                    throwOnError: false,
+                });
             }
 
             if (hasClass && document.getElementById(targetId + "-desc-fetch")) {
@@ -1191,6 +1252,13 @@ function createCard(targetId, card, mgr, cardType) {
             setupAutoRun(targetId, card, cState, cardType, { timelineEl: tlSlider, fieldSelEl: fieldSelEl });
             editorLoaded = true;
         });
+        /* Mirror the edit panel's `.open` state onto the card itself so
+           CSS can reveal the play button (hidden by default). A
+           MutationObserver keeps the two in lock-step even if
+           exclusiveToggle's internal logic changes later. */
+        new MutationObserver(function () {
+            container.classList.toggle("edit-open", editorWrap.classList.contains("open"));
+        }).observe(editorWrap, { attributes: true, attributeFilter: ["class"] });
     }
 
     /* --- Unified play button: single handler for every card type. --- */

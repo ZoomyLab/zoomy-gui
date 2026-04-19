@@ -157,3 +157,8 @@ else:
 
 print(f"[plotly] {store.cell_type} dim={dim} field={field_name!r} "
       f"snaps={store.n_snapshots} cells={store.n_cells}")
+
+# Single output convention — display(fig) is the only way a snippet
+# publishes a plot; the GUI clears the output list at the start of
+# every run, so the figure shown is always just this one.
+display(fig)

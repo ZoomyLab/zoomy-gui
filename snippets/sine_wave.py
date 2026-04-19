@@ -7,3 +7,4 @@ y = [i**2 for i in x]
 
 fig = go.Figure(data=go.Scatter(x=x, y=y))
 fig.update_layout(title="Test Plot")
+display(fig)

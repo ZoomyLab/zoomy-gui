@@ -196,43 +196,17 @@ def process_code(code_string):
     old_stdout = sys.stdout
     sys.stdout = new_stdout
 
-    res = {"status": "success", "output": "", "plot_type": "none",
-           "plot_data": None, "store_meta": None}
+    # Single output convention: the only way a script produces a card-level
+    # output is by calling ``display(obj)``. No more fig-sniffing from the
+    # exec scope — keeps snippets uniform and makes the "one plot replaces
+    # the previous one" behaviour in the GUI a simple clear-then-append.
+    res = {"status": "success", "output": "", "store_meta": None}
     scope = sys._shallowflow_scope
 
     try:
         if _plt is not None:
-            scope["plt"] = _plt
-            _plt.close("all")
-        if _go is not None:
-            scope["go"] = _go
-        scope.pop("fig", None)
-
+            _plt.close("all")   # tidy up any stray mpl figures from the prior run
         exec(code_string, scope)
-
-        # Detect which plotting library the user's `fig` belongs to.
-        fig_obj = scope.get("fig")
-        is_plotly_fig = (fig_obj is not None
-                         and hasattr(fig_obj, "to_dict")
-                         and not hasattr(fig_obj, "savefig"))
-        is_mpl_fig = fig_obj is not None and hasattr(fig_obj, "savefig")
-        user_plt = scope.get("plt") or _plt
-
-        if is_plotly_fig:
-            res["plot_type"] = "plotly"
-            res["plot_data"] = json.dumps(fig_obj.to_dict(), cls=NumpyEncoder)
-        elif is_mpl_fig:
-            buf = io.BytesIO()
-            fig_obj.savefig(buf, format="svg", bbox_inches="tight")
-            buf.seek(0)
-            res["plot_type"] = "matplotlib"
-            res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
-        elif user_plt is not None and user_plt.get_fignums():
-            buf = io.BytesIO()
-            user_plt.gcf().savefig(buf, format="svg", bbox_inches="tight")
-            buf.seek(0)
-            res["plot_type"] = "matplotlib"
-            res["plot_data"] = base64.b64encode(buf.read()).decode("utf-8")
 
     except KeyboardInterrupt:
         # Cooperative cancel: the main thread wrote SIGINT into the shared
