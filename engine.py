@@ -190,6 +190,57 @@ def close_store():
 sys._shallowflow_scope["close_store"] = close_store
 
 
+# --- Autocomplete via jedi ------------------------------------------------
+# jedi is installed by the worker on first 'complete_code' call via
+# micropip (the worker owns async install — doing it from sync Python
+# is painful in Pyodide's single-threaded event loop). engine.py just
+# imports it and runs jedi.Script.complete().
+
+
+def complete_code(code: str, row: int, col: int, limit: int = 50) -> dict:
+    """Return jedi completions at (1-indexed row, 0-indexed col)."""
+    try:
+        import jedi
+    except ImportError:
+        return {"completions": [], "error": "jedi unavailable"}
+    try:
+        script = jedi.Script(code)
+        completions = script.complete(row, col)
+    except Exception as e:
+        return {"completions": [], "error": str(e)}
+
+    out = []
+    for c in completions[:limit]:
+        # signature(): jedi returns a list of Signature objects. Empty
+        # for non-callables; for functions/methods we pick the first.
+        sig_str = ""
+        try:
+            sigs = c.get_signatures()
+            if sigs:
+                sig_str = sigs[0].to_string()
+        except Exception:
+            pass
+        # docstring(): can be expensive for some symbols; cap it.
+        doc = ""
+        try:
+            doc = c.docstring(raw=True) or ""
+            if len(doc) > 2000:
+                doc = doc[:2000] + " […]"
+        except Exception:
+            pass
+        out.append({
+            "name": c.name,
+            "type": c.type,
+            "signature": sig_str,
+            "docstring": doc,
+            "module": getattr(c, "module_name", "") or "",
+        })
+    return {"completions": out}
+
+
+sys._shallowflow_scope["complete_code"] = complete_code
+
+
 # --- Main entry point for run_code messages from the worker. ---
 def process_code(code_string):
     new_stdout = _LiveStdout()

@@ -1,10 +1,14 @@
 /**
- * Autocomplete end-to-end: types.json is served next to the GUI, the
- * CLI fetches it, Ace is loaded with ext-language_tools, the Zoomy
- * completer is registered. Driving the completer with representative
- * code should return at least the headline use case (model.describe
- * param hints) and something sensible for `store.<TAB>` off a
- * SimulationStore assignment.
+ * End-to-end autocomplete via jedi in Pyodide.
+ *
+ * Drives the real CLI against a synthetic buffer:
+ *     from zoomy_core.model.models.sme_model import SMEInviscid
+ *     model = SMEInviscid(level=0)
+ *     model.describe<cursor>
+ *
+ * The first call pays the one-time micropip install of jedi (~2 MB);
+ * subsequent calls are ~30-100 ms. We bump the per-call timeout to
+ * accommodate the cold install.
  */
 const puppeteer = require("puppeteer");
 const { startServer, waitForWorkerReady } = require("./_lib");
@@ -24,55 +28,30 @@ async function main() {
     function fail(msg) { console.error("  \u2716 " + msg); failed = true; }
     function pass(msg) { console.log("  \u2713 " + msg); }
 
-    // Force Ace to load so registerZoomyCompleter() runs.
-    await page.evaluate(async () => { await ensureAce(); });
-
-    // Probe 1: types.json reachable via CLI.
-    const idx = await page.evaluate(async () => {
-        const cli = await getCli();
-        const data = await cli.storage.readJson("types.json");
-        const symbols = data.symbols || {};
-        const smeKey = Object.keys(symbols).find(k => k.endsWith(".SMEInviscid"));
-        return {
-            version: data.version,
-            nSymbols: Object.keys(symbols).length,
-            nImports: Object.keys(data.imports || {}).length,
-            smeInviscidKey: smeKey,
-            smeHasDescribe: !!(smeKey && symbols[smeKey].members && symbols[smeKey].members.describe),
-        };
+    console.log("Requesting completion via CLI (jedi micropip install on first call)…");
+    const out = await page.evaluate(async () => {
+        try {
+            const cli = await _readyCli();
+            const code =
+                "from zoomy_core.model.models.sme_model import SMEInviscid\n" +
+                "model = SMEInviscid(level=0)\n" +
+                "model.describe";
+            /* jedi uses 1-indexed rows; col 0-indexed. Cursor at end of
+               line 3, column = length of "model.describe". */
+            const res = await cli.complete(code, 3, "model.describe".length);
+            return { ok: true, res };
+        } catch (e) {
+            return { ok: false, err: String(e) };
+        }
     });
-    console.log("Type index probe:", JSON.stringify(idx));
-    if (!idx.version) fail("types.json missing or malformed");
-    if (idx.nSymbols < 10) fail("suspiciously few symbols (" + idx.nSymbols + ")");
-    else pass(idx.nSymbols + " symbols indexed");
-    if (!idx.smeHasDescribe) fail("SMEInviscid.describe not indexed");
-    else pass("SMEInviscid.describe is in the index");
-
-    // Probe 2: drive our registered Zoomy completer directly.
-    const completions = await page.evaluate(async () => {
-        const completer = window._zoomyCompleter;
-        if (!completer) return { error: "completer not registered" };
-        const session = ace.createEditSession(
-            'from zoomy_core.model.models.sme_model import SMEInviscid\n' +
-            'model = SMEInviscid(level=0)\n' +
-            'model.describe'
-        );
-        session.setMode("ace/mode/python");
-        const fakeEditor = { getSession: () => session };
-        const pos = { row: 2, column: "model.describe".length };
-        return await new Promise((resolve) => {
-            completer.getCompletions(fakeEditor, session, pos, "describe", (err, list) => {
-                resolve({ list: list || [], err: err && String(err) });
-            });
-        });
-    });
-    if (completions.error) { fail(completions.error); completions.list = []; }
-    const list = completions.list || [];
-    console.log("Completions for `model.<…>`: " + list.length);
-    const methodNames = list.map(c => c.caption).sort();
-    console.log("  top 10:", methodNames.slice(0, 10).join(", "));
-    if (list.some(c => c.caption === "describe")) pass("model.describe is offered");
-    else fail("describe not in completions (got " + list.length + " items)");
+    if (!out.ok) { fail("cli.complete threw: " + out.err); }
+    else {
+        const comps = (out.res && out.res.completions) || [];
+        console.log("  " + comps.length + " completions; first 5:", comps.slice(0, 5).map(c => c.name).join(", "));
+        if (!comps.length) fail("no completions returned");
+        if (!comps.some(c => c.name === "describe")) fail("`describe` missing from completions");
+        else pass("jedi returned `describe` for model.<cursor>");
+    }
 
     await browser.close();
     await srv.close();
