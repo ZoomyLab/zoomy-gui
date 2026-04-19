@@ -10,6 +10,7 @@
     "test:widgets": "node test_param_widgets.js",
     "test:session": "node test_session_roundtrip.js",
     "test:url": "node test_url_autoload.js",
+    "test:autocomplete": "node test_autocomplete.js",
     "test:sim": "node test_run_sim_flow.js",
     "test:perf": "node test_perf.js",
     "test:visual": "node test_visual_regression.js",
