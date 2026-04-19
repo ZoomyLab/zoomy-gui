@@ -955,22 +955,28 @@ var sessionMgr = new CardManager("sessions", {
 
 function createSession(name) {
     var id = "session-" + Date.now();
-    /* Snapshot current session before creating new one */
-    if (_project) _project.sessions.snapshotSession(_project);
-    sessionMgr.add({ id: id, title: name, description: "Simulation session." });
-    /* Register in core.js SessionManager. The new session starts with
-       an EMPTY selections dict — it inherits no model/mesh/solver
-       from the previous session, so the user's next clicks on card
-       manager do not accidentally reuse the old pick. */
+    /* Snapshot the CURRENT session (if any) so its selections stick
+       before we switch away. Then push the new record with an empty
+       selections dict. DO NOT set activeId here — that would short-
+       circuit switchTo() when sessionMgr.select fires below, leaving
+       project.selections untouched (= still showing the old
+       session's picks). Instead we let the onSelect handler's
+       switchTo do the transition: snapshot OLD -> activeId = NEW ->
+       restoreSession(NEW) which clears project.selections and applies
+       the new (empty) session's selections. */
     if (_project) {
-        var session = { id: id, title: name, description: "Simulation session.", selections: {}, cardOverrides: {} };
+        _project.sessions.snapshotSession(_project);
+        var session = {
+            id: id, title: name, description: "Simulation session.",
+            selections: {}, cardOverrides: {},
+        };
         _project.sessions.sessions.push(session);
-        _project.sessions.activeId = id;
         /* Absorb any boot-phase log entries the moment a session
            exists (only relevant for the very first session). */
         _snapshotBootLog();
     }
-    sessionMgr.select(id);
+    sessionMgr.add({ id: id, title: name, description: "Simulation session." });
+    sessionMgr.select(id);   // ← triggers onSelect → switchTo → clean transition
 }
 
 function renderSessionSidebar() {
