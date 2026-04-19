@@ -14,12 +14,15 @@ const { startServer, waitForWorkerReady } = require("./_lib");
 
 async function snapshot(page) {
     return page.evaluate(() => {
-        const mgr = window.managers.model;
+        const m = (t) => window.managers[t] ? window.managers[t].selectedId : null;
         const log = document.getElementById("debug-log");
         return {
-            model: mgr ? mgr.selectedId : null,
+            model: m("model"),
+            mesh: m("mesh"),
+            solver: m("solver"),
             logLen: log ? log.textContent.length : 0,
             sessionId: _project && _project.sessions && _project.sessions.activeId,
+            btnDanger: document.getElementById("btn-run-sim").classList.contains("danger"),
         };
     });
 }
@@ -43,12 +46,21 @@ async function main() {
     const sessionA = await page.evaluate(() => _project.sessions.activeId);
     console.log("Session A:", sessionA);
     await page.evaluate(() => {
-        const mgr = window.managers.model;
-        mgr.select("card-" + mgr.cards[0].id);
+        ["model", "mesh", "solver"].forEach((t, i) => {
+            const mgr = window.managers[t];
+            mgr.select("card-" + mgr.cards[0].id);
+        });
+        _setRunningMode("pyodide");   // fake a running sim so Stop shows
+        setRunBtnState(true);
         logDebug("info", "MARK session A log");
     });
     const afterA = await snapshot(page);
     console.log("  after select in A:", JSON.stringify(afterA));
+    /* Sanity: A has model+mesh+solver selected, Stop button visible. */
+    const aBtn = await page.evaluate(() =>
+        document.getElementById("btn-run-sim").classList.contains("danger"));
+    if (!aBtn) fail("A's Stop button should be showing after _setRunningMode");
+    else pass("A shows Stop while its run is in flight");
 
     // --- Step 2: create session B ---------------------------------------
     await page.evaluate(() => createSession("Session B"));
@@ -64,6 +76,11 @@ async function main() {
     } else {
         pass("session B starts with no model selection");
     }
+    /* B's run button must be Run (not Stop) — A's run isn't B's run. */
+    const bBtn = await page.evaluate(() =>
+        document.getElementById("btn-run-sim").classList.contains("danger"));
+    if (bBtn) fail("B should show Run, not Stop (A's sim isn't B's)");
+    else pass("B shows Run, not Stop");
 
     // Log in B should NOT contain the A mark (different session => fresh log view)
     if (beforeBSelect.logLen > 0) {
