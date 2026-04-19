@@ -308,7 +308,11 @@ var _cliReady = null;
 
 function _onAdapterLog(msg) {
     logDebug(msg.level || "info", "[Worker] " + msg.msg);
-    if (msg.msg.indexOf("Loading") === 0 || msg.msg.indexOf("Installing") === 0) showToast(msg.msg);
+    /* Show as toast for coarse progress markers — booting the
+       runtime, loading a CDN script, installing a pip package. The
+       background_ready signal hides the toast when the final tier-2
+       install finishes. */
+    if (/^(Booting|Loading|Installing)\b/.test(msg.msg)) showToast(msg.msg);
 }
 
 function _onAdapterDisplay(cellOrJson) {

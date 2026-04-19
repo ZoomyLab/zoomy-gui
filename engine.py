@@ -197,8 +197,18 @@ sys._shallowflow_scope["close_store"] = close_store
 # imports it and runs jedi.Script.complete().
 
 
-def complete_code(code: str, row: int, col: int, limit: int = 50) -> dict:
-    """Return jedi completions at (1-indexed row, 0-indexed col)."""
+def complete_code(code: str, row: int, col: int, limit: int = 80) -> dict:
+    """Return jedi completions at (1-indexed row, 0-indexed col).
+
+    We combine two jedi APIs:
+      * Script.complete() — returns members / names valid at cursor.
+      * Script.get_signatures() — when the cursor is inside a
+        callable's parens, returns the callable's params. We splice
+        any missing param names in as type='param' completions so the
+        full keyword-arg list is in the initial response (otherwise
+        jedi sometimes omits params it thinks are positionally filled,
+        and the user has to type a prefix to discover them).
+    """
     try:
         import jedi
     except ImportError:
@@ -210,9 +220,17 @@ def complete_code(code: str, row: int, col: int, limit: int = 50) -> dict:
         return {"completions": [], "error": str(e)}
 
     out = []
+    seen_names = set()
+    def _key(name):
+        # jedi appends '=' to kwarg names ("assumptions=") but the
+        # signature-supplement below adds the bare name. Normalise on
+        # the bare name so we don't end up with both forms.
+        return (name or "").rstrip("=")
     for c in completions[:limit]:
-        # signature(): jedi returns a list of Signature objects. Empty
-        # for non-callables; for functions/methods we pick the first.
+        k = _key(c.name)
+        if k in seen_names:
+            continue
+        seen_names.add(k)
         sig_str = ""
         try:
             sigs = c.get_signatures()
@@ -220,7 +238,6 @@ def complete_code(code: str, row: int, col: int, limit: int = 50) -> dict:
                 sig_str = sigs[0].to_string()
         except Exception:
             pass
-        # docstring(): can be expensive for some symbols; cap it.
         doc = ""
         try:
             doc = c.docstring(raw=True) or ""
@@ -235,6 +252,42 @@ def complete_code(code: str, row: int, col: int, limit: int = 50) -> dict:
             "docstring": doc,
             "module": getattr(c, "module_name", "") or "",
         })
+
+    # --- Supplement: full param list when inside a call -------------
+    # jedi.complete() at `fn(<cursor>` sometimes returns only a subset
+    # of the callable's params (it scores positionally-plausible ones
+    # higher and trims the rest). get_signatures() always returns the
+    # full param list; we splice in any missing names so Ace's
+    # initial popup is comprehensive.
+    try:
+        signatures = script.get_signatures(row, col)
+    except Exception:
+        signatures = []
+    for sig in signatures:
+        sig_str = sig.to_string()
+        doc = ""
+        try:
+            doc = sig.docstring(raw=True) or ""
+            if len(doc) > 2000:
+                doc = doc[:2000] + " […]"
+        except Exception:
+            pass
+        for param in sig.params:
+            pname = (param.name or "").rstrip("=")
+            if not pname or pname in seen_names:
+                continue
+            seen_names.add(pname)
+            # Append '=' so Ace inserts the kwarg form ("strip_args=") and
+            # the cursor lands ready for the value — same convention jedi
+            # uses for the kwargs it does return from complete().
+            out.append({
+                "name": pname + "=",
+                "type": "param",
+                "signature": sig_str,
+                "docstring": doc,
+                "module": "",
+            })
+
     return {"completions": out}
 
 

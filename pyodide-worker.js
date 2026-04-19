@@ -141,7 +141,7 @@ var _jediPromise = null;
 function installJedi() {
     if (_jediPromise) return _jediPromise;
     _jediPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing jedi in background…" });
+        postMessage({ type: "log", level: "info", msg: "Installing jedi (autocomplete) in background…" });
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["jedi"]);
