@@ -126,6 +126,22 @@ function installPlotly() {
     return _plotlyPromise;
 }
 
+var _jediPromise = null;
+function installJedi() {
+    if (_jediPromise) return _jediPromise;
+    _jediPromise = (async function () {
+        postMessage({ type: "log", level: "info", msg: "Installing jedi (first autocomplete)…" });
+        try {
+            var mp = py.pyimport("micropip");
+            await mp.install(["jedi"]);
+            postMessage({ type: "log", level: "info", msg: "jedi ready" });
+        } catch (e) {
+            postMessage({ type: "log", level: "warn", msg: "jedi failed: " + (e.message || e) });
+        }
+    })();
+    return _jediPromise;
+}
+
 /* Regex sniffing of user code to pick which viz library to pull on demand.
    Matches `import matplotlib`, `from matplotlib`, and `matplotlib.use`. */
 var _MPL_RE = /\b(import\s+matplotlib|from\s+matplotlib|matplotlib\.)/;
@@ -201,6 +217,19 @@ onmessage = async function (e) {
             await ensureVizDeps(msg.code);
             var result = py.globals.get("process_code")(msg.code);
             postMessage({ type: "result", id: msg.id, data: result });
+
+        } else if (msg.cmd === "complete_code") {
+            /* Autocomplete via jedi. First call micropip-installs jedi
+               (~2 MB; 3-5 s on a warm Pyodide); subsequent calls are
+               cache hits and resolve in 30-100 ms. */
+            await installExec();
+            await installJedi();
+            var completions = py.globals.get("complete_code")(msg.code, msg.row, msg.col);
+            /* Pyodide proxies Python dicts as PyProxy objects; convert
+               to a plain JS value before posting. */
+            var converted = completions.toJs ? completions.toJs({ dict_converter: Object.fromEntries }) : completions;
+            if (completions.destroy) completions.destroy();
+            postMessage({ type: "result", id: msg.id, data: converted });
 
         } else if (msg.cmd === "open_hdf5") {
             /* Point the store at an HDF5 file already on Pyodide's VFS
