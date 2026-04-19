@@ -369,7 +369,16 @@ onmessage = async function (e) {
      *
      * All four installers are promise-guarded, so concurrent callers
      * attach to the in-flight install instead of starting a duplicate. */
-    installJedi();              // highest-priority tier 2
-    installZoomyPlotting();
-    installMatplotlib();
+    /* Fire tier-2 installs, then post background_ready once they all
+       resolve so the main thread can hide the "Installing…" toast.
+       Individual "… ready" log lines keep showing up in the debug
+       pane as each install completes. */
+    Promise.all([
+        installJedi(),              // highest-priority tier 2
+        installZoomyPlotting(),
+        installMatplotlib(),
+    ]).then(function () {
+        postMessage({ type: "log", level: "info", msg: "All background dependencies ready" });
+        postMessage({ type: "background_ready" });
+    });
 })();
