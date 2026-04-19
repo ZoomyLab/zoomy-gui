@@ -98,20 +98,178 @@ function _inlineMd(s) {
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
-/* === Debug log === */
-var _debugLines = [];
+/* === Per-session runtime state ===
+ *
+ * Each session carries its own log, run-state, and (lazy-created)
+ * Pyodide worker. The global module only knows "which session is
+ * active"; everything else is looked up through _sessionRuntime(session).
+ *
+ * The very first session re-uses the worker that app boot already
+ * created (no double cold-boot). Every subsequent session creates a
+ * fresh worker the first time it tries to run code — 30-ish second
+ * boot tax paid once per session, paid lazily. Sessions are truly
+ * independent: their VFS, installed packages, Pyodide runtime state
+ * are isolated because the workers are physically separate. */
+
+function _activeSession() {
+    return (_project && _project.sessions) ? _project.sessions.active() : null;
+}
+
+function _sessionRuntime(session) {
+    if (!session) return null;
+    if (!session._runtime) {
+        session._runtime = {
+            log: [],          // [{ts, level, msg}, ...] scoped to this session
+            runningMode: null,
+            activeJob: null,
+            currentPyRunId: null,
+            pyodide: null,    // assigned on first runCode in this session
+        };
+    }
+    return session._runtime;
+}
+
+/* The boot-time PyodideAdapter exists before any session does. The
+   first session to run code "claims" it — that session avoids the
+   ~30 s cold-boot tax. Every subsequent session lazy-creates its own
+   Worker on first run, so its Python state / VFS / installed packages
+   are independent of every other session's. */
+var _bootAdapterClaimed = false;
+
+/* Wrapper over getCli() that, for any backend-touching operation,
+   first ensures the active session owns a PyodideAdapter (lazy-
+   creating a fresh worker when the session hadn't claimed one yet)
+   and swaps the CLI's pyodide pointer to it. The rest of the code
+   keeps using cli.pyodide / cli.runCode as before. */
+async function _readyCli() {
+    var cli = await getCli();
+    var session = _activeSession();
+    if (session) {
+        await _ensureSessionPyodide(session);
+        cli.pyodide = _sessionRuntime(session).pyodide;
+    }
+    return cli;
+}
+
+/* Lazy-assign a PyodideAdapter to a session. The first call for the
+   first-ever session reuses the boot-time adapter (no extra ~30 s
+   Pyodide cold boot). Every subsequent session creates its own
+   Worker, so its Python state — VFS, installed packages, solver
+   state — is fully isolated. A cooperative-cancel SharedArrayBuffer
+   is allocated per adapter so Stop in session A can't accidentally
+   interrupt a run in session B. */
+async function _ensureSessionPyodide(session) {
+    if (!session) return null;
+    var rt = _sessionRuntime(session);
+    if (rt.pyodide) return rt.pyodide;
+    var cli = await getCli();
+
+    if (!_bootAdapterClaimed) {
+        _bootAdapterClaimed = true;
+        rt.pyodide = cli.pyodide;    // boot-time adapter
+        logDebug("info", "Session '" + session.title + "' claimed the boot Pyodide worker");
+    } else {
+        logDebug("info", "Session '" + session.title + "' — spawning a fresh Pyodide worker (isolated VFS + runtime)…");
+        showToast("Booting worker for '" + session.title + "' (~30s)…");
+        var mod = await import("./zoomy_cli/browser.mjs");
+        var ib = null;
+        if (typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated) {
+            ib = new SharedArrayBuffer(1);
+        }
+        var adapter = new mod.PyodideAdapter({
+            workerUrl: "pyodide-worker.js",
+            interruptBuffer: ib,
+            onLog: _onAdapterLog,
+            onDisplay: _onAdapterDisplay,
+            onReady: function () { hideToast(); logDebug("info", "Worker for '" + session.title + "' ready"); },
+        });
+        adapter._ensureWorker();
+        adapter._sessionInterruptBuffer = ib;
+        adapter._sessionInterruptView = ib ? new Uint8Array(ib) : null;
+        rt.pyodide = adapter;
+    }
+    return rt.pyodide;
+}
+
+/* Called after sessionMgr swaps sessions. Swaps CLI's active Pyodide
+   adapter, re-renders the debug-log panel and the run button from the
+   arriving session's runtime state. */
+function _applySessionRuntime() {
+    var session = _activeSession();
+    var rt = _sessionRuntime(session);
+
+    /* Swap the CLI to this session's worker. If the session hasn't
+       claimed one yet, leave cli.pyodide alone — _readyCli() (called
+       from every Pyodide-bound action) will lazy-create it on first
+       use so the user doesn't pay a cold-boot cost just for switching
+       a tab. */
+    if (_cli && rt && rt.pyodide) _cli.pyodide = rt.pyodide;
+
+    /* Re-render the debug log for the arriving session. */
+    var el = document.getElementById("debug-log");
+    if (el && rt) {
+        el.innerHTML = "";
+        rt.log.forEach(function (entry) { _appendLogLine(el, entry); });
+        el.scrollTop = el.scrollHeight;
+    }
+
+    /* Re-render run-button state + dashboard summary. */
+    _runningMode = rt ? rt.runningMode : null;
+    _activeJob = rt ? rt.activeJob : null;
+    _currentPyRunId = rt ? rt.currentPyRunId : null;
+    setRunBtnState(!!_runningMode);
+    if (rt && rt.runningMode === "server" && rt.activeJob) {
+        updateDashboardJob({ job_id: rt.activeJob.jobId, status: "running" });
+    } else if (rt && rt.runningMode === "pyodide") {
+        updateDashboardJob({ job_id: "pyodide", status: "running" });
+    } else {
+        updateDashboardJob();   // idle
+    }
+}
+
+function _appendLogLine(el, entry) {
+    var color = entry.level === "error" ? "#dc2626" : entry.level === "warn" ? "#d97706" : "var(--c-muted)";
+    el.innerHTML += '<div style="color:' + color + '">[' + entry.ts + '] ' + entry.level.toUpperCase() + ': ' + entry.msg.replace(/</g, "&lt;") + '</div>';
+}
+
+/* === Debug log ===
+ * Before sessions exist (boot phase), logs go into _bootLog. Once a
+ * session is active, logs live in session._runtime.log. */
+var _bootLog = [];
 function logDebug(level, msg) {
     var ts = new Date().toLocaleTimeString();
-    _debugLines.push({ ts: ts, level: level, msg: msg });
-    if (_debugLines.length > 200) _debugLines.shift();
+    var entry = { ts: ts, level: level, msg: msg };
+
+    /* Route into the active session's log so switching sessions swaps
+       the log view. Before any session exists (app boot) fall back to
+       the shared _bootLog; the first session created absorbs that
+       backlog via snapshotBootLog(). */
+    var session = _activeSession();
+    var rt = session ? _sessionRuntime(session) : null;
+    var log = rt ? rt.log : _bootLog;
+    log.push(entry);
+    if (log.length > 300) log.shift();
+
     var el = document.getElementById("debug-log");
     if (el) {
-        var color = level === "error" ? "#dc2626" : level === "warn" ? "#d97706" : "var(--c-muted)";
-        el.innerHTML += '<div style="color:' + color + '">[' + ts + '] ' + level.toUpperCase() + ': ' + msg.replace(/</g, "&lt;") + '</div>';
+        _appendLogLine(el, entry);
         el.scrollTop = el.scrollHeight;
     }
     if (level === "error") console.error("[zoomy]", msg);
     else console.log("[zoomy]", msg);
+}
+
+/* Pull any log lines recorded before the first session existed (app
+   boot) into the now-active session's log. Called once when
+   _project.sessions.active() returns a value for the first time. */
+function _snapshotBootLog() {
+    var session = _activeSession();
+    if (!session) return;
+    var rt = _sessionRuntime(session);
+    if (_bootLog.length) {
+        rt.log = _bootLog.concat(rt.log);
+        _bootLog = [];
+    }
 }
 
 /* === Isomorphic CLI façade (Phase 3) =====================================
@@ -385,7 +543,7 @@ async function executeCard(targetId, card, options) {
            stdout-only runs this is a no-op cache hit. */
         if (/\bplotly\b/.test(code)) await ensurePlotly();
 
-        var cli = await getCli();
+        var cli = await _readyCli();    // scope runCode to the active session's worker
         var resultJson = await cli.runCode(code);
         var result = JSON.parse(resultJson);
 
@@ -759,20 +917,36 @@ async function checkUrlProject() {
 var sessionMgr = new CardManager("sessions", {
     onSelect: function () {
         if (_project) {
-            /* Snapshot departing session, restore arriving session in core.js */
+            /* Snapshot departing session, restore arriving session in core.js. */
             var arriving = sessionMgr.selectedId;
             _project.sessions.switchTo(arriving, _project);
-            /* Sync UI managers with restored selections */
+
+            /* Sync UI managers with restored selections. Every tab's
+               manager must match the arriving session exactly — tabs
+               NOT in the arriving session's selections get cleared so
+               the previous session's selection doesn't bleed through. */
             var sel = _project.selections.toDict();
-            Object.keys(sel).forEach(function (tab) {
-                if (managers[tab]) managers[tab].select(sel[tab]);
+            Object.keys(managers).forEach(function (tab) {
+                var mgr = managers[tab];
+                if (!mgr) return;
+                if (sel[tab]) {
+                    mgr.select(sel[tab]);
+                } else {
+                    mgr.selectedId = null;
+                    mgr.updateUI();
+                }
             });
+
             /* Refresh open editors with restored card state */
             Object.keys(_project.cardState.cards).forEach(function (cardId) {
                 var cEl = document.getElementById(cardId);
                 var cs = _project.cardState.cards[cardId];
                 if (cEl && cEl._editor && cs) cEl._editor.setValue(cs.code || "", -1);
             });
+
+            /* Per-session UI state (log + run status + worker) gets
+               swapped in by the session-runtime helpers below. */
+            _applySessionRuntime();
         }
         renderSessionSidebar();
         renderDashboardSessionCard();
@@ -784,11 +958,17 @@ function createSession(name) {
     /* Snapshot current session before creating new one */
     if (_project) _project.sessions.snapshotSession(_project);
     sessionMgr.add({ id: id, title: name, description: "Simulation session." });
-    /* Register in core.js SessionManager */
+    /* Register in core.js SessionManager. The new session starts with
+       an EMPTY selections dict — it inherits no model/mesh/solver
+       from the previous session, so the user's next clicks on card
+       manager do not accidentally reuse the old pick. */
     if (_project) {
-        var session = { id: id, title: name, description: "Simulation session.", selections: _project.selections.toDict(), cardOverrides: {} };
+        var session = { id: id, title: name, description: "Simulation session.", selections: {}, cardOverrides: {} };
         _project.sessions.sessions.push(session);
         _project.sessions.activeId = id;
+        /* Absorb any boot-phase log entries the moment a session
+           exists (only relevant for the very first session). */
+        _snapshotBootLog();
     }
     sessionMgr.select(id);
 }
@@ -1214,7 +1394,7 @@ function createCard(targetId, card, mgr, cardType) {
                     var btn = this;
                     logDebug("info", "Fetching describe() for " + card["class"] + "...");
                     try {
-                        var _cliRef = await getCli();
+                        var _cliRef = await _readyCli();   // active session's worker
                         var desc = await _cliRef.describeModel(card["class"], card.init || {});
                         logDebug("info", "describe() returned " + (desc ? desc.length : 0) + " chars");
                         /* Put into editor (if open) — the editor's on("change") triggers render */
@@ -1261,7 +1441,7 @@ function createCard(targetId, card, mgr, cardType) {
             }));
         } else if (hasClass) {
             try {
-                var _cliRef = await getCli();
+                var _cliRef = await _readyCli();    // active session's worker
                 var sj = await _cliRef.extractParams(card["class"], card.init || {});
                 var parsed = JSON.parse(sj);
                 paramsDiv.appendChild(renderParamWidgets(parsed, function (n, v) {
@@ -1340,6 +1520,22 @@ var _simStatus = { state: "idle", lastFinished: null, lastJobId: null, runCount:
 var _runningMode = null;         // null | "pyodide" | "server"
 var _currentPyRunId = null;      // id of the in-flight run_code message
 
+/* Setters that write through to the active session's runtime so session
+   switches preserve "what's running". Direct assignments to the globals
+   would leave the session runtime stale; use these helpers instead. */
+function _setRunningMode(v) {
+    _runningMode = v;
+    var rt = _sessionRuntime(_activeSession()); if (rt) rt.runningMode = v;
+}
+function _setActiveJob(v) {
+    _activeJob = v;
+    var rt = _sessionRuntime(_activeSession()); if (rt) rt.activeJob = v;
+}
+function _setCurrentPyRunId(v) {
+    _currentPyRunId = v;
+    var rt = _sessionRuntime(_activeSession()); if (rt) rt.currentPyRunId = v;
+}
+
 function setRunBtnState(isRunning) {
     var btn = document.getElementById("btn-run-sim");
     if (!btn) return;
@@ -1383,7 +1579,7 @@ function stopSimulation() {
                 logDebug("warn", "Cancel request failed: " + (err.message || err));
             });
         }
-        _activeJob = null;
+        _setActiveJob(null);
     }
 
     /* On the cooperative-cancel path the worker is still alive and will
@@ -1391,8 +1587,8 @@ function stopSimulation() {
        existing run handler resets state when it arrives, so we let it do
        that and only clean up here for the terminate / server paths. */
     if (mode === "server" || (mode === "pyodide" && !_pyInterruptView)) {
-        _runningMode = null;
-        _currentPyRunId = null;
+        _setRunningMode(null);
+        _setCurrentPyRunId(null);
         _simStatus.state = "idle";
         _simStatus.progressHtml = "";
         updateDashboardStatus();
@@ -1521,7 +1717,15 @@ function createDashboard(panel) {
         variant: "log",
         titleActions: [{
             id: "debug-clear", icon: "&#10005;", title: "Clear",
-            onclick: function () { _debugLines = []; var el = document.getElementById("debug-log"); if (el) el.innerHTML = ""; }
+            onclick: function () {
+                /* Clear only the ACTIVE session's log — other sessions
+                   keep their history. */
+                var rt = _sessionRuntime(_activeSession());
+                if (rt) rt.log = [];
+                _bootLog = [];
+                var el = document.getElementById("debug-log");
+                if (el) el.innerHTML = "";
+            }
         }],
         slots: [{ type: "log", id: "debug-log" }]
     }, null);
@@ -1565,7 +1769,18 @@ function buildCardsTab(panel, tab) {
         /* Viz cards stay expanded so users can compare multiple plots
            side-by-side. Mesh/model/solver tabs keep single-selection behaviour. */
         collapseUnselected: true,
-        onSelect: function () { mgr.updateUI(); updateDashboardSummary(); }
+        onSelect: function (selectedId) {
+            mgr.updateUI();
+            updateDashboardSummary();
+            /* Every user click on a card is authoritative for the
+               current session's selections dict. Without this sync the
+               session-snapshot (triggered when leaving the session)
+               sees stale data and the selection is lost. */
+            if (_project && _project.selections) {
+                if (selectedId) _project.selections.select(tab.id, selectedId);
+                else _project.selections.select(tab.id, null);
+            }
+        }
     });
     managers[tab.id] = mgr;
 
@@ -1857,12 +2072,13 @@ document.addEventListener("DOMContentLoaded", function () {
             logDebug("info", "Code:\n" + code.substring(0, 500));
             showToast("Running via Pyodide...");
             updateDashboardJob({ job_id: "pyodide", status: "running" });
-            _runningMode = "pyodide";
+            var runSession = _activeSession();      // capture the owning session
+            _setRunningMode("pyodide");
             var runId = "run-" + Date.now();
-            _currentPyRunId = runId;
+            _setCurrentPyRunId(runId);
             setRunBtnState(true);
 
-            getCli().then(function (cli) {
+            _readyCli().then(function (cli) {
                 return cli.runCode(code);
             }).then(function (resultJson) {
                 /* Late returns from a cancelled run get ignored; the stop
@@ -1895,10 +2111,23 @@ document.addEventListener("DOMContentLoaded", function () {
                 /* Re-arm the shared interrupt flag so the next run starts
                    clean (Pyodide clears it internally on each exec start,
                    but the explicit reset keeps intent visible). */
-                if (_pyInterruptView) _pyInterruptView[0] = 0;
-                _runningMode = null;
-                _currentPyRunId = null;
-                setRunBtnState(false);
+                /* Clear runtime state on the OWNING session — not
+                   necessarily the currently-active one (user may have
+                   switched sessions while the sim was running). */
+                var runRt = runSession && _sessionRuntime(runSession);
+                /* resetInterrupt on the ADAPTER that actually ran —
+                   per-session workers each own their own interrupt
+                   buffer; the shared _pyInterruptView belongs only to
+                   the default adapter. */
+                var _runAdapter = runRt && runRt.pyodide;
+                if (_runAdapter && _runAdapter.resetInterrupt) _runAdapter.resetInterrupt();
+                else if (_pyInterruptView) _pyInterruptView[0] = 0;
+                if (runRt) { runRt.runningMode = null; runRt.currentPyRunId = null; }
+                if (_activeSession() === runSession) {
+                    _setRunningMode(null);
+                    _setCurrentPyRunId(null);
+                    setRunBtnState(false);
+                }
             });
             return;
         }
@@ -1922,17 +2151,20 @@ document.addEventListener("DOMContentLoaded", function () {
         logDebug("info", "Submitting job to " + tag + " (" + _cliGetUrlForTag(tag) + ")");
         logDebug("info", "Case: " + JSON.stringify(zoomyCase).substring(0, 200));
         showToast("Submitting job...");
-        _runningMode = "server";
+        _setRunningMode("server");
         setRunBtnState(true);
         try {
-            var cli = await getCli();
+            /* submitCase writes the HDF5 into Pyodide's VFS — bind it
+               to the active session's worker so the result lands in
+               session-scoped storage. */
+            var cli = await _readyCli();
             var jobId = null;
             var outcome = await cli.submitCase({
                 tag: tag,
                 case: zoomyCase,
                 onStatus: function (status) {
                     if (!_activeJob && status.job_id) {
-                        _activeJob = { jobId: status.job_id, tag: tag, startTime: Date.now() };
+                        _setActiveJob({ jobId: status.job_id, tag: tag, startTime: Date.now() });
                         jobId = status.job_id;
                         logDebug("info", "Job submitted: " + jobId);
                         showToast("Job " + jobId + " running...");
@@ -1958,7 +2190,7 @@ document.addEventListener("DOMContentLoaded", function () {
             showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
             updateDashboardJob({ job_id: "?", status: "failed" });
         } finally {
-            _activeJob = null; _runningMode = null; setRunBtnState(false);
+            _setActiveJob(null); _setRunningMode(null); setRunBtnState(false);
         }
     };
 
