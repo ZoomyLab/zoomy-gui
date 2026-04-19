@@ -18,8 +18,79 @@ function loadScript(src) {
         document.head.appendChild(s);
     });
 }
-function showToast(msg) { var t = document.getElementById("loading-toast"); if (t) { t.style.display = "block"; t.textContent = msg; } }
-function hideToast() { var t = document.getElementById("loading-toast"); if (t) t.style.display = "none"; }
+/* === Toast stack ===
+   Small notification manager that renders into #toast-stack. Multiple
+   toasts can coexist; each has a stable id so updates morph in place
+   instead of replacing. Progress→confirmation is ONE toast's lifecycle
+   (show sticky → update with success kind, non-sticky ttl), not two.
+   Unrelated events stack as separate rows.
+
+   API:
+     toast.show({id?, text, kind?, sticky?, ttl?})  -> id
+     toast.update(id, {text?, kind?, sticky?, ttl?})
+     toast.dismiss(id)
+     toast.info(text, opts)
+     toast.success(text, opts)    auto-dismisses 2.5s by default
+     toast.error(text, opts)      sticky by default; caller dismisses
+
+   Legacy showToast(msg)/hideToast() are shims onto a single default
+   slot so existing call sites keep working unchanged. */
+var toast = (function () {
+    var _byId = Object.create(null);   // id -> {el, timer}
+    var _seq = 0;
+    function _stack() { return document.getElementById("toast-stack"); }
+    function _clearTimer(entry) { if (entry && entry.timer) { clearTimeout(entry.timer); entry.timer = null; } }
+    function _applyKind(el, kind) { el.className = "toast" + (kind ? " toast-" + kind : ""); }
+    function show(opts) {
+        opts = opts || {};
+        var id = opts.id || ("t" + (++_seq));
+        var stack = _stack();
+        if (!stack) return id;
+        var entry = _byId[id];
+        if (entry) {
+            if (opts.text !== undefined) entry.el.textContent = opts.text;
+            _applyKind(entry.el, opts.kind);
+            _clearTimer(entry);
+        } else {
+            var el = document.createElement("div");
+            el.textContent = opts.text || "";
+            _applyKind(el, opts.kind);
+            stack.appendChild(el);
+            entry = { el: el, timer: null };
+            _byId[id] = entry;
+        }
+        var sticky = !!opts.sticky;
+        var ttl = opts.ttl || (sticky ? 0 : 3000);
+        if (!sticky && ttl > 0) {
+            entry.timer = setTimeout(function () { dismiss(id); }, ttl);
+        }
+        return id;
+    }
+    function update(id, opts) { opts = opts || {}; opts.id = id; return show(opts); }
+    function dismiss(id) {
+        var entry = _byId[id];
+        if (!entry) return;
+        _clearTimer(entry);
+        entry.el.classList.add("toast-leaving");
+        var el = entry.el;
+        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 200);
+        delete _byId[id];
+    }
+    function _merge(a, b) { var o = {}; for (var k in a) o[k] = a[k]; if (b) for (var j in b) o[j] = b[j]; return o; }
+    function info(text, o)    { return show(_merge({text: text}, o)); }
+    function success(text, o) { return show(_merge({text: text, kind: "success", ttl: 2500}, o)); }
+    function error(text, o)   { return show(_merge({text: text, kind: "error", sticky: true}, o)); }
+    return { show: show, update: update, dismiss: dismiss, info: info, success: success, error: error };
+})();
+window.toast = toast;
+
+/* Legacy shims — old call sites write to a single "__default__" slot.
+   This preserves today's clobber-the-one-toast behaviour for code
+   paths that haven't been migrated to explicit ids yet (worker install
+   log spam, job submission messages, etc.) while new code can use
+   toast.show({id:"..."}) to stack independently. */
+function showToast(msg) { toast.show({ id: "__default__", text: msg, sticky: true }); }
+function hideToast()    { toast.dismiss("__default__"); }
 
 /* Minimal markdown → HTML.
  * Handles: headers (# .. ####), bold, italic, inline code, fenced code
@@ -385,13 +456,19 @@ getCli();
    by the time the user clicks anything, autocomplete is fully live. */
 ensureAce();
 
-/* When jedi is installed AND Ace is loaded, flash an explicit
-   "Autocomplete ready" confirmation so the user knows Ctrl-Space is
-   live — the one thing background_ready alone doesn't communicate. */
+/* Autocomplete has its own toast slot (id:"autocomplete"), separate
+   from the default slot the worker install-log spam writes to. That
+   way the "Setting up autocomplete…" message stays visible through
+   the whole setup (jedi install + Ace CDN load) and morphs to a
+   "Autocomplete ready" success on completion — one toast, one
+   lifecycle. */
+toast.show({ id: "autocomplete", text: "Setting up autocomplete…", sticky: true });
 Promise.all([_jediReady, window._aceReady]).then(function () {
-    showToast("Autocomplete ready");
-    setTimeout(hideToast, 2000);
+    toast.update("autocomplete", { text: "Autocomplete ready", kind: "success", sticky: false, ttl: 1800 });
     logDebug("info", "Autocomplete ready (jedi + Ace)");
+}, function (err) {
+    toast.update("autocomplete", { text: "Autocomplete setup failed", kind: "error" });
+    logDebug("error", "Autocomplete setup failed: " + (err && err.message || err));
 });
 
 /* No more pyCall / runCode / extractParams wrappers in app.js — every
@@ -2185,7 +2262,7 @@ document.addEventListener("DOMContentLoaded", function () {
         var modelSel = managers.model && managers.model.selectedId;
         var meshSel = managers.mesh && managers.mesh.selectedId;
         var solverSel = managers.solver && managers.solver.selectedId;
-        if (!modelSel || !meshSel || !solverSel) { showToast("Select model, mesh, and solver first"); setTimeout(hideToast, 2000); return; }
+        if (!modelSel || !meshSel || !solverSel) { toast.info("Select model, mesh, and solver first", { ttl: 2500 }); return; }
 
         var modelCard = managers.model.cards.find(function (c) { return "card-" + c.id === modelSel; });
         var meshCard = managers.mesh.cards.find(function (c) { return "card-" + c.id === meshSel; });
@@ -2267,17 +2344,17 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
                 if (cancelled) {
                     logDebug("info", "Simulation cancelled by user");
-                    showToast("Simulation stopped"); setTimeout(hideToast, 2000);
+                    toast.info("Simulation stopped", { ttl: 2000 });
                     updateDashboardJob({ job_id: "pyodide", status: "cancelled" });
                 } else {
                     logDebug("info", "Pyodide result received");
-                    showToast("Simulation complete!"); setTimeout(hideToast, 3000);
+                    toast.success("Simulation complete!");
                     updateDashboardJob({ job_id: "pyodide", status: "complete" });
                 }
             }).catch(function (err) {
                 if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
                 logDebug("error", "Pyodide error: " + (err.message || err));
-                showToast("Error — see Log"); setTimeout(hideToast, 3000);
+                toast.error("Simulation error — see Log");
                 updateDashboardJob({ job_id: "pyodide", status: "failed" });
             }).finally(function () {
                 if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
@@ -2310,7 +2387,7 @@ document.addEventListener("DOMContentLoaded", function () {
                the user can still inspect params/code; running it is
                what we refuse — loud and visible, not a silent toast. */
             logDebug("error", "Cannot run: backend '" + tag + "' is not connected. Connect to a server that provides the '" + tag + "' solver first.");
-            showToast("Backend '" + tag + "' not connected"); setTimeout(hideToast, 3000);
+            toast.error("Backend '" + tag + "' not connected");
             return;
         }
 
@@ -2323,7 +2400,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         logDebug("info", "Submitting job to " + tag + " (" + _cliGetUrlForTag(tag) + ")");
         logDebug("info", "Case: " + JSON.stringify(zoomyCase).substring(0, 200));
-        showToast("Submitting job...");
+        toast.show({ id: "job", text: "Submitting job…", sticky: true });
         _setRunningMode("server");
         setRunBtnState(true);
         try {
@@ -2340,7 +2417,7 @@ document.addEventListener("DOMContentLoaded", function () {
                         _setActiveJob({ jobId: status.job_id, tag: tag, startTime: Date.now() });
                         jobId = status.job_id;
                         logDebug("info", "Job submitted: " + jobId);
-                        showToast("Job " + jobId + " running...");
+                        toast.update("job", { text: "Job " + jobId + " running…", sticky: true });
                     }
                     updateDashboardJob(status);
                 },
@@ -2352,7 +2429,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 logDebug("info", "Job " + id + " complete (HDF5 "
                          + (outcome.result.hdf5 ? outcome.result.hdf5.byteLength + " bytes" : "missing")
                          + ")");
-                showToast("Ready to visualize!"); setTimeout(hideToast, 3000);
+                toast.update("job", { text: "Ready to visualize!", kind: "success", sticky: false, ttl: 3000 });
                 updateDashboardJob({ job_id: id, status: "complete" });
             } else if (outcome.result && outcome.result.status === "cancelled") {
                 logDebug("info", "Job " + (jobId || "?") + " cancelled");
@@ -2360,7 +2437,7 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         } catch (err) {
             logDebug("error", "Job failed: " + (err.message || err));
-            showToast("Job failed — see Log on Dashboard"); setTimeout(hideToast, 5000);
+            toast.update("job", { text: "Job failed — see Log on Dashboard", kind: "error", sticky: true });
             updateDashboardJob({ job_id: "?", status: "failed" });
         } finally {
             _setActiveJob(null); _setRunningMode(null); setRunBtnState(false);
