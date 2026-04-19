@@ -65,7 +65,8 @@ function SelectionManager() {
 }
 
 SelectionManager.prototype.select = function (tab, cardId) {
-    this.selections[tab] = cardId;
+    if (cardId === null || cardId === undefined) delete this.selections[tab];
+    else this.selections[tab] = cardId;
 };
 
 SelectionManager.prototype.selected = function (tab) {
@@ -74,6 +75,10 @@ SelectionManager.prototype.selected = function (tab) {
 
 SelectionManager.prototype.toDict = function () {
     return JSON.parse(JSON.stringify(this.selections));
+};
+
+SelectionManager.prototype.clear = function () {
+    this.selections = {};
 };
 
 /* === Session Manager (per-session selections + card overrides) === */
@@ -158,7 +163,9 @@ SessionManager.prototype.restoreSession = function (project) {
             if (overrides[cardId].code) cs.code = overrides[cardId].code;
         }
     });
-    /* Restore selections */
+    /* Restore selections — clear first so the departing session's
+       selections don't leak into the arriving one. */
+    project.selections.clear();
     var sel = session.selections || {};
     Object.keys(sel).forEach(function (tab) {
         project.selections.select(tab, sel[tab]);
