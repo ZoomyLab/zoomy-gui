@@ -13,36 +13,15 @@
  * "simulation failed silently".
  */
 const puppeteer = require("puppeteer");
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-
-const GUI_DIR = path.resolve(__dirname, "..");
-const PORT = 8766;
-const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
-    ".json": "application/json", ".py": "text/x-python", ".svg": "image/svg+xml" };
-
-function startServer() {
-    return new Promise(resolve => {
-        const server = http.createServer((req, res) => {
-            let urlPath = req.url.split("?")[0];
-            if (urlPath === "/") urlPath = "/index.html";
-            const filePath = path.join(GUI_DIR, urlPath);
-            if (!filePath.startsWith(GUI_DIR) || !fs.existsSync(filePath)) {
-                res.writeHead(404); res.end("Not Found"); return;
-            }
-            const ext = path.extname(filePath);
-            res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream",
-                                 "Cache-Control": "no-store" });
-            res.end(fs.readFileSync(filePath));
-        });
-        server.listen(PORT, "127.0.0.1", () => resolve(server));
-    });
-}
+const { startServer } = require("./_lib");
 
 async function main() {
     console.log("Starting server...");
-    const server = await startServer();
+    /* COI headers so SharedArrayBuffer is available (cooperative stop)
+       and so /zoomy_cli/ is served via the shared helper. */
+    const srv = await startServer({ port: 8766, coi: true });
+    const server = srv.server;
+    const serverUrl = srv.url;
 
     const browser = await puppeteer.launch({
         headless: true,
@@ -55,7 +34,7 @@ async function main() {
     page.on("pageerror", err => consoleLogs.push(`[pageerror] ${err.message}`));
 
     console.log("Loading GUI...");
-    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.goto(serverUrl, { waitUntil: "networkidle2", timeout: 60000 });
 
     let failed = false;
 

@@ -149,6 +149,39 @@ function runCode(code) {
     return pyCall("run_code", { code: code });
 }
 
+/* === Isomorphic CLI façade (Phase 3) =====================================
+ * app.js talks to backends through a single ZoomyCLI instance loaded from
+ * library/zoomy_cli/browser.mjs. The GUI is not itself a module, so we
+ * load the CLI via dynamic import() and expose it as `_cli` once ready;
+ * call-sites use `await getCli()` to ensure it's available.
+ *
+ * The migration is incremental: storage-type fetches (card manifests,
+ * tabs.json, snippets, registry) go through the CLI now; worker and
+ * HTTP-backend call-sites follow in subsequent commits. Until then the
+ * legacy pyCall/runCode/ZoomyBackend paths above continue to work. */
+var _cli = null;
+var _cliReady = null;
+function getCli() {
+    if (_cliReady) return _cliReady;
+    _cliReady = import("./zoomy_cli/browser.mjs").then(function (m) {
+        /* Construct the CLI without a worker for now — the Pyodide
+           adapter's message routing would collide with the legacy
+           attachPyWorkerHandlers. Later migration steps will switch the
+           worker over to the adapter and delete the legacy handler. */
+        _cli = new m.ZoomyCLI({
+            storage: new m.FetchStorage(),
+            pyodide: new m.PyodideAdapter({}),
+        });
+        window._cli = _cli;
+        return _cli;
+    }).catch(function (err) {
+        logDebug("warn", "ZoomyCLI failed to load: " + (err.message || err));
+        throw err;
+    });
+    return _cliReady;
+}
+getCli();
+
 /* === Ace + Plotly (still main thread, they need DOM access) === */
 
 function ensureAce() { if (!window._aceReady) window._aceReady = (async function () { logDebug("info","Loading Ace editor..."); showToast("Loading editor..."); await loadScript("https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js"); logDebug("info","Ace editor ready"); hideToast(); })(); return window._aceReady; }
@@ -253,8 +286,9 @@ async function resolveCardCode(targetId, card) {
     var defCode = cardDefaults[targetId] ? cardDefaults[targetId].code : "";
     if (cState && cState.code && cState.code !== defCode) return cState.code;
     if (card.snippet) {
-        try { return await fetch(card.snippet).then(function (r) { return r.text(); }); }
-        catch (e) { return "# snippet not found\n"; }
+        var cli = await getCli();
+        var text = await cli.fetchSnippet(card.snippet);
+        return text || "# snippet not found\n";
     }
     if (card.template) {
         var tpl = card.template;
@@ -1526,36 +1560,29 @@ var CARD_CATEGORIES = [
     { dir: "visualizations", tabId: "visualization" }
 ];
 
-async function _fetchJson(url) {
-    try {
-        var r = await fetch(url);
-        if (!r.ok) return [];
-        return await r.json();
-    } catch (e) { return []; }
-}
-
 async function _loadCategoryCards(dir) {
-    /* Load default + generated + user for one category, merge, deduplicate. */
-    var def  = await _fetchJson("cards/" + dir + "/default.json");
-    var gen  = await _fetchJson("cards/" + dir + "/generated.json");
-    var usr  = await _fetchJson("cards/" + dir + "/user.json");
+    /* Load default + generated + user for one category, merge, deduplicate.
+       Delegates to ZoomyCLI.listCards, which reads from FetchStorage with
+       the same order (default -> generated -> user) and silently skips
+       missing files. */
+    var cli = await getCli();
+    var list = await cli.listCards(dir);
     var seen = {};
     var merged = [];
-    [def, gen, usr].forEach(function (list) {
-        list.forEach(function (c) {
-            if (!seen[c.id]) { seen[c.id] = true; merged.push(c); }
-        });
+    list.forEach(function (c) {
+        if (!seen[c.id]) { seen[c.id] = true; merged.push(c); }
     });
     return merged;
 }
 
 async function _loadAllCards() {
     /* Load tab metadata + all category cards. Returns config object. */
-    var tabsMeta = await _fetchJson("cards/tabs.json");
+    var cli = await getCli();
+    var tabsMeta = (await cli.listTabs().catch(function () { return null; })) || {};
 
     /* Fallback: if tabs.json doesn't exist, use legacy cards.json */
     if (!tabsMeta || Object.keys(tabsMeta).length === 0) {
-        var legacy = await _fetchJson("cards.json");
+        var legacy = await cli.storage.tryReadJson("cards.json");
         if (legacy && legacy.tabs) return legacy;
         tabsMeta = {};
     }
@@ -1603,10 +1630,15 @@ async function initApp() {
     try {
         var config = await _loadAllCards();
 
-        /* Also try server registry for additional auto-discovered cards */
+        /* Also try server registry for additional auto-discovered cards.
+           Route through the CLI when a matching HTTP adapter is connected;
+           fall back to a direct fetch against the default discovery URL
+           so the existing single-URL probe still works before any
+           adapters are registered. */
         try {
             var regUrl = (ZoomyBackend.getUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
-            var registry = await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
+            var cliReg = await getCli().then(function (cli) { return cli.listRegistry("numpy"); }).catch(function () { return null; });
+            var registry = cliReg || await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
             if (registry && registry.tabs) {
                 var regTabs = {};
                 registry.tabs.forEach(function (t) { regTabs[t.id] = t; });
