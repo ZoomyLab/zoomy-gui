@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "node test_syntax.js && node test_card_interactions.js && node test_card_anatomy_v2.js && node test_param_widgets.js && node test_session_roundtrip.js && node test_url_autoload.js && node test_session_independence.js && node test_user_cards_crud.js && node test_user_cards_session_isolation.js && node test_run_sim_flow.js",
+    "test": "node test_syntax.js && node test_card_interactions.js && node test_card_anatomy_v2.js && node test_param_widgets.js && node test_session_roundtrip.js && node test_url_autoload.js && node test_session_independence.js && node test_user_cards_crud.js && node test_user_cards_session_isolation.js && node test_mesh_upload.js && node test_run_sim_flow.js",
     "test:user-cards": "node test_user_cards_crud.js && node test_user_cards_session_isolation.js",
+    "test:mesh-upload": "node test_mesh_upload.js",
     "test:syntax": "node test_syntax.js",
     "test:cards": "node test_card_interactions.js",
     "test:anatomy": "node test_card_anatomy_v2.js",
