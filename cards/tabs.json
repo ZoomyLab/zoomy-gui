@@ -34,8 +34,8 @@
         "title": "Matplotlib"
       },
       {
-        "id": "pyvista",
-        "title": "PyVista"
+        "id": "plotly",
+        "title": "Plotly"
       }
     ]
   }

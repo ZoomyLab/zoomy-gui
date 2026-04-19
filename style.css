@@ -86,8 +86,22 @@ button { margin-bottom: 0; }
 
 .main-content { padding: 1.2rem 1.5rem; }
 
-/* --- Tabs + subtabs --- */
-.tabs, .subtabs { display: flex; gap: 0; border-bottom: var(--bw2) solid var(--c-border); margin-bottom: 1rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+/* --- Tabs + subtabs ---
+   Horizontally scrollable when there are more tabs than fit. On narrow
+   viewports (mesh tab can generate 8+ subtabs from the catalog) the
+   user flicks/scrolls the bar; flex-shrink:0 on buttons keeps their
+   natural width so they don't squeeze into unreadable slivers. */
+.tabs, .subtabs {
+    display: flex; flex-wrap: nowrap; gap: 0;
+    border-bottom: var(--bw2) solid var(--c-border); margin-bottom: 1rem;
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+}
+.tabs::-webkit-scrollbar,
+.subtabs::-webkit-scrollbar { height: 6px; }
+.tabs::-webkit-scrollbar-thumb,
+.subtabs::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 3px; }
 .tab-btn, .subtab-btn {
     padding: 0.5rem 1rem; border: none; background: none;
     font-family: var(--f-sans); font-size: var(--fs-m); font-weight: 500;

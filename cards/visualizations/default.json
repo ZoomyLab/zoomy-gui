@@ -16,7 +16,7 @@
   },
   {
     "id": "vis-mesh-plotly",
-    "subtab": "pyvista",
+    "subtab": "plotly",
     "title": "Mesh Viewer (Plotly)",
     "snippet": "snippets/mesh_plotly.py",
     "description": "Unified 1D/2D/3D interactive mesh visualization using Plotly. Rotate, pan, zoom with mouse. Edit `field_name` and `colormap`, use the timeline slider for snapshots.",
@@ -24,7 +24,7 @@
   },
   {
     "id": "vis-sine",
-    "subtab": "pyvista",
+    "subtab": "plotly",
     "title": "Sine Wave (demo)",
     "snippet": "snippets/sine_wave.py",
     "preview": "previews/sine_wave.svg",

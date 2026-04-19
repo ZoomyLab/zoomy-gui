@@ -130,7 +130,7 @@ async function main() {
         if (!panel) return { ok: false, reason: "no visualization panel" };
         const btns = panel.querySelectorAll('.subtab-btn');
         if (!btns.length) return { ok: false, reason: "no subtab buttons in viz panel" };
-        // Find ids for the viz subtabs (matplotlib, pyvista).
+        // Find ids for the viz subtabs (matplotlib, plotly).
         const ids = Array.from(btns).map((b) => b.dataset.subtab).filter(Boolean);
         if (ids.length < 1) return { ok: false, reason: "no data-subtab attrs" };
         // Switch to a non-default subtab if possible.

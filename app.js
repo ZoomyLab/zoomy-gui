@@ -648,6 +648,10 @@ async function loadProject(file) {
         Object.keys(sel).forEach(function (tabId) {
             if (managers[tabId]) managers[tabId].select(sel[tabId]);
         });
+        /* If the restored selection in the active tab lives inside a
+           subtab, jump to that subtab so the card is visible. (On
+           later tab switches the same is done by switchTab.) */
+        if (activeTabId) _focusSubtabOfSelection(activeTabId);
 
         /* Refresh any open editors with restored card state */
         Object.keys(_project.cardState.cards).forEach(function (cardId) {
@@ -851,6 +855,22 @@ function switchTab(tabId) {
     activeTabId = tabId;
     document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.toggle("active", b.dataset.tab === tabId); });
     document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.toggle("active", p.id === "tab-" + tabId); });
+    _focusSubtabOfSelection(tabId);
+}
+
+/* When the user switches into a tab that has its selected card living
+   inside a specific subtab, jump to that subtab so the selection is
+   visible without the user having to hunt for it. No-op for tabs with
+   no subtabs or no current selection. */
+function _focusSubtabOfSelection(tabId) {
+    var mgr = managers[tabId];
+    if (!mgr || !mgr.selectedId) return;
+    var sel = mgr.cards.find(function (c) { return "card-" + c.id === mgr.selectedId; });
+    if (!sel || !sel.subtab) return;
+    var panel = document.getElementById("tab-" + tabId);
+    if (!panel) return;
+    var btn = panel.querySelector('.subtab-btn[data-subtab="' + sel.subtab + '"]');
+    if (btn && !btn.classList.contains("active")) btn.click();
 }
 
 /* === Exclusive toggle === */
