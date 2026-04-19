@@ -50,13 +50,22 @@ async function main() {
     await waitForWorkerReady(page);
 
     // Freeze any dynamic bits: dashboard "last finished" timestamp, the
-    // gui-version footer (commit hash varies per deploy).
+    // gui-version footer (commit hash varies per deploy), and the toast
+    // stack (the "Autocomplete ready" confirmation is timer-dismissed
+    // and would otherwise be caught mid-fade at random offsets).
     await page.evaluate(() => {
         const gv = document.getElementById("gui-version");
         if (gv) gv.textContent = "vBASELINE";
-        // Replace any "last finished" timestamp in the dashboard card.
         const statusEl = document.querySelector("#card-dash-run .card-description");
         if (statusEl) statusEl.dataset.visualFreeze = "1";
+        const toasts = document.getElementById("toast-stack");
+        if (toasts) toasts.style.display = "none";
+        // The dashboard debug log's contents are inherently time-
+        // dependent (timestamps, worker install ordering). Freeze it
+        // to a fixed placeholder so changes to install plumbing don't
+        // show up as false visual regressions on the dashboard tab.
+        const log = document.getElementById("debug-log");
+        if (log) log.innerHTML = '<div style="padding:8px;color:#888">[log masked for visual regression]</div>';
     });
 
     let failed = 0;

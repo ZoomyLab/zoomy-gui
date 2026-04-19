@@ -14,6 +14,10 @@
     <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
     <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <!-- marked renders Jupyter-style Description._repr_markdown_ output in
+         output cells. Kept as a CDN-defer script (no bundler) — renderer
+         falls back to the in-repo miniMarkdown if marked hasn't loaded. -->
+    <script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
     <script src="core.js"></script>
     <script src="param_widgets.js" defer></script>
     <script src="app.js" defer></script>
