@@ -2329,35 +2329,36 @@ function buildCardsTab(panel, tab) {
         createCard("card-" + c.id, c, mgr, tab.cardType || "model");
     });
 
-    /* `+ New card` button — prepended to the top of each card-bearing
-       tab so users see it immediately without scrolling past the card
-       list. For mesh tabs with auto-subtabs the action bar lives
-       inside the "create" subtab. _userCardTypeForTab returning null
-       signals a non-card tab (dashboard); skip it. */
+    /* "+ New card" placeholder — a minimal card (so CardManager's
+       grid/stack layout governs its spacing) that contains just the
+       action button(s) and nothing else. Lives AFTER all real cards
+       in the same container so it reads as "tack one more on the
+       end". For the mesh tab it carries both + New and Upload .msh.
+       _userCardTypeForTab returning null signals a non-card tab
+       (dashboard); skip it. */
     if (_userCardTypeForTab(tab.id)) {
-        var newBtnHost = panel;
+        var phHost = panel;
         if (hasSubtabs) {
             var createSubtab = cardContainer.querySelector("#subtab-create");
-            if (createSubtab) newBtnHost = createSubtab;
+            if (createSubtab) phHost = createSubtab;
         } else if (gridWrapper) {
-            newBtnHost = gridWrapper;
+            phHost = gridWrapper;
         }
-        /* Group both buttons into a flex row so they sit side-by-side
-           on wide viewports and wrap cleanly on narrow ones. */
-        var actionBar = document.createElement("div");
-        actionBar.className = "user-card-actions";
+        var placeholder = document.createElement("div");
+        placeholder.className = "card new-card-placeholder";
+        placeholder.id = "card-new-" + tab.id;
 
         var newBtn = document.createElement("button");
         newBtn.className = "new-card-btn";
         newBtn.id = "btn-new-card-" + tab.id;
         newBtn.innerHTML = "&#43; New " + (tab.cardType || "card") + " card";
-        newBtn.onclick = function () { newUserCard(tab.id); };
-        actionBar.appendChild(newBtn);
+        newBtn.onclick = function (e) { e.stopPropagation(); newUserCard(tab.id); };
+        placeholder.appendChild(newBtn);
 
-        /* Mesh tab gets an extra "Upload .msh" button alongside the
-           + New card button — uploading is usually the shorter path
-           to a working mesh card than hand-editing a snippet. */
         if (tab.cardType === "mesh") {
+            /* Uploading a .msh is usually the shorter path to a working
+               mesh card than hand-editing a snippet. Share the
+               placeholder with the + New card button. */
             var upInput = document.createElement("input");
             upInput.type = "file";
             upInput.accept = ".msh";
@@ -2366,20 +2367,18 @@ function buildCardsTab(panel, tab) {
             upInput.onchange = function () {
                 if (upInput.files && upInput.files[0]) {
                     uploadMeshFile(upInput.files[0]);
-                    upInput.value = "";  // let the user re-upload the same file next time
+                    upInput.value = "";  // re-upload of the same file next time
                 }
             };
             var upBtn = document.createElement("button");
             upBtn.className = "new-card-btn";
             upBtn.id = "btn-mesh-upload-" + tab.id;
             upBtn.innerHTML = "&#8682; Upload .msh\u2026";
-            upBtn.onclick = function () { upInput.click(); };
-            actionBar.appendChild(upInput);
-            actionBar.appendChild(upBtn);
+            upBtn.onclick = function (e) { e.stopPropagation(); upInput.click(); };
+            placeholder.appendChild(upInput);
+            placeholder.appendChild(upBtn);
         }
-
-        /* Prepend so it's always the first thing on the tab. */
-        newBtnHost.insertBefore(actionBar, newBtnHost.firstChild);
+        phHost.appendChild(placeholder);
     }
 
     /* No auto-selection on first render. Cards remain collapsed until the

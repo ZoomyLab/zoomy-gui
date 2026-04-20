@@ -491,18 +491,27 @@ button { margin-bottom: 0; }
     .card.maximized .editor-layout { flex-direction: column; }
 }
 
-/* Action bar at the TOP of each cards tab — prominent so users
-   spot the + New card / Upload .msh affordances without scrolling. */
-.user-card-actions {
+/* Placeholder card that lives at the end of each card-bearing tab and
+   hosts the + New card / Upload .msh action buttons. Sits in the same
+   flow as real cards so CardManager's grid/stack spacing applies, but
+   with a dashed outline signalling "this is an affordance, not data". */
+.card.new-card-placeholder {
+    border-style: dashed;
+    background: transparent;
+    padding: 1rem;
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin: 0 0 0.75rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--c-border);
+    align-items: center;
+    justify-content: center;
+    min-height: 56px;
+    /* No hover highlight on the card itself — the buttons inside
+       carry their own hover state. */
+    cursor: default;
+    box-shadow: none;
 }
+.card.new-card-placeholder:hover { border-color: var(--c-accent); }
 .new-card-btn {
-    display: block;
     flex: 1 1 200px;
     padding: 0.6rem 1rem;
     background: transparent;
