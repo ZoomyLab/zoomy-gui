@@ -2329,13 +2329,11 @@ function buildCardsTab(panel, tab) {
         createCard("card-" + c.id, c, mgr, tab.cardType || "model");
     });
 
-    /* `+ New card` button — lets users author their own. For mesh
-       tabs with auto-subtabs the button lives inside the "create"
-       subtab so the first thing a user sees on that tab is how to
-       add something. For flat tabs it hangs off the bottom of the
-       tab content. _userCardTypeForTab returning null signals that
-       the tab isn't a known card-bearing type (e.g. dashboard), in
-       which case we skip it. */
+    /* `+ New card` button — prepended to the top of each card-bearing
+       tab so users see it immediately without scrolling past the card
+       list. For mesh tabs with auto-subtabs the action bar lives
+       inside the "create" subtab. _userCardTypeForTab returning null
+       signals a non-card tab (dashboard); skip it. */
     if (_userCardTypeForTab(tab.id)) {
         var newBtnHost = panel;
         if (hasSubtabs) {
@@ -2344,16 +2342,21 @@ function buildCardsTab(panel, tab) {
         } else if (gridWrapper) {
             newBtnHost = gridWrapper;
         }
+        /* Group both buttons into a flex row so they sit side-by-side
+           on wide viewports and wrap cleanly on narrow ones. */
+        var actionBar = document.createElement("div");
+        actionBar.className = "user-card-actions";
+
         var newBtn = document.createElement("button");
         newBtn.className = "new-card-btn";
         newBtn.id = "btn-new-card-" + tab.id;
         newBtn.innerHTML = "&#43; New " + (tab.cardType || "card") + " card";
         newBtn.onclick = function () { newUserCard(tab.id); };
-        newBtnHost.appendChild(newBtn);
+        actionBar.appendChild(newBtn);
 
         /* Mesh tab gets an extra "Upload .msh" button alongside the
-           + New card button — uploading is usually the shorter path to
-           a working mesh card than hand-editing a snippet. */
+           + New card button — uploading is usually the shorter path
+           to a working mesh card than hand-editing a snippet. */
         if (tab.cardType === "mesh") {
             var upInput = document.createElement("input");
             upInput.type = "file";
@@ -2371,9 +2374,12 @@ function buildCardsTab(panel, tab) {
             upBtn.id = "btn-mesh-upload-" + tab.id;
             upBtn.innerHTML = "&#8682; Upload .msh\u2026";
             upBtn.onclick = function () { upInput.click(); };
-            newBtnHost.appendChild(upInput);
-            newBtnHost.appendChild(upBtn);
+            actionBar.appendChild(upInput);
+            actionBar.appendChild(upBtn);
         }
+
+        /* Prepend so it's always the first thing on the tab. */
+        newBtnHost.insertBefore(actionBar, newBtnHost.firstChild);
     }
 
     /* No auto-selection on first render. Cards remain collapsed until the
