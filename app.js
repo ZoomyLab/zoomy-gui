@@ -392,18 +392,10 @@ function _onAdapterLog(msg) {
        runtime, loading a CDN script, installing a pip package. The
        background_ready signal hides the toast when the final tier-2
        install finishes. */
-    if (/^(Booting|Loading|Installing)\b/.test(msg.msg)) showToast(msg.msg);
-    /* Surface jedi's zoomy_core indexing phase in the autocomplete
-       toast specifically — this 15-25 s parser warm-up is the reason
-       "Autocomplete ready" is delayed vs. just "jedi installed". Users
-       otherwise see "Setting up autocomplete…" frozen for 20 s with
-       no explanation. */
-    if (msg.msg.indexOf("Indexing zoomy_core") !== -1) {
-        toast.update("autocomplete", { text: "Indexing zoomy_core for autocomplete (~20 s)…", sticky: true });
-    }
-    /* Resolve the jedi gate when the worker announces the install is
-       done. Worker logs "jedi ready" (see installJedi in pyodide-worker.js). */
-    if (_resolveJediReady && msg.msg.indexOf("jedi ready") !== -1) {
+    if (/^(Booting|Loading|installing)\b/i.test(msg.msg)) showToast(msg.msg);
+    /* Resolve the autocomplete gate when the worker announces jedi + the
+       zoomy_core prime are done (worker logs "autocomplete ready"). */
+    if (_resolveJediReady && msg.msg.indexOf("autocomplete ready") !== -1) {
         _resolveJediReady();
         _resolveJediReady = null;
     }
@@ -1333,34 +1325,65 @@ async function loadProjectFromUrl(raw) {
 async function checkUrlProject() {
     var params = new URLSearchParams(window.location.search);
     var projectUrl = params.get("project");
-    if (!projectUrl) return;
-    logDebug("info", "Auto-loading project from URL: " + projectUrl);
-    showToast("Loading project...");
-    try {
-        await loadProjectFromUrl(projectUrl);
-        hideToast();
-        /* Auto-switch to specific session if requested */
-        var sessionName = params.get("session");
-        if (sessionName && _project) {
-            var target = _project.sessions.sessions.find(function (s) { return s.title === sessionName || s.id === sessionName; });
-            if (target) {
-                _project.sessions.switchTo(target.id, _project);
-                sessionMgr.selectedId = target.id;
-                renderSessionSidebar();
-                renderDashboardSessionCard();
-                var sel = _project.selections.toDict();
-                Object.keys(sel).forEach(function (tab) { if (managers[tab]) managers[tab].select(sel[tab]); });
+    if (projectUrl) {
+        logDebug("info", "Auto-loading project from URL: " + projectUrl);
+        showToast("Loading project...");
+        try {
+            await loadProjectFromUrl(projectUrl);
+            hideToast();
+            /* Auto-switch to specific session if requested */
+            var sessionName = params.get("session");
+            if (sessionName && _project) {
+                var target = _project.sessions.sessions.find(function (s) { return s.title === sessionName || s.id === sessionName; });
+                if (target) {
+                    _project.sessions.switchTo(target.id, _project);
+                    sessionMgr.selectedId = target.id;
+                    renderSessionSidebar();
+                    renderDashboardSessionCard();
+                    var sel = _project.selections.toDict();
+                    Object.keys(sel).forEach(function (tab) { if (managers[tab]) managers[tab].select(sel[tab]); });
+                }
             }
+            /* Auto-run if #run hash */
+            if (window.location.hash === "#run") {
+                logDebug("info", "Auto-running simulation (#run)");
+                document.getElementById("btn-run-sim").click();
+            }
+        } catch (err) {
+            logDebug("error", "Failed to load project from URL: " + err.message);
+            hideToast();
         }
-        /* Auto-run if #run hash */
-        if (window.location.hash === "#run") {
-            logDebug("info", "Auto-running simulation (#run)");
-            document.getElementById("btn-run-sim").click();
-        }
-    } catch (err) {
-        logDebug("error", "Failed to load project from URL: " + err.message);
-        hideToast();
     }
+    /* Open a specific view if the link asks for one. Runs whether or not a
+       project was loaded, and AFTER any load so the project's tabs/subtabs
+       and selections already exist. */
+    applyViewFromUrl(params);
+}
+
+/* Deep-link to a particular view: ?view=<tab>[&subview=<subtab>]. `view`
+   matches a top-level tab id (dashboard / model / mesh / solver /
+   visualization); `subview` matches a subtab inside it (e.g. a mesh
+   category). `tab` / `subtab` are accepted as aliases. Unknown values are
+   a no-op + warning so a stale link degrades gracefully. Values are
+   compared, not interpolated into a selector, so odd characters can't
+   break the lookup. */
+function applyViewFromUrl(params) {
+    var view = params.get("view") || params.get("tab");
+    if (!view) return;
+    var tabBtns = Array.prototype.slice.call(document.querySelectorAll(".tab-btn"));
+    if (!tabBtns.some(function (b) { return b.dataset.tab === view; })) {
+        logDebug("warn", "Link requested unknown view: " + view);
+        return;
+    }
+    switchTab(view);
+    var subview = params.get("subview") || params.get("subtab");
+    if (!subview) return;
+    var panel = document.getElementById("tab-" + view);
+    if (!panel) return;
+    var subBtns = Array.prototype.slice.call(panel.querySelectorAll(".subtab-btn"));
+    var sub = subBtns.find(function (b) { return b.dataset.subtab === subview; });
+    if (sub) sub.click();
+    else logDebug("warn", "Link requested unknown subview: " + subview);
 }
 
 /* === Session manager (cards in sidebar, full card on dashboard) === */
@@ -1639,8 +1662,8 @@ function createCard(targetId, card, mgr, cardType) {
     var hasClass    = !!card["class"];
     var hasLocal    = !!card._localParams;
     var hasGear     = true;
-    /* Preview: explicit path or auto-detect by convention previews/{id}.svg */
-    if (!card.preview) card._autoPreview = "previews/" + card.id + ".svg";
+    /* Preview: explicit path or auto-detect by convention previews/{id}.png */
+    if (!card.preview) card._autoPreview = "previews/" + card.id + ".png";
     var previewSrc  = card.preview || card._autoPreview;
 
     container.className = "card" + (hasPlay ? " has-code" : " slot-only");
@@ -1683,7 +1706,16 @@ function createCard(targetId, card, mgr, cardType) {
     container.classList.add("collapsed");
 
     html += '<div class="card-body">';
-    if (card.description) html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
+    if (cardType === "mesh" && card.preview) {
+        /* Mesh cards show their generated coarse-mesh image in the description
+           slot instead of text; clicking opens the full-size image (which the
+           browser can then download). Falls back to text if the image 404s. */
+        html += '<a class="mesh-preview-link" href="' + card.preview + '" target="_blank" rel="noopener" title="Open / download mesh image">' +
+                '<img class="mesh-preview-img" loading="lazy" decoding="async" src="' + card.preview + '" ' +
+                'onerror="this.parentNode.style.display=\'none\'"></a>';
+    } else if (card.description) {
+        html += '<div class="card-description">' + miniMarkdown(card.description) + '</div>';
+    }
 
     /* --- Controls bar: gear / edit / play live together. Play is
        hidden by default for non-vis cards; CSS reveals it only when
@@ -1848,7 +1880,10 @@ function createCard(targetId, card, mgr, cardType) {
             descWrap.className = "gear-desc-section";
             var descHtml = '<div class="gear-desc-toggle" id="' + targetId + '-desc-toggle">Description &#9662;</div>';
             if (hasClass && cardType === "model") {
-                descHtml += '<button class="btn btn-sm" id="' + targetId + '-desc-fetch" style="margin:0.3rem 0">Fetch from model.describe()</button>';
+                /* Disabled for now — model.describe() output isn't useful for
+                   the current cards. Kept (not removed) so re-enabling is just
+                   dropping the `disabled` attribute + the !disabled guard below. */
+                descHtml += '<button class="btn btn-sm" id="' + targetId + '-desc-fetch" style="margin:0.3rem 0" disabled title="Disabled for now">Fetch from model.describe()</button>';
             }
             descHtml += '<div class="gear-desc-editor" id="' + targetId + '-desc-ace" style="display:none"></div>';
             descWrap.innerHTML = descHtml;
@@ -1879,8 +1914,9 @@ function createCard(targetId, card, mgr, cardType) {
                 });
             }
 
-            if (hasClass && document.getElementById(targetId + "-desc-fetch")) {
-                document.getElementById(targetId + "-desc-fetch").onclick = async function () {
+            var _descFetchBtn = document.getElementById(targetId + "-desc-fetch");
+            if (hasClass && _descFetchBtn && !_descFetchBtn.disabled) {
+                _descFetchBtn.onclick = async function () {
                     this.textContent = "Loading...";
                     this.disabled = true;
                     var btn = this;
@@ -2774,6 +2810,84 @@ document.addEventListener("DOMContentLoaded", function () {
             logDebug("info", "Backend connected: " + adapter.tag + " at " + url);
         } else {
             logDebug("warn", "Backend not reachable: " + url);
+        }
+    };
+
+    /* --- Navbar dropdown menus (settings & account) ---
+       Each icon button toggles its panel; opening one closes the other.
+       A click anywhere else or Escape closes them. Clicks inside a panel
+       (typing a URL, ticking a box) are stopped so they don't self-close. */
+    /* The settings menu is a drill-down: a slim root list whose items each
+       reveal their own sub-view. Items/back-buttons carry data-goto; reset
+       to the root view each time the menu opens. */
+    var settingsPanel = document.getElementById("settings-dropdown");
+    function showSettingsView(name) {
+        if (!settingsPanel) return;
+        settingsPanel.querySelectorAll(".dropdown-view").forEach(function (v) {
+            v.hidden = v.dataset.view !== name;
+        });
+    }
+    if (settingsPanel) {
+        settingsPanel.querySelectorAll("[data-goto]").forEach(function (btn) {
+            btn.addEventListener("click", function (e) { e.stopPropagation(); showSettingsView(btn.dataset.goto); });
+        });
+    }
+
+    var navMenus = [
+        { btn: document.getElementById("btn-settings"), panel: settingsPanel, onOpen: function () { showSettingsView("root"); } },
+        { btn: document.getElementById("btn-user"),     panel: document.getElementById("user-dropdown") }
+    ].filter(function (m) { return m.btn && m.panel; });
+    function closeNavMenus(except) {
+        navMenus.forEach(function (m) {
+            if (m === except) return;
+            m.panel.hidden = true;
+            m.btn.classList.remove("open");
+            m.btn.setAttribute("aria-expanded", "false");
+        });
+    }
+    navMenus.forEach(function (m) {
+        m.btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            var willOpen = m.panel.hidden;
+            closeNavMenus(m);
+            m.panel.hidden = !willOpen;
+            m.btn.classList.toggle("open", willOpen);
+            m.btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+            if (willOpen && m.onOpen) m.onOpen();
+        });
+        m.panel.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
+    document.addEventListener("click", function () { closeNavMenus(null); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeNavMenus(null); });
+
+    /* --- Shareable link --- builds a deep link from the LIVE view/subview/
+       session (see checkUrlProject for the params these map to). An optional
+       hosted project .zip URL is appended when provided. */
+    function buildShareLink() {
+        var base = window.location.origin + window.location.pathname;
+        var parts = [];
+        var projInput = document.getElementById("share-project-url");
+        var proj = projInput && projInput.value.trim();
+        if (proj) parts.push("project=" + encodeURIComponent(proj));
+        if (activeTabId) parts.push("view=" + encodeURIComponent(activeTabId));
+        var panel = document.getElementById("tab-" + activeTabId);
+        var sub = panel && panel.querySelector(".subtab-btn.active");
+        if (sub && sub.dataset.subtab) parts.push("subview=" + encodeURIComponent(sub.dataset.subtab));
+        var sess = sessionMgr.cards.find(function (s) { return s.id === sessionMgr.selectedId; });
+        if (sess && sess.title) parts.push("session=" + encodeURIComponent(sess.title));
+        return base + (parts.length ? "?" + parts.join("&") : "");
+    }
+    var copyBtn = document.getElementById("btn-copy-link");
+    if (copyBtn) copyBtn.onclick = async function () {
+        var link = buildShareLink();
+        try {
+            await navigator.clipboard.writeText(link);
+            toast.success("Link copied to clipboard", { ttl: 2000 });
+            closeNavMenus(null);
+        } catch (err) {
+            /* Clipboard API is blocked outside secure contexts (and when perms
+               are denied) — fall back to a prompt so copying never silently fails. */
+            window.prompt("Copy this link:", link);
         }
     };
     document.getElementById("btn-run-sim").onclick = async function () {

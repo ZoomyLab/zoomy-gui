@@ -1,51 +1,37 @@
 [
   {
-    "id": "sme-l0",
-    "title": "SWE (SME L0)",
-    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
-    "init": {"level": 0},
-    "description": "Shallow water equations (depth-averaged, inviscid).\n\n$$\\partial_t \\begin{pmatrix} h \\\\ hu \\end{pmatrix} + \\nabla \\cdot \\mathbf{F}(\\mathbf{Q}) + \\mathbf{B}\\nabla\\mathbf{Q} = 0$$"
+    "id": "sme",
+    "title": "Shallow Moments (SME)",
+    "class": "zoomy_core.model.models.SME",
+    "init": {"level": 2, "dimension": 2},
+    "description": "**Shallow Moment Equations (SME).** Depth-averaged shallow flow that resolves a polynomial vertical velocity profile through `level` moments (Kowalski & Torrilhon). `level = 0` recovers the shallow-water equations; higher levels capture vertical shear. Hydrostatic.\n\nPre-basis bracket form (basis and stress closure not yet fixed):\n\n$$\\partial_t h + \\nabla\\cdot\\!\\int_b^s \\mathbf{u}\\,dz = 0$$\n\n$$\\partial_t\\langle u,\\varphi_k\\rangle + \\nabla\\cdot\\langle u\\,\\mathbf{u},\\varphi_k\\rangle - \\langle w\\,u,\\partial_z\\varphi_k\\rangle + \\tfrac{1}{\\rho}\\partial_x\\langle p,\\varphi_k\\rangle = \\tfrac{1}{\\rho}\\nabla\\cdot\\langle\\boldsymbol{\\tau}_x,\\varphi_k\\rangle - \\tfrac{1}{\\rho}\\langle\\tau_{xz},\\partial_z\\varphi_k\\rangle + B_k$$\n\n$$\\partial_t w + \\nabla\\cdot(w\\,\\mathbf{u}) + \\partial_z w^2 = -\\tfrac{1}{\\rho}\\partial_z p + \\tfrac{1}{\\rho}\\nabla\\cdot\\boldsymbol{\\tau}_z - g$$\n\nwith $\\langle\\,\\cdot\\,,\\varphi_k\\rangle=\\int_b^s(\\cdot)\\,\\varphi_k\\,dz$ and $k=0,\\dots,N$. SME closes the vertical balance hydrostatically; fixing the basis $\\varphi_k$ resolves the brackets into the modal system."
   },
   {
-    "id": "sme-l1",
-    "title": "SME L1",
-    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
-    "init": {"level": 1},
-    "description": "Shallow Moment Equations level 1 — vertical velocity profile.\n\n$$\\partial_t \\mathbf{Q} + \\nabla \\cdot \\mathbf{F} + \\mathbf{B}\\nabla\\mathbf{Q} = \\mathbf{S}$$"
+    "id": "mlsme",
+    "title": "Multi-Layer Shallow Moments (ML-SME)",
+    "class": "zoomy_core.model.models.MLSME",
+    "init": {"n_layers": 2, "level": 1, "dimension": 2},
+    "description": "**Multi-Layer Shallow Moment Equations (ML-SME).** `n_layers` surface-following layers, each a full SME moment column, coupled by an interface mass-flux closure $G$. Resolves strong vertical structure without going fully 3-D.\n\nPer-layer bracket form ($\\ell = 1,\\dots,n_\\text{layers}$):\n\n$$\\partial_t h_\\ell + \\nabla\\cdot\\!\\int_{z_{\\ell-1}}^{z_\\ell}\\!\\mathbf{u}\\,dz = G_{\\ell-1}-G_\\ell$$\n\n$$\\partial_t\\langle u,\\varphi_k\\rangle_\\ell + \\nabla\\cdot\\langle u\\,\\mathbf{u},\\varphi_k\\rangle_\\ell - \\langle w\\,u,\\partial_z\\varphi_k\\rangle_\\ell + \\tfrac{1}{\\rho}\\partial_x\\langle p,\\varphi_k\\rangle_\\ell = \\tfrac{1}{\\rho}\\nabla\\cdot\\langle\\boldsymbol{\\tau}_x,\\varphi_k\\rangle_\\ell - \\tfrac{1}{\\rho}\\langle\\tau_{xz},\\partial_z\\varphi_k\\rangle_\\ell + B_{k,\\ell}$$\n\nwhere $\\langle\\,\\cdot\\,,\\varphi_k\\rangle_\\ell$ integrates over layer $\\ell$ and the interface flux $G_\\ell$ couples neighbouring layers. Basis and closure unresolved."
   },
   {
-    "id": "sme-l2",
-    "title": "SME L2",
-    "class": "zoomy_core.model.models.sme_model.SMEInviscid",
-    "init": {"level": 2},
-    "description": "Shallow Moment Equations level 2 — higher-order vertical profile."
+    "id": "sigma3d",
+    "title": "3-D σ-coordinate (Sigma3D)",
+    "class": "zoomy_core.model.models.sigma3d.Sigma3D",
+    "init": {"dimension": 2},
+    "description": "**3-D σ-coordinate model (Sigma3D).** Keeps the full vertical velocity profile — no moment ansatz. A σ-map sends the free surface to a fixed boundary; the only unresolved object is the vertical integral. For genuinely 3-D vertical structure / full-stress runs (currently `dimension = 2`, i.e. $(t,x,\\zeta)$).\n\nConservative σ form (closure not yet fixed):\n\n$$\\partial_t h + \\partial_x(h u) + \\partial_\\zeta(h\\,\\omega) = 0$$\n\n$$\\partial_t(h u) + \\partial_x\\!\\big(h u^2 + \\tfrac{1}{2} g h^2\\big) + \\partial_\\zeta(h u\\,\\omega) + g h\\,\\partial_x b - e_x\\,g h - \\tfrac{1}{\\rho}\\partial_\\zeta\\tilde\\tau_{xz} = 0$$\n\nwith $\\zeta=(z-b)/h$, $z=b+h\\zeta$, and $h\\,\\omega = \\tilde w - \\partial_t z - \\tilde u\\,\\partial_x z$ satisfying $\\omega(0)=\\omega(1)=0$ (bed/surface kinematic BCs). The depth-mean velocity $U=\\int_0^1 \\tilde u\\,d\\zeta$ drives the height flux."
   },
   {
-    "id": "sme-viscous",
-    "title": "SME (Newtonian)",
-    "class": "zoomy_core.model.models.sme_model.SMEModel",
-    "init": {"level": 1},
-    "description": "Shallow Moment Equations with Newtonian viscosity and Navier slip."
+    "id": "kesme",
+    "title": "k-ε Shallow Moments (KESME)",
+    "class": "zoomy_core.model.models.KESME",
+    "init": {"level": 2, "turbulence_level": 1, "dimension": 2},
+    "description": "**k-ε Shallow Moment Equations (KESME).** SME augmented with two depth-resolved turbulence scalars $k,\\varepsilon$, transported at their own modal order and feeding an eddy-viscosity stress $\\tau=\\rho(\\nu+\\nu_t)\\partial_z u$. For turbulent open-channel flow needing a profile-aware closure.\n\nSame hydrostatic SME mass + moment-momentum system, plus two transported scalars (bracket form):\n\n$$\\partial_t\\langle k,\\varphi_k\\rangle + \\nabla\\cdot\\langle\\mathbf{u}\\,k,\\varphi_k\\rangle - \\langle w\\,k,\\partial_z\\varphi_k\\rangle - \\langle\\partial_z J_k,\\varphi_k\\rangle = \\langle\\nu_t(\\partial_z u)^2-\\varepsilon,\\varphi_k\\rangle$$\n\n$$\\partial_t\\langle \\varepsilon,\\varphi_k\\rangle + \\nabla\\cdot\\langle\\mathbf{u}\\,\\varepsilon,\\varphi_k\\rangle - \\langle w\\,\\varepsilon,\\partial_z\\varphi_k\\rangle - \\langle\\partial_z J_\\varepsilon,\\varphi_k\\rangle = \\big\\langle\\tfrac{\\varepsilon}{k}\\big(C_1\\nu_t(\\partial_z u)^2-C_2\\varepsilon\\big),\\varphi_k\\big\\rangle$$\n\nwith $\\nu_t=C_\\mu k^2/\\varepsilon$, $J_k=\\tfrac{\\nu_t}{\\sigma_k}\\partial_z k$, $J_\\varepsilon=\\tfrac{\\nu_t}{\\sigma_\\varepsilon}\\partial_z\\varepsilon$; projected through the same brackets and closed by quadrature."
   },
   {
-    "id": "vam",
-    "title": "VAM",
-    "class": "zoomy_core.model.models.vam_model.VAMModel",
-    "init": {"level": 1},
-    "description": "Viscous Alignment Model — non-hydrostatic shallow moments with vertical velocity."
-  },
-  {
-    "id": "advection",
-    "title": "Scalar Advection",
-    "class": "zoomy_core.model.models.advection_model.ScalarAdvection",
-    "init": {"dimension": 1},
-    "description": "Linear scalar advection.\n\n$$\\partial_t u + a \\partial_x u = 0$$"
-  },
-  {
-    "id": "advdiff",
-    "title": "Advection-Diffusion",
-    "class": "zoomy_core.model.models.advection_model.ScalarAdvectionDiffusion",
-    "init": {"dimension": 1, "nu": 0.01},
-    "description": "Scalar advection-diffusion (IMEX time integration).\n\n$$\\partial_t u + a \\partial_x u = \\nu \\partial_{xx} u$$"
+    "id": "qrkesme",
+    "title": "Positivity k-ε (QRKESME)",
+    "class": "zoomy_core.model.models.QRKESME",
+    "init": {"level": 2, "turbulence_level": 1, "dimension": 2},
+    "description": "**Positivity-preserving k-ε Shallow Moments (QRKESME).** Transports $s_k=\\sqrt{k}$ and $s_\\varepsilon=\\sqrt{\\varepsilon}$ (Fe et al.) so $k=s_k^2\\ge 0$ and $\\varepsilon=s_\\varepsilon^2\\ge 0$ hold by construction — curing the negative-$k$/$\\varepsilon$ blow-up during turbulence build-up. Preferred over KESME when robustness matters.\n\nSame SME mass + moment-momentum system, with the q-r transport (bracket form):\n\n$$\\partial_t\\langle s_k,\\varphi_k\\rangle + \\nabla\\cdot\\langle\\mathbf{u}\\,s_k,\\varphi_k\\rangle - \\langle w\\,s_k,\\partial_z\\varphi_k\\rangle - \\langle\\partial_z J_k,\\varphi_k\\rangle = \\big\\langle\\tfrac{\\nu_t}{\\sigma_k s_k}(\\partial_z s_k)^2 + \\tfrac{\\nu_t}{2 s_k}(\\partial_z u)^2 - \\tfrac{s_\\varepsilon^2}{2 s_k},\\varphi_k\\big\\rangle$$\n\n$$\\partial_t\\langle s_\\varepsilon,\\varphi_k\\rangle + \\nabla\\cdot\\langle\\mathbf{u}\\,s_\\varepsilon,\\varphi_k\\rangle - \\langle w\\,s_\\varepsilon,\\partial_z\\varphi_k\\rangle - \\langle\\partial_z J_\\varepsilon,\\varphi_k\\rangle = \\big\\langle\\tfrac{\\nu_t}{\\sigma_\\varepsilon s_\\varepsilon}(\\partial_z s_\\varepsilon)^2 + \\tfrac{C_1 C_\\mu s_k^2}{2 s_\\varepsilon}(\\partial_z u)^2 - \\tfrac{C_2 s_\\varepsilon^3}{2 s_k^2},\\varphi_k\\big\\rangle$$\n\nwith $k=s_k^2$, $\\varepsilon=s_\\varepsilon^2$, $\\nu_t=C_\\mu s_k^4/s_\\varepsilon^2$."
   }
 ]

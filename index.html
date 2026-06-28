@@ -28,9 +28,85 @@
         <button class="hamburger" id="hamburger">&#9776;</button>
         <h1 class="navbar-brand" id="navbar-brand">Zoomy</h1>
         <span class="backend-indicator connected" id="backend-indicator">numpy (pyodide)</span>
-        <div class="navbar-links">
-            <a href="#">Docs</a>
-            <a href="#">GitHub</a>
+        <div class="navbar-right">
+            <!-- Top-right nav links. Edit these two URLs to point wherever you
+                 want them on the Zoomy site. -->
+            <div class="navbar-links">
+                <a href="https://zoomylab.github.io/Zoomy/" target="_blank" rel="noopener">Docs</a>
+                <a href="https://github.com/ZoomyLab/Zoomy" target="_blank" rel="noopener">GitHub</a>
+            </div>
+
+            <!-- Settings & sharing menu (gear). Holds the backend URL config
+                 and the shareable-link generator. -->
+            <div class="nav-menu">
+                <button class="navbar-icon-btn" id="btn-settings" type="button" aria-label="Settings and sharing" aria-haspopup="true" aria-expanded="false" title="Settings &amp; sharing">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </button>
+                <div class="nav-dropdown" id="settings-dropdown" role="menu" hidden>
+                    <!-- Root: a slim list. Each item drills into its own view. -->
+                    <div class="dropdown-view" data-view="root">
+                        <button class="dropdown-item" type="button" data-goto="share">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+                            <span class="di-label">Share a link</span>
+                            <svg class="di-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                        <button class="dropdown-item" type="button" data-goto="backend">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                            <span class="di-label">Add backend</span>
+                            <svg class="di-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                    </div>
+
+                    <!-- Sub-view: share a link -->
+                    <div class="dropdown-view" data-view="share" hidden>
+                        <button class="dropdown-back" type="button" data-goto="root">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                            Share a link
+                        </button>
+                        <div class="dropdown-section">
+                            <p class="dropdown-hint">Copies a link that reopens the current view and session. To also auto-load a project, paste its hosted <code>.zip</code> URL.</p>
+                            <input class="sidebar-input" id="share-project-url" placeholder="Project .zip URL (optional)">
+                            <button class="sidebar-btn primary" id="btn-copy-link">Copy link to this view</button>
+                        </div>
+                    </div>
+
+                    <!-- Sub-view: add backend -->
+                    <div class="dropdown-view" data-view="backend" hidden>
+                        <button class="dropdown-back" type="button" data-goto="root">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                            Add backend
+                        </button>
+                        <div class="dropdown-section">
+                            <p class="dropdown-hint">In-browser numpy needs no backend. Point this at a local or remote Zoomy server to unlock the other solvers.</p>
+                            <input class="sidebar-input" id="backend-url" placeholder="http://localhost:8080" value="http://localhost:8080">
+                            <button class="sidebar-btn" id="btn-connect">Connect</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Account menu (person). Guest placeholder today; a real user
+                 system (sign in / register / cloud projects / cluster compute)
+                 is slated for later and hooks in here. -->
+            <div class="nav-menu">
+                <button class="navbar-icon-btn" id="btn-user" type="button" aria-label="Account" aria-haspopup="true" aria-expanded="false" title="Account">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                </button>
+                <div class="nav-dropdown" id="user-dropdown" role="menu" hidden>
+                    <div class="dropdown-section user-card">
+                        <div class="user-avatar">G</div>
+                        <div>
+                            <div class="user-name">Guest</div>
+                            <div class="dropdown-hint" style="margin:0">Not signed in</div>
+                        </div>
+                    </div>
+                    <div class="dropdown-section">
+                        <p class="dropdown-hint">Accounts are on the roadmap: sign in, keep your projects in the cloud, and run jobs on cluster compute. <span class="soon-badge">Planned</span></p>
+                        <button class="sidebar-btn" disabled>Sign in</button>
+                        <button class="sidebar-btn" disabled>Create account</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </nav>
 
@@ -41,11 +117,6 @@
                 <button class="sidebar-btn" id="btn-save">Save project</button>
                 <button class="sidebar-btn" id="btn-load">Load project</button>
                 <button class="sidebar-btn primary" id="btn-run-sim">&#9654; Run simulation</button>
-            </div>
-            <div class="sidebar-section">
-                <h3>Backend</h3>
-                <input class="sidebar-input" id="backend-url" placeholder="http://localhost:8080" value="http://localhost:8080">
-                <button class="sidebar-btn" id="btn-connect">Connect</button>
             </div>
             <div class="sidebar-section">
                 <h3>Sessions</h3>
@@ -61,9 +132,17 @@
     </div>
 
     <footer class="footer">
-        <a href="https://zoomylab.github.io/Zoomy/" target="_blank" rel="noopener">Homepage</a>
+        <a href="https://zoomylab.github.io/Zoomy/legal.html" target="_blank" rel="noopener">Legal</a>
         <span>&copy; 2026 Zoomy</span>
         <span id="gui-version" class="gui-version" title="Build version"></span>
+
+        <!-- Institute logo, pinned to the bottom-right corner of the footer.
+             PLACEHOLDER: drop your own PNG in as mbd-logo.png (next to this
+             file) to swap the image, and set the href below to whatever page
+             the logo should link to. -->
+        <a class="footer-logo" href="https://www.mbd.rwth-aachen.de/" target="_blank" rel="noopener" title="MBD — RWTH Aachen University">
+            <img src="mbd-logo.png" alt="MBD — RWTH Aachen University">
+        </a>
     </footer>
 
     <div id="toast-stack" aria-live="polite"></div>

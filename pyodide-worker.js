@@ -95,7 +95,7 @@ function installExec() {
 function installMatplotlib() {
     if (_mplPromise) return _mplPromise;
     _mplPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing matplotlib in background…" });
+        postMessage({ type: "log", level: "info", msg: "installing matplotlib" });
         try {
             await py.loadPackage(["matplotlib"]);
             postMessage({ type: "log", level: "info", msg: "matplotlib ready" });
@@ -109,7 +109,7 @@ function installMatplotlib() {
 function installPlotly() {
     if (_plotlyPromise) return _plotlyPromise;
     _plotlyPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing plotly (optional — first plotly viz)…" });
+        postMessage({ type: "log", level: "info", msg: "installing plotly" });
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["plotly"]);
@@ -128,7 +128,7 @@ var _meshioPromise = null;
 function installMeshio() {
     if (_meshioPromise) return _meshioPromise;
     _meshioPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing meshio (for uploaded .msh files)…" });
+        postMessage({ type: "log", level: "info", msg: "installing meshio" });
         try {
             var mp = py.pyimport("micropip");
             /* meshio's submodules import `rich` unconditionally (for
@@ -148,11 +148,11 @@ var _zpPromise = null;
 function installZoomyPlotting() {
     if (_zpPromise) return _zpPromise;
     _zpPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing zoomy-plotting in background…" });
+        postMessage({ type: "log", level: "info", msg: "installing plotting" });
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["zoomy-plotting"]);
-            postMessage({ type: "log", level: "info", msg: "zoomy-plotting ready" });
+            postMessage({ type: "log", level: "info", msg: "plotting ready" });
         } catch (e) {
             postMessage({ type: "log", level: "warn", msg: "zoomy-plotting failed: " + (e.message || e) });
         }
@@ -176,6 +176,7 @@ function installZoomyPlotting() {
 var _parsoCacheMounted = false;
 async function mountParsoCache() {
     if (_parsoCacheMounted) return;
+    postMessage({ type: "log", level: "info", msg: "updating cache" });
     try {
         var path = "/home/pyodide/.cache/parso";
         py.FS.mkdirTree(path);
@@ -184,9 +185,9 @@ async function mountParsoCache() {
             py.FS.syncfs(true, function (err) { err ? reject(err) : resolve(); });
         });
         _parsoCacheMounted = true;
-        postMessage({ type: "log", level: "info", msg: "Parso cache mounted (IDBFS) — will populate from prior visits" });
+        postMessage({ type: "log", level: "info", msg: "cache ready" });
     } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "Parso cache mount failed (cache will be in-memory only): " + (e.message || e) });
+        postMessage({ type: "log", level: "warn", msg: "cache unavailable (in-memory): " + (e.message || e) });
     }
 }
 async function persistParsoCache() {
@@ -195,9 +196,8 @@ async function persistParsoCache() {
         await new Promise(function (resolve, reject) {
             py.FS.syncfs(false, function (err) { err ? reject(err) : resolve(); });
         });
-        postMessage({ type: "log", level: "info", msg: "Parso cache persisted to IndexedDB" });
     } catch (e) {
-        postMessage({ type: "log", level: "warn", msg: "Parso cache persist failed: " + (e.message || e) });
+        postMessage({ type: "log", level: "warn", msg: "cache update failed: " + (e.message || e) });
     }
 }
 
@@ -205,7 +205,7 @@ var _jediPromise = null;
 function installJedi() {
     if (_jediPromise) return _jediPromise;
     _jediPromise = (async function () {
-        postMessage({ type: "log", level: "info", msg: "Installing jedi (autocomplete) in background…" });
+        postMessage({ type: "log", level: "info", msg: "installing autocomplete" });
         try {
             var mp = py.pyimport("micropip");
             await mp.install(["jedi"]);
@@ -222,20 +222,16 @@ function installJedi() {
            + parsing every transitive module). On a warm-cache run
            (IDBFS populated from a prior visit) it's <1 s. Either way,
            subsequent user completions are ~50 ms. */
-        postMessage({ type: "log", level: "info", msg: "Indexing zoomy_core for autocomplete…" });
         try {
             await installExec();   // pulls engine.py in so complete_code is available
             var priming = [
-                "from zoomy_core.model.models.sme_model import SMEInviscid",
-                "model = SMEInviscid(level=0)",
+                "from zoomy_core.model.models import SME",
+                "model = SME(level=0)",
                 "model.",
             ].join("\n");
-            var t0 = performance.now();
             /* 3rd line, column after "model." */
             var res = py.globals.get("complete_code")(priming, 3, 6);
             if (res && res.destroy) res.destroy();
-            var dt = ((performance.now() - t0) / 1000).toFixed(1);
-            postMessage({ type: "log", level: "info", msg: "zoomy_core indexed in " + dt + "s" });
         } catch (e) {
             /* Priming failure is non-fatal — autocomplete still works,
                just with a slow first call. Log it so we notice in CI. */
@@ -243,7 +239,7 @@ function installJedi() {
         }
         /* Persist whatever parso just parsed so the NEXT visit starts warm. */
         await persistParsoCache();
-        postMessage({ type: "log", level: "info", msg: "jedi ready" });
+        postMessage({ type: "log", level: "info", msg: "autocomplete ready" });
     })();
     return _jediPromise;
 }
@@ -445,7 +441,7 @@ onmessage = async function (e) {
     } catch (e) {}
 
     await installExec();
-    postMessage({ type: "log", level: "info", msg: "Python runtime ready" });
+    postMessage({ type: "log", level: "info", msg: "runtime ready" });
     postMessage({ type: "fully_ready" });
 
     /* --- Install tiers ---
@@ -485,7 +481,7 @@ onmessage = async function (e) {
         installZoomyPlotting(),
         installMatplotlib(),
     ]).then(function () {
-        postMessage({ type: "log", level: "info", msg: "All background dependencies ready" });
+        postMessage({ type: "log", level: "info", msg: "all ready" });
         postMessage({ type: "background_ready" });
     });
 })();

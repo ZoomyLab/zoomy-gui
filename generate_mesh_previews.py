@@ -105,7 +105,7 @@ def plot_mesh_3d(mesh_path, output_path):
     except AttributeError:
         pass  # older matplotlib
     ax.axis("off")
-    fig.savefig(output_path, format="svg", bbox_inches="tight", transparent=True)
+    fig.savefig(output_path, format="png", dpi=110, bbox_inches="tight", transparent=True)
     plt.close(fig)
 
 
@@ -125,7 +125,7 @@ def plot_mesh_2d(mesh_path, output_path):
     ax.set_ylim(points[:, 1].min(), points[:, 1].max())
     ax.set_aspect("equal")
     ax.axis("off")
-    fig.savefig(output_path, format="svg", bbox_inches="tight", transparent=True)
+    fig.savefig(output_path, format="png", dpi=110, bbox_inches="tight", transparent=True)
     plt.close(fig)
 
 
@@ -142,16 +142,19 @@ def plot_mesh(mesh_path, output_path):
 MESHES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "meshes")
 BLACKLIST = {"old", "test"}
 
-# Pretty category names
+# Pretty category names → GUI mesh subtabs. Several source directories fold
+# into one tab to keep the tab bar short: every channel/basic shape lands in
+# "Channels", the complex assemblies become "Hydro Power", and the long tail
+# (structural, volumes) goes to "Misc".
 CATEGORY_NAMES = {
-    "basic_shapes": "Basic Shapes",
+    "basic_shapes": "Channels",
     "channels": "Channels",
+    "square": "Channels",
+    "channel_quad_2d": "Channels",
     "curved": "Curved Geometries",
-    "structural": "Structural",
-    "volumes": "3-D Volumes",
-    "complex": "Complex Assemblies",
-    "square": "Square",
-    "channel_quad_2d": "Channel Quad 2D",
+    "complex": "Hydro Power",
+    "structural": "Misc",
+    "volumes": "Misc",
 }
 
 
@@ -273,8 +276,9 @@ def main():
         card_id = f"mesh-gen-{category}-{base_name}".replace("/", "-").replace(" ", "-").lower()
         card_id = card_id.replace("--", "-").strip("-")
 
-        # Pick the best .msh path for preview: default (unsuffixed) > medium > first available
-        msh_path = group["default_path"]
+        # Preview always uses the COARSE variant — light and consistent —
+        # falling back to the default/medium/any only when no coarse exists.
+        msh_path = group["sizes"].get("coarse") or group["default_path"]
         if not msh_path and "medium" in group["sizes"]:
             msh_path = group["sizes"]["medium"]
         if not msh_path and group["sizes"]:
@@ -282,7 +286,7 @@ def main():
         if not msh_path:
             continue
 
-        preview_name = f"{card_id}.svg"
+        preview_name = f"{card_id}.png"
         preview_path = os.path.join(PREVIEW_DIR, preview_name)
 
         # Incremental: skip if preview exists and is newer than the .msh file
@@ -315,6 +319,10 @@ def main():
             "description": title,
             "mesh_file": os.path.abspath(msh_path),
         }
+        # Point the card at its generated coarse-mesh image so the GUI shows
+        # the picture in the description slot instead of plain text.
+        if has_preview:
+            card["preview"] = f"previews/{preview_name}"
         if sizes:
             card["mesh_sizes"] = sizes
         if has_preview:

@@ -1,10 +1,10 @@
-"""Field on the mesh — matplotlib via ``zoomy_plotting.MatplotlibPlotter``.
+"""Mesh wireframe — cell edges over a faint field, to inspect resolution.
 
-The GUI injects ``store`` (a ``zoomy_plotting.SimulationStore``), ``time_step``
-(timeline slider) and ``field_name`` (field selector). Unified 1D / 2D / 3D.
+Built on ``zoomy_plotting.MatplotlibPlotter`` (``show_mesh=True``). Scope:
+``store``, ``time_step``, ``field_name``. Unified 1D / 2D / 3D.
 """
 import matplotlib
-matplotlib.use("agg")            # headless worker — no GUI backend
+matplotlib.use("agg")
 import matplotlib.pyplot as plt
 import zoomy_plotting as zp
 
@@ -13,7 +13,7 @@ if store is None:
 
 field = field_name if ("field_name" in dir() and field_name) else next(iter(store.field.keys()))
 step = int(time_step) if "time_step" in dir() else 0
-kw = {} if store.dim == 1 else {"cmap": "viridis", "colorbar": True}
+kw = {"show_nodes": True} if store.dim == 1 else {"show_mesh": True, "alpha": 0.25, "colorbar": False}
 
 with zp.apply_style():
     if store.dim == 3:
@@ -21,7 +21,6 @@ with zp.apply_style():
     else:
         fig, ax = plt.subplots()
     zp.MatplotlibPlotter(store).plot(ax, time_step=step, field=field, **kw)
-    if store.times is not None and len(store.times):
-        ax.set_title(f"{field} — t = {float(store.times[step]):.3f}")
+    ax.set_title("mesh")
 
 display(fig)

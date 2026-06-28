@@ -43,10 +43,77 @@ button { margin-bottom: 0; }
     background: var(--c-text); color: var(--c-surface);
 }
 .navbar-brand { font-size: var(--fs-l); font-weight: 700; cursor: pointer; margin: 0; }
-.navbar-links { margin-left: auto; display: flex; gap: 1.5rem; }
+.navbar-right { margin-left: auto; display: flex; align-items: center; gap: 1.2rem; }
+.navbar-links { display: flex; gap: 1.5rem; }
 .navbar-links a { color: var(--c-muted); text-decoration: none; font-size: var(--fs-s); }
 .navbar-links a:hover { color: var(--c-surface); }
 .hamburger { display: none; background: none; border: none; color: var(--c-surface); font-size: 1.3rem; cursor: pointer; padding: 0; }
+
+/* Navbar icon buttons (settings / account) and their dropdown menus */
+.navbar-icon-btn {
+    background: none; border: none; cursor: pointer;
+    color: var(--c-muted); padding: 0.25rem; border-radius: var(--r);
+    display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    transition: color 0.15s, background 0.15s;
+}
+.navbar-icon-btn:hover, .navbar-icon-btn.open { color: var(--c-surface); background: rgba(255, 255, 255, 0.12); }
+.navbar-icon-btn svg { width: 19px; height: 19px; display: block; }
+.nav-menu { position: relative; display: inline-flex; }
+.nav-dropdown {
+    position: absolute; top: calc(100% + 10px); right: 0;
+    width: 290px; max-width: calc(100vw - 24px);
+    background: var(--c-surface); color: var(--c-text);
+    border: var(--bw) solid var(--c-border); border-radius: var(--r);
+    box-shadow: 0 10px 28px rgba(20, 30, 45, 0.18);
+    z-index: 150; overflow: hidden;
+}
+.nav-dropdown[hidden] { display: none; }
+.dropdown-section { padding: 0.7rem 0.8rem; }
+.dropdown-section + .dropdown-section { border-top: var(--bw) solid var(--c-border); }
+.dropdown-section h4 {
+    margin: 0 0 0.4rem; font-size: var(--fs-s); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--c-muted);
+}
+.dropdown-hint { margin: 0 0 0.6rem; font-size: var(--fs-s); color: var(--c-muted); line-height: 1.45; }
+.dropdown-hint code { background: var(--c-hover); padding: 0 0.25rem; border-radius: 4px; font-family: var(--f-mono); font-size: 0.9em; }
+
+/* Drill-down menu: a slim root list of items, each opening its own sub-view. */
+.dropdown-view[hidden] { display: none; }
+.dropdown-item {
+    display: flex; align-items: center; gap: 0.6rem; width: 100%;
+    padding: 0.65rem 0.8rem; background: none; border: none; cursor: pointer;
+    font-family: var(--f-sans); font-size: var(--fs-m); color: var(--c-text); text-align: left;
+}
+.dropdown-item:hover { background: var(--c-hover); }
+.dropdown-item + .dropdown-item { border-top: var(--bw) solid var(--c-border); }
+.dropdown-item svg { width: 17px; height: 17px; flex-shrink: 0; color: var(--c-muted); }
+.dropdown-item .di-label { flex: 1; }
+.dropdown-item .di-chevron { margin-left: auto; }
+.dropdown-back {
+    display: flex; align-items: center; gap: 0.4rem; width: 100%;
+    padding: 0.55rem 0.7rem; background: var(--c-bg); cursor: pointer;
+    border: none; border-bottom: var(--bw) solid var(--c-border);
+    font-family: var(--f-sans); font-size: var(--fs-s); font-weight: 600;
+    color: var(--c-muted); text-transform: uppercase; letter-spacing: 0.04em; text-align: left;
+}
+.dropdown-back:hover { color: var(--c-text); }
+.dropdown-back svg { width: 15px; height: 15px; flex-shrink: 0; }
+.nav-dropdown .sidebar-input { font-size: var(--fs-s); }
+.nav-dropdown .sidebar-btn { text-align: center; padding: 0.35rem 0.5rem; }
+.user-card { display: flex; align-items: center; gap: 0.7rem; }
+.user-avatar {
+    width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
+    background: var(--c-accent); color: var(--c-surface);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: var(--fs-m);
+}
+.user-name { font-weight: 600; font-size: var(--fs-m); }
+.soon-badge {
+    display: inline-block; vertical-align: middle;
+    font-size: 1.05rem; padding: 0.05rem 0.45rem; border-radius: 10px;
+    background: var(--c-bg); border: var(--bw) solid var(--c-border); color: var(--c-muted);
+    white-space: nowrap;
+}
 
 /* --- Layout --- */
 .app-layout {
@@ -141,6 +208,15 @@ button { margin-bottom: 0; }
 .card-body { padding: 0 0.8rem 0.5rem; }
 .card-description { color: var(--c-muted); font-size: var(--fs-s); line-height: 1.5; margin: 0 0 0.4rem 0; }
 .card-description img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: var(--r); margin: 0.3rem 0; display: block; }
+
+/* Mesh-card preview image (shown in place of a text description). */
+.mesh-preview-link { display: block; margin: 0.2rem 0 0.1rem; }
+.mesh-preview-img {
+    display: block; width: 100%; max-height: 230px; object-fit: contain;
+    border: var(--bw) solid var(--c-border); border-radius: var(--r);
+    background: var(--c-surface);
+}
+.mesh-preview-link:hover .mesh-preview-img { border-color: var(--c-muted); }
 .card-description .katex { font-size: var(--fs-m); }
 .card-description p { margin: 0.3rem 0; }
 .card-description h2, .card-description h3, .card-description h4 { margin: 0.5rem 0 0.2rem; color: var(--c-text); }
@@ -403,6 +479,7 @@ button { margin-bottom: 0; }
 
 /* --- Footer --- */
 .footer {
+    position: relative;            /* positioning context for .footer-logo */
     padding: 0.5rem 2rem;
     background: var(--c-surface); border-top: var(--bw) solid var(--c-border);
     display: flex; justify-content: center; gap: 1.5rem;
@@ -411,6 +488,17 @@ button { margin-bottom: 0; }
 .footer a { color: var(--c-muted); text-decoration: none; }
 .footer a:hover { color: var(--c-text); }
 .gui-version { font-family: var(--f-mono); font-size: var(--fs-s); color: var(--c-muted); opacity: 0.7; }
+
+/* Institute logo — pinned to the bottom-right corner, kept small so it
+   doesn't disturb the centered footer text. Swap mbd-logo.png to change it. */
+.footer-logo {
+    position: absolute; right: 2rem; top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex; align-items: center; line-height: 0;
+    opacity: 0.85; transition: opacity 0.15s;
+}
+.footer-logo:hover { opacity: 1; }
+.footer-logo img { height: 26px; width: auto; display: block; }
 
 /* --- Toast stack ---
    Bottom-left, newest-on-top (flex-direction:column-reverse + appendChild).
@@ -488,6 +576,8 @@ button { margin-bottom: 0; }
     .card-body { padding: 0 0.5rem 0.5rem; }
     .card-header { padding: 0.4rem 0.5rem; }
     .footer { padding: 0.5rem 1rem; }
+    .footer-logo { right: 1rem; }
+    .footer-logo img { height: 20px; }
     .card.maximized .editor-layout { flex-direction: column; }
 }
 

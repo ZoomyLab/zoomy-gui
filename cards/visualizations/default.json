@@ -2,10 +2,25 @@
   {
     "id": "vis-mesh-mpl",
     "subtab": "matplotlib",
-    "title": "Mesh Viewer (Matplotlib)",
+    "title": "Field Viewer (Matplotlib)",
     "snippet": "snippets/mesh_mpl.py",
-    "description": "Unified 1D/2D/3D mesh visualization using matplotlib. Automatically dispatches based on mesh dimension. Edit `field_name` and `colormap`, use the timeline slider for snapshots.",
+    "description": "A field coloured on the mesh, via `zoomy_plotting.MatplotlibPlotter`. Unified 1D/2D/3D. Pick the field, scrub the timeline. A clean starting point — duplicate and edit to build your own view.",
     "has_timeline": true
+  },
+  {
+    "id": "vis-mesh-wireframe",
+    "subtab": "matplotlib",
+    "title": "Mesh Wireframe",
+    "snippet": "snippets/mesh_wireframe.py",
+    "description": "Cell edges over a faint field — a quick resolution check (`show_mesh=True`).",
+    "has_timeline": true
+  },
+  {
+    "id": "vis-timeseries",
+    "subtab": "matplotlib",
+    "title": "Probe Time Series",
+    "snippet": "snippets/timeseries.py",
+    "description": "A field at one probe cell over time, via `zoomy_plotting.line_plot`. Edit `cell` to move the probe."
   },
   {
     "id": "vis-empty-mpl",
