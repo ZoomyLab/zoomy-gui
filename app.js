@@ -2890,13 +2890,14 @@ document.addEventListener("DOMContentLoaded", function () {
             window.prompt("Copy this link:", link);
         }
     };
-    /* Download the composed case .py — the CLI does the compose (exportCase);
-       the GUI just gathers the selection and triggers the browser download. */
-    document.getElementById("btn-download-case").onclick = async function () {
+    /* Gather the current model+mesh+solver selection into the case spec the
+       CLI's compose/export/openInJupyter take. Returns null (with a toast)
+       when the selection is incomplete. */
+    function gatherCaseSpec() {
         var modelSel = managers.model && managers.model.selectedId;
         var meshSel = managers.mesh && managers.mesh.selectedId;
         var solverSel = managers.solver && managers.solver.selectedId;
-        if (!modelSel || !meshSel || !solverSel) { toast.info("Select model, mesh, and solver first", { ttl: 2500 }); return; }
+        if (!modelSel || !meshSel || !solverSel) { toast.info("Select model, mesh, and solver first", { ttl: 2500 }); return null; }
         var modelCard = managers.model.cards.find(function (c) { return "card-" + c.id === modelSel; });
         var meshCard = managers.mesh.cards.find(function (c) { return "card-" + c.id === meshSel; });
         var solverCard = managers.solver.cards.find(function (c) { return "card-" + c.id === solverSel; });
@@ -2906,13 +2907,19 @@ document.addEventListener("DOMContentLoaded", function () {
         function _fill(t, init) { if (!t || !init) return t || ""; return t.replace(/\{(\w+)\}/g, function (_m, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; }); }
         function _rc(state, card) { var d = card.template || card.snippet || ""; if (state.code && state.code !== d) return state.code; if (card.template) return _fill(card.template, state.params && Object.keys(state.params).length ? state.params : card.init); return state.code || ""; }
         var tag = solverCard.requires_tag || "numpy";
-        var spec = {
+        return {
             meta: { title: (modelCard.title || "model") + " · " + (meshCard.title || "mesh"), description: "Composed by the Zoomy GUI" },
             model: { code: _rc(modelState, modelCard), class_path: modelCard["class"] || null, init: modelCard.init || {} },
             mesh: { code: _rc(meshState, meshCard), spec: meshCard.init || null },
             settings: Object.assign({ time_end: 0.1, cfl: 0.45, output_snapshots: 10 }, solverState.params || {}),
             solver: { tag: tag, params: solverState.params || {} },
         };
+    }
+
+    /* Download the composed case .py — the CLI does the compose (exportCase). */
+    document.getElementById("btn-download-case").onclick = async function () {
+        var spec = gatherCaseSpec();
+        if (!spec) return;
         var cli = await _readyCli();
         var py = cli.exportCase(spec, "py");
         var blob = new Blob([py], { type: "text/x-python" });
@@ -2922,6 +2929,28 @@ document.addEventListener("DOMContentLoaded", function () {
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
         toast.info("Downloaded zoomy_case.py", { ttl: 2000 });
+    };
+
+    /* Open the composed case as a notebook: the connected backend's JupyterLab
+       (its real kernel) when reachable, else the deployed JupyterLite
+       (in-browser pyodide kernel). The CLI owns staging + routing. */
+    document.getElementById("btn-open-jupyter").onclick = async function () {
+        var spec = gatherCaseSpec();
+        if (!spec) return;
+        var cli = await _readyCli();
+        /* Derive the backend's JupyterLab from the connected server URL
+           (same host, :8888 — the container's `jupyter` mode). */
+        var jupyterUrl = null;
+        var backendUrl = _cliGetUrlForTag(spec.solver.tag) || _cliGetUrlForTag("numpy");
+        if (backendUrl) {
+            try { var u = new URL(backendUrl); jupyterUrl = u.protocol + "//" + u.hostname + ":8888"; } catch (e) { }
+        }
+        try {
+            var res = await cli.openInJupyter(spec, { jupyterUrl: jupyterUrl });
+            toast.info(res.mode === "server" ? "Opened in the backend's JupyterLab" : "Opened in JupyterLite", { ttl: 2500 });
+        } catch (e) {
+            toast.error("Open in Jupyter failed: " + ((e && e.message) || e));
+        }
     };
 
     document.getElementById("btn-run-sim").onclick = async function () {
