@@ -2905,45 +2905,48 @@ document.addEventListener("DOMContentLoaded", function () {
 
         var tag = solverCard.requires_tag || "numpy";
 
+        /* Resolve each card's code — shared by the local Pyodide run and the
+           remote compose->/cases path. The MODEL code must carry its IC + BC
+           (else the PDE is not well-posed and cannot run). */
+        var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
+        var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
+        var solverState = getCardState("card-" + solverCard.id, solverCard, "solver", "");
+
+        /* Substitute {key} placeholders with init values */
+        function fillTemplate(tmpl, init) {
+            if (!tmpl || !init) return tmpl || "";
+            return tmpl.replace(/\{(\w+)\}/g, function (_, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; });
+        }
+
+        /* Auto-generate minimal script from class path + init kwargs */
+        function autoTemplate(classPath, init) {
+            if (!classPath) return "";
+            var parts = classPath.split(".");
+            var cls = parts[parts.length - 1];
+            var mod = parts.slice(0, -1).join(".");
+            var kwargs = "";
+            if (init && Object.keys(init).length > 0) {
+                kwargs = Object.keys(init).map(function (k) {
+                    var v = init[k];
+                    return k + "=" + (typeof v === "string" ? "'" + v + "'" : v);
+                }).join(", ");
+            }
+            return "from " + mod + " import " + cls + "\n\nmodel = " + cls + "(" + kwargs + ")\n";
+        }
+
+        /* Resolve code: user-edited > template with substitution > auto-generated from class */
+        function resolveCode(state, card) {
+            /* If user edited the code (different from default template), use as-is */
+            var defCode = card.template || card.snippet || "";
+            if (state.code && state.code !== defCode) return state.code;
+            /* Template with {placeholder} substitution */
+            if (card.template) return fillTemplate(card.template, state.params && Object.keys(state.params).length ? state.params : card.init);
+            if (card["class"]) return autoTemplate(card["class"], card.init);
+            return state.code || "";
+        }
+
         /* Pyodide (in-browser numpy): concatenate editor code from all 3 cards */
         if (tag === "numpy" && !_cliGetUrlForTag("numpy")) {
-            var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
-            var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
-            var solverState = getCardState("card-" + solverCard.id, solverCard, "solver", "");
-
-            /* Substitute {key} placeholders with init values */
-            function fillTemplate(tmpl, init) {
-                if (!tmpl || !init) return tmpl || "";
-                return tmpl.replace(/\{(\w+)\}/g, function (_, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; });
-            }
-
-            /* Auto-generate minimal script from class path + init kwargs */
-            function autoTemplate(classPath, init) {
-                if (!classPath) return "";
-                var parts = classPath.split(".");
-                var cls = parts[parts.length - 1];
-                var mod = parts.slice(0, -1).join(".");
-                var kwargs = "";
-                if (init && Object.keys(init).length > 0) {
-                    kwargs = Object.keys(init).map(function (k) {
-                        var v = init[k];
-                        return k + "=" + (typeof v === "string" ? "'" + v + "'" : v);
-                    }).join(", ");
-                }
-                return "from " + mod + " import " + cls + "\n\nmodel = " + cls + "(" + kwargs + ")\n";
-            }
-
-            /* Resolve code: user-edited > template with substitution > auto-generated from class */
-            function resolveCode(state, card) {
-                /* If user edited the code (different from default template), use as-is */
-                var defCode = card.template || card.snippet || "";
-                if (state.code && state.code !== defCode) return state.code;
-                /* Template with {placeholder} substitution */
-                if (card.template) return fillTemplate(card.template, state.params && Object.keys(state.params).length ? state.params : card.init);
-                if (card["class"]) return autoTemplate(card["class"], card.init);
-                return state.code || "";
-            }
-
             /* The script is: model.py + mesh.py + solver.py — exactly what the server runs */
             var code = "import sys\nfrom loguru import logger; logger.remove(); logger.add(sys.stdout, level='INFO')\n\n";
             code += "# --- Model ---\n";
@@ -3026,15 +3029,34 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
 
-        var zoomyCase = {
-            version: "1.0",
-            model: { class_path: modelCard["class"] || modelCard.id, init: modelCard.init || {}, parameters: {} },
-            mesh: meshCard.init ? { type: "create_1d", domain: [meshCard.init.x_min || 0, meshCard.init.x_max || 1], n_cells: meshCard.init.n_cells || 100 } : { type: "create_1d", domain: [0, 1], n_cells: 100 },
-            solver: { time_end: 0.1, cfl: 0.45, output_snapshots: 10 }
+        /* Compose the canonical case .py from the resolved card code (the CLI
+           does the real work) and upload it to the backend via POST /cases.
+           The model code carries its own IC + BC. */
+        var cli = await _readyCli();
+        var caseSpec = {
+            meta: {
+                title: (modelCard.title || "model") + " · " + (meshCard.title || "mesh"),
+                description: "Composed by the Zoomy GUI",
+            },
+            model: {
+                code: resolveCode(modelState, modelCard),
+                class_path: modelCard["class"] || null,
+                init: modelCard.init || {},
+            },
+            mesh: {
+                code: resolveCode(meshState, meshCard),
+                spec: meshCard.init || null,
+            },
+            settings: Object.assign(
+                { time_end: 0.1, cfl: 0.45, output_snapshots: 10 },
+                solverState.params || {}
+            ),
+            solver: { tag: tag, params: solverState.params || {} },
         };
+        var casePy = cli.composeCase(caseSpec);
 
-        logDebug("info", "Submitting job to " + tag + " (" + _cliGetUrlForTag(tag) + ")");
-        logDebug("info", "Case: " + JSON.stringify(zoomyCase).substring(0, 200));
+        logDebug("info", "Submitting composed case to " + tag + " (" + _cliGetUrlForTag(tag) + ")");
+        logDebug("info", "Case .py (" + casePy.length + " bytes):\n" + casePy.substring(0, 300));
         toast.show({ id: "job", text: "Submitting job…", sticky: true });
         _setRunningMode("server");
         setRunBtnState(true);
@@ -3042,11 +3064,10 @@ document.addEventListener("DOMContentLoaded", function () {
             /* submitCase writes the HDF5 into Pyodide's VFS — bind it
                to the active session's worker so the result lands in
                session-scoped storage. */
-            var cli = await _readyCli();
             var jobId = null;
             var outcome = await cli.submitCase({
                 tag: tag,
-                case: zoomyCase,
+                casePy: casePy,
                 onStatus: function (status) {
                     if (!_activeJob && status.job_id) {
                         _setActiveJob({ jobId: status.job_id, tag: tag, startTime: Date.now() });
