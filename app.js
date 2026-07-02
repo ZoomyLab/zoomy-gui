@@ -2907,12 +2907,26 @@ document.addEventListener("DOMContentLoaded", function () {
         function _fill(t, init) { if (!t || !init) return t || ""; return t.replace(/\{(\w+)\}/g, function (_m, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; }); }
         function _rc(state, card) { var d = card.template || card.snippet || ""; if (state.code && state.code !== d) return state.code; if (card.template) return _fill(card.template, state.params && Object.keys(state.params).length ? state.params : card.init); return state.code || ""; }
         var tag = solverCard.requires_tag || "numpy";
+        /* TWO-LEVEL settings: general keys (valid for every backend) at the
+           top; solver-SPECIFIC options (limiters, schemes, ...) go into a
+           per-backend branch settings[tag] — one case file can carry branches
+           for several backends; the receiving solver merges its own branch. */
+        var GENERAL_KEYS = { time_end: 1, TIME_END: 1, cfl: 1, CFL: 1, output_snapshots: 1, mesh: 1 };
+        var general = { time_end: 0.1, cfl: 0.45, output_snapshots: 10 };
+        var branch = {};
+        var params = solverState.params || {};
+        Object.keys(params).forEach(function (k) {
+            if (GENERAL_KEYS[k]) general[k.toLowerCase()] = params[k];
+            else branch[k] = params[k];
+        });
+        var settings = Object.assign({}, general, { backend: tag });
+        if (Object.keys(branch).length) settings[tag] = branch;
         var spec = {
             meta: { title: (modelCard.title || "model") + " · " + (meshCard.title || "mesh"), description: "Composed by the Zoomy GUI" },
             model: { code: _rc(modelState, modelCard), class_path: modelCard["class"] || null, init: modelCard.init || {} },
             mesh: { code: _rc(meshState, meshCard), spec: meshCard.init || null },
-            settings: Object.assign({ time_end: 0.1, cfl: 0.45, output_snapshots: 10 }, solverState.params || {}),
-            solver: { tag: tag, params: solverState.params || {} },
+            settings: settings,
+            solver: { tag: tag, params: params },
         };
         /* Visualization is OPTIONAL: included only when a viz card is selected,
            so the exported case reproduces the figure too (## Visualization). */
