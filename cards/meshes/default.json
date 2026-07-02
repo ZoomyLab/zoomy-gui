@@ -9,7 +9,7 @@
       "n_cells": 100
     },
     "description": "Uniform 1D mesh",
-    "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_1d(domain=({x_min}, {x_max}), n_inner_cells={n_cells})\n"
+    "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_1d(domain=({x_min}, {x_max}), n_inner_cells={n_cells})\n\nmesh.write_to_hdf5(\"mesh.h5\")\ntry:\n    from zoomy_prepost import mesh_to_gmsh\n    mesh_to_gmsh(mesh, \"mesh.msh\", boundary_group=None)\nexcept Exception:\n    pass  # .msh (dmplex/firedrake) — server has zoomy_prepost; local Pyodide skips\n"
   },
   {
     "id": "mesh-create-2d",
@@ -24,7 +24,7 @@
       "ny": 50
     },
     "description": "Uniform 2D quad mesh",
-    "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_2d(({x_min}, {x_max}, {y_min}, {y_max}), nx={nx}, ny={ny})\n"
+    "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_2d(({x_min}, {x_max}, {y_min}, {y_max}), nx={nx}, ny={ny})\n\nmesh.write_to_hdf5(\"mesh.h5\")\ntry:\n    from zoomy_prepost import mesh_to_gmsh\n    mesh_to_gmsh(mesh, \"mesh.msh\", boundary_group=None)\nexcept Exception:\n    pass  # .msh (dmplex/firedrake) — server has zoomy_prepost; local Pyodide skips\n"
   },
   {
     "id": "mesh-create-3d",
@@ -42,6 +42,6 @@
       "nz": 10
     },
     "description": "Uniform 3D hex mesh",
-    "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_3d(({x_min}, {x_max}, {y_min}, {y_max}, {z_min}, {z_max}), nx={nx}, ny={ny}, nz={nz})\n"
+    "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_3d(({x_min}, {x_max}, {y_min}, {y_max}, {z_min}, {z_max}), nx={nx}, ny={ny}, nz={nz})\n\nmesh.write_to_hdf5(\"mesh.h5\")\ntry:\n    from zoomy_prepost import mesh_to_gmsh\n    mesh_to_gmsh(mesh, \"mesh.msh\", boundary_group=None)\nexcept Exception:\n    pass  # .msh (dmplex/firedrake) — server has zoomy_prepost; local Pyodide skips\n"
   }
 ]
