@@ -990,6 +990,7 @@ function CardManager(id, opts) {
     this.columns = opts.columns || 2;
     this.selectable = opts.selectable !== false;
     this.collapseUnselected = !!opts.collapseUnselected;
+    this.alwaysSelected = !!opts.alwaysSelected;
     this.onSelect = opts.onSelect || null;
     this.containerEl = null;
 }
@@ -998,7 +999,7 @@ CardManager.prototype.add = function (cardData) { this.cards.push(cardData); };
 
 CardManager.prototype.select = function (cardId) {
     if (!this.selectable) return;
-    if (this.collapseUnselected && this.selectedId === cardId) {
+    if (this.collapseUnselected && this.selectedId === cardId && !this.alwaysSelected) {
         this.selectedId = null;
     } else {
         this.selectedId = cardId;
@@ -1006,6 +1007,20 @@ CardManager.prototype.select = function (cardId) {
     this.updateUI();
     if (this.onSelect) this.onSelect(this.selectedId);
 };
+
+/* There is NO unselected state for model/mesh/solver — a selection always
+   exists and can only be CHANGED. Falls back to the first card whenever a
+   tab would otherwise end up with nothing selected (fresh load, session
+   without a stored selection, deleted card, ...). Visualization stays
+   optional. */
+function ensureDefaultSelections() {
+    ["model", "mesh", "solver"].forEach(function (tabId) {
+        var mgr = managers[tabId];
+        if (mgr && !mgr.selectedId && mgr.cards.length) {
+            mgr.select("card-" + mgr.cards[0].id);
+        }
+    });
+}
 
 CardManager.prototype.updateUI = function () {
     var self = this;
@@ -1418,6 +1433,7 @@ var sessionMgr = new CardManager("sessions", {
                     if (sel[tab]) mgr.select(sel[tab]);
                     else { mgr.selectedId = null; mgr.updateUI(); }
                 });
+                ensureDefaultSelections();
             }
 
             /* Refresh open editors with restored card state. Runs after
@@ -2297,6 +2313,9 @@ function buildCardsTab(panel, tab) {
         /* Viz cards stay expanded so users can compare multiple plots
            side-by-side. Mesh/model/solver tabs keep single-selection behaviour. */
         collapseUnselected: true,
+        /* model/mesh/solver ALWAYS have a selection (re-click never
+           deselects); visualization stays optional. */
+        alwaysSelected: tab.id !== "visualization",
         onSelect: function (selectedId) {
             mgr.updateUI();
             updateDashboardSummary();
@@ -2723,6 +2742,7 @@ async function reloadCards() {
             else { mgr.selectedId = null; mgr.updateUI(); }
         });
     }
+    ensureDefaultSelections();
 
     /* Dashboard numbers reflect the new selections. */
     updateDashboardSummary();
@@ -2778,6 +2798,7 @@ async function initApp() {
         });
 
         activeTabId = config.tabs[0].id;
+        ensureDefaultSelections();
         updateDashboardSummary();
 
         if (window.renderMathInElement) {
