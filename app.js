@@ -2890,6 +2890,40 @@ document.addEventListener("DOMContentLoaded", function () {
             window.prompt("Copy this link:", link);
         }
     };
+    /* Download the composed case .py — the CLI does the compose (exportCase);
+       the GUI just gathers the selection and triggers the browser download. */
+    document.getElementById("btn-download-case").onclick = async function () {
+        var modelSel = managers.model && managers.model.selectedId;
+        var meshSel = managers.mesh && managers.mesh.selectedId;
+        var solverSel = managers.solver && managers.solver.selectedId;
+        if (!modelSel || !meshSel || !solverSel) { toast.info("Select model, mesh, and solver first", { ttl: 2500 }); return; }
+        var modelCard = managers.model.cards.find(function (c) { return "card-" + c.id === modelSel; });
+        var meshCard = managers.mesh.cards.find(function (c) { return "card-" + c.id === meshSel; });
+        var solverCard = managers.solver.cards.find(function (c) { return "card-" + c.id === solverSel; });
+        var modelState = getCardState("card-" + modelCard.id, modelCard, "model", "");
+        var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
+        var solverState = getCardState("card-" + solverCard.id, solverCard, "solver", "");
+        function _fill(t, init) { if (!t || !init) return t || ""; return t.replace(/\{(\w+)\}/g, function (_m, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; }); }
+        function _rc(state, card) { var d = card.template || card.snippet || ""; if (state.code && state.code !== d) return state.code; if (card.template) return _fill(card.template, state.params && Object.keys(state.params).length ? state.params : card.init); return state.code || ""; }
+        var tag = solverCard.requires_tag || "numpy";
+        var spec = {
+            meta: { title: (modelCard.title || "model") + " · " + (meshCard.title || "mesh"), description: "Composed by the Zoomy GUI" },
+            model: { code: _rc(modelState, modelCard), class_path: modelCard["class"] || null, init: modelCard.init || {} },
+            mesh: { code: _rc(meshState, meshCard), spec: meshCard.init || null },
+            settings: Object.assign({ time_end: 0.1, cfl: 0.45, output_snapshots: 10 }, solverState.params || {}),
+            solver: { tag: tag, params: solverState.params || {} },
+        };
+        var cli = await _readyCli();
+        var py = cli.exportCase(spec, "py");
+        var blob = new Blob([py], { type: "text/x-python" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "zoomy_case.py";
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        toast.info("Downloaded zoomy_case.py", { ttl: 2000 });
+    };
+
     document.getElementById("btn-run-sim").onclick = async function () {
         /* Button is a toggle: while a sim is running it stops instead. */
         if (_runningMode) { stopSimulation(); return; }
