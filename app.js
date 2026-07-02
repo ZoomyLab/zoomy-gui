@@ -2914,7 +2914,7 @@ document.addEventListener("DOMContentLoaded", function () {
     /* Gather the current model+mesh+solver selection into the case spec the
        CLI's compose/export/openInJupyter take. Returns null (with a toast)
        when the selection is incomplete. */
-    function gatherCaseSpec() {
+    async function gatherCaseSpec() {
         var modelSel = managers.model && managers.model.selectedId;
         var meshSel = managers.mesh && managers.mesh.selectedId;
         var solverSel = managers.solver && managers.solver.selectedId;
@@ -2949,15 +2949,23 @@ document.addEventListener("DOMContentLoaded", function () {
             settings: settings,
             solver: { tag: tag, params: params },
         };
-        /* Visualization is OPTIONAL: included only when a viz card is selected,
-           so the exported case reproduces the figure too (## Visualization). */
+        /* Visualization: the selected viz card's code (snippet fetched on
+           demand, wrapped in the notebook prelude that provides the
+           GUI-injected globals). When nothing resolves, compose falls back
+           to the generated default plot — a viz is ALWAYS attached. */
         var vizSel = managers.visualization && managers.visualization.selectedId;
         if (vizSel) {
             var vizCard = managers.visualization.cards.find(function (c) { return "card-" + c.id === vizSel; });
             if (vizCard) {
                 var vizState = getCardState("card-" + vizCard.id, vizCard, "visualization", "");
                 var vizCode = _rc(vizState, vizCard);
-                if (vizCode) spec.visualization = { code: vizCode };
+                if (!vizCode && vizCard.snippet) {
+                    try { vizCode = await (await _readyCli()).fetchSnippet(vizCard.snippet); } catch (e) { }
+                }
+                if (vizCode) {
+                    var cli0 = await _readyCli();
+                    spec.visualization = { code: cli0.vizPrelude() + "\n" + vizCode };
+                }
             }
         }
         return spec;
@@ -2983,14 +2991,14 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     document.getElementById("btn-export-py").onclick = async function () {
         _exportMenu.hidden = true;
-        var spec = gatherCaseSpec();
+        var spec = await gatherCaseSpec();
         if (!spec) return;
         var cli = await _readyCli();
         _download(cli.exportCase(spec, "py"), "zoomy_case.py", "text/x-python");
     };
     document.getElementById("btn-export-ipynb").onclick = async function () {
         _exportMenu.hidden = true;
-        var spec = gatherCaseSpec();
+        var spec = await gatherCaseSpec();
         if (!spec) return;
         var cli = await _readyCli();
         _download(cli.exportCase(spec, "ipynb"), "zoomy_case.ipynb", "application/json");
@@ -3048,7 +3056,7 @@ document.addEventListener("DOMContentLoaded", function () {
        (its real kernel) when reachable, else the deployed JupyterLite
        (in-browser pyodide kernel). The CLI owns staging + routing. */
     document.getElementById("btn-open-jupyter").onclick = async function () {
-        var spec = gatherCaseSpec();
+        var spec = await gatherCaseSpec();
         if (!spec) return;
         var cli = await _readyCli();
         /* Derive the backend's JupyterLab from the connected server URL
