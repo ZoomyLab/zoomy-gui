@@ -2907,28 +2907,106 @@ document.addEventListener("DOMContentLoaded", function () {
         function _fill(t, init) { if (!t || !init) return t || ""; return t.replace(/\{(\w+)\}/g, function (_m, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; }); }
         function _rc(state, card) { var d = card.template || card.snippet || ""; if (state.code && state.code !== d) return state.code; if (card.template) return _fill(card.template, state.params && Object.keys(state.params).length ? state.params : card.init); return state.code || ""; }
         var tag = solverCard.requires_tag || "numpy";
-        return {
+        var spec = {
             meta: { title: (modelCard.title || "model") + " · " + (meshCard.title || "mesh"), description: "Composed by the Zoomy GUI" },
             model: { code: _rc(modelState, modelCard), class_path: modelCard["class"] || null, init: modelCard.init || {} },
             mesh: { code: _rc(meshState, meshCard), spec: meshCard.init || null },
             settings: Object.assign({ time_end: 0.1, cfl: 0.45, output_snapshots: 10 }, solverState.params || {}),
             solver: { tag: tag, params: solverState.params || {} },
         };
+        /* Visualization is OPTIONAL: included only when a viz card is selected,
+           so the exported case reproduces the figure too (## Visualization). */
+        var vizSel = managers.visualization && managers.visualization.selectedId;
+        if (vizSel) {
+            var vizCard = managers.visualization.cards.find(function (c) { return "card-" + c.id === vizSel; });
+            if (vizCard) {
+                var vizState = getCardState("card-" + vizCard.id, vizCard, "visualization", "");
+                var vizCode = _rc(vizState, vizCard);
+                if (vizCode) spec.visualization = { code: vizCode };
+            }
+        }
+        return spec;
     }
 
-    /* Download the composed case .py — the CLI does the compose (exportCase). */
-    document.getElementById("btn-download-case").onclick = async function () {
+    /* Export menu — the CLI does the compose (exportCase); the GUI just
+       gathers the selection, picks the format, and triggers the download. */
+    function _download(text, filename, mime) {
+        var blob = new Blob([text], { type: mime });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        toast.info("Exported " + filename, { ttl: 2000 });
+    }
+    var _exportMenu = document.getElementById("export-menu");
+    document.getElementById("btn-export-case").onclick = function () {
+        _exportMenu.hidden = !_exportMenu.hidden;
+    };
+    document.addEventListener("click", function (e) {
+        if (!e.target.closest(".export-menu-wrap")) _exportMenu.hidden = true;
+    });
+    document.getElementById("btn-export-py").onclick = async function () {
+        _exportMenu.hidden = true;
         var spec = gatherCaseSpec();
         if (!spec) return;
         var cli = await _readyCli();
-        var py = cli.exportCase(spec, "py");
-        var blob = new Blob([py], { type: "text/x-python" });
-        var a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "zoomy_case.py";
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-        toast.info("Downloaded zoomy_case.py", { ttl: 2000 });
+        _download(cli.exportCase(spec, "py"), "zoomy_case.py", "text/x-python");
+    };
+    document.getElementById("btn-export-ipynb").onclick = async function () {
+        _exportMenu.hidden = true;
+        var spec = gatherCaseSpec();
+        if (!spec) return;
+        var cli = await _readyCli();
+        _download(cli.exportCase(spec, "ipynb"), "zoomy_case.ipynb", "application/json");
+    };
+
+    /* Import a case (.py or .ipynb): parse its sections (markdown headings)
+       and write the code back into the selected cards' editors — the
+       back-conversion of the export. */
+    document.getElementById("btn-import-case").onclick = function () {
+        document.getElementById("import-case-file").click();
+    };
+    document.getElementById("import-case-file").onchange = async function () {
+        var file = this.files && this.files[0];
+        this.value = "";
+        if (!file) return;
+        var text = await file.text();
+        var cli = await _readyCli();
+        var spec;
+        if (file.name.endsWith(".ipynb")) {
+            /* notebook -> cells -> the same percent-py shape parseCase reads */
+            try {
+                var nb = JSON.parse(text);
+                text = (nb.cells || []).map(function (c) {
+                    var src = Array.isArray(c.source) ? c.source.join("") : String(c.source || "");
+                    var meta = (c.metadata && c.metadata.zoomy) ? " zoomy=" + JSON.stringify(c.metadata.zoomy) : "";
+                    if (c.cell_type === "markdown") {
+                        return "# %% [markdown]" + meta + "\n" + src.split("\n").map(function (l) { return "# " + l; }).join("\n");
+                    }
+                    return "# %%" + meta + "\n" + src;
+                }).join("\n\n");
+            } catch (e) { toast.error("Not a valid .ipynb"); return; }
+        }
+        spec = cli.parseCase(text);
+        var applied = [];
+        function applyCode(tab, code) {
+            var mgr = managers[tab];
+            if (!code || !mgr || !mgr.selectedId) return;
+            var card = mgr.cards.find(function (c) { return "card-" + c.id === mgr.selectedId; });
+            if (!card) return;
+            var state = getCardState(mgr.selectedId, card, tab, "");
+            state.code = code;
+            applied.push(tab);
+        }
+        applyCode("model", spec.model && spec.model.code);
+        applyCode("mesh", spec.mesh && spec.mesh.code);
+        applyCode("visualization", spec.visualization && spec.visualization.code);
+        if (applied.length) {
+            toast.info("Imported case → " + applied.join(", ") + " (code applied to the selected cards)", { ttl: 3500 });
+        } else {
+            toast.error("Nothing imported — select model/mesh cards first, then re-import");
+        }
     };
 
     /* Open the composed case as a notebook: the connected backend's JupyterLab

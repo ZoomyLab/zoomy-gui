@@ -117,7 +117,15 @@
                 <button class="sidebar-btn" id="btn-save">Save project</button>
                 <button class="sidebar-btn" id="btn-load">Load project</button>
                 <button class="sidebar-btn primary" id="btn-run-sim">&#9654; Run simulation</button>
-                <button class="sidebar-btn" id="btn-download-case" title="Download the composed case as a runnable .py">&#8681; Download case (.py)</button>
+                <div class="export-menu-wrap" style="position:relative">
+                    <button class="sidebar-btn" id="btn-export-case" title="Export the composed case (model + mesh + settings + solver, optional visualization)">&#8681; Export &#9662;</button>
+                    <div id="export-menu" hidden style="position:absolute;left:0;right:0;z-index:30">
+                        <button class="sidebar-btn" id="btn-export-py" title="Runnable jupytext .py, structured by markdown headings">Python (.py)</button>
+                        <button class="sidebar-btn" id="btn-export-ipynb" title="Jupyter notebook (same structure via jupytext)">Notebook (.ipynb)</button>
+                    </div>
+                </div>
+                <button class="sidebar-btn" id="btn-import-case" title="Import a case (.py or .ipynb) — updates the card code from its sections">&#8682; Import case&#8230;</button>
+                <input type="file" id="import-case-file" accept=".py,.ipynb" hidden>
                 <button class="sidebar-btn" id="btn-open-jupyter" title="Open the composed case as a notebook — the connected backend's JupyterLab, or JupyterLite in the browser">&#128214; Open in Jupyter</button>
             </div>
             <div class="sidebar-section">
