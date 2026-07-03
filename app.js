@@ -1008,6 +1008,40 @@ CardManager.prototype.select = function (cardId) {
     if (this.onSelect) this.onSelect(this.selectedId);
 };
 
+/* Catalog mesh cards (generated.json) carry a mesh FILE reference, not a
+   code template — generate portable fetch-or-load code for them: download
+   the .msh from the deployed catalog if missing (pyodide open_url in
+   JupyterLite, urllib elsewhere), then BaseMesh.from_msh + mesh.h5 for the
+   server adapters. Returns null for non-catalog cards. */
+function meshCodeFromCatalog(card) {
+    if (!card || !card.mesh_file) return null;
+    /* portable path: repo-relative "meshes/..."; legacy absolute paths from
+       older generated.json builds are salvaged by extracting "meshes/...". */
+    var rel = card.mesh_file;
+    var i = rel.indexOf("meshes/");
+    if (i > 0) rel = rel.slice(i);
+    var url;
+    try { url = new URL("../" + rel, window.location.href).href; }
+    catch (e) { url = rel; }
+    return [
+        '# Catalog mesh "' + (card.title || card.id) + '" — fetch once, then load.',
+        "import os",
+        "",
+        'MESH_URL = "' + url + '"',
+        'if not os.path.exists("mesh.msh"):',
+        "    try:",
+        "        from pyodide.http import open_url          # JupyterLite / pyodide",
+        '        open("mesh.msh", "w").write(open_url(MESH_URL).read())',
+        "    except ImportError:",
+        "        from urllib.request import urlretrieve     # CPython",
+        '        urlretrieve(MESH_URL, "mesh.msh")',
+        "",
+        "from zoomy_core.mesh import BaseMesh",
+        'mesh = BaseMesh.from_msh("mesh.msh")',
+        'mesh.write_to_hdf5("mesh.h5")                      # for the server adapters',
+    ].join("\n");
+}
+
 /* There is NO unselected state for model/mesh/solver — a selection always
    exists and can only be CHANGED. Falls back to the first card whenever a
    tab would otherwise end up with nothing selected (fresh load, session
@@ -1384,21 +1418,46 @@ async function checkUrlProject() {
    break the lookup. */
 function applyViewFromUrl(params) {
     var view = params.get("view") || params.get("tab");
-    if (!view) return;
-    var tabBtns = Array.prototype.slice.call(document.querySelectorAll(".tab-btn"));
-    if (!tabBtns.some(function (b) { return b.dataset.tab === view; })) {
-        logDebug("warn", "Link requested unknown view: " + view);
-        return;
+    if (view) {
+        var tabBtns = Array.prototype.slice.call(document.querySelectorAll(".tab-btn"));
+        if (!tabBtns.some(function (b) { return b.dataset.tab === view; })) {
+            logDebug("warn", "Link requested unknown view: " + view);
+            view = null;
+        } else {
+            switchTab(view);
+            var subview = params.get("subview") || params.get("subtab");
+            if (subview) {
+                var panel = document.getElementById("tab-" + view);
+                var subBtns = panel ? Array.prototype.slice.call(panel.querySelectorAll(".subtab-btn")) : [];
+                var sub = subBtns.find(function (b) { return b.dataset.subtab === subview; });
+                if (sub) sub.click();
+                else logDebug("warn", "Link requested unknown subview: " + subview);
+            }
+        }
     }
-    switchTab(view);
-    var subview = params.get("subview") || params.get("subtab");
-    if (!subview) return;
-    var panel = document.getElementById("tab-" + view);
-    if (!panel) return;
-    var subBtns = Array.prototype.slice.call(panel.querySelectorAll(".subtab-btn"));
-    var sub = subBtns.find(function (b) { return b.dataset.subtab === subview; });
-    if (sub) sub.click();
-    else logDebug("warn", "Link requested unknown subview: " + subview);
+    /* card=<id>: select that card in the view's tab; editor=code: also open
+       its code editor. Cards render async after a project load, so poll
+       briefly until the card's DOM exists. */
+    var cardParam = params.get("card");
+    if (!cardParam) return;
+    var cid = cardParam.indexOf("card-") === 0 ? cardParam : "card-" + cardParam;
+    var wantEditor = params.get("editor") === "code";
+    var tries = 0;
+    (function applyCard() {
+        var mgr = managers[view || activeTabId];
+        var el = document.getElementById(cid);
+        if (mgr && el) {
+            mgr.select(cid);
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            if (wantEditor) {
+                var btn = document.getElementById(cid + "-edit");
+                if (btn && !el.classList.contains("edit-open")) btn.click();
+            }
+            return;
+        }
+        if (++tries < 25) setTimeout(applyCard, 300);
+        else logDebug("warn", "Link requested unknown card: " + cardParam);
+    })();
 }
 
 /* === Session manager (cards in sidebar, full card on dashboard) === */
@@ -1896,10 +1955,9 @@ function createCard(targetId, card, mgr, cardType) {
             descWrap.className = "gear-desc-section";
             var descHtml = '<div class="gear-desc-toggle" id="' + targetId + '-desc-toggle">Description &#9662;</div>';
             if (hasClass && cardType === "model") {
-                /* Disabled for now — model.describe() output isn't useful for
-                   the current cards. Kept (not removed) so re-enabling is just
-                   dropping the `disabled` attribute + the !disabled guard below. */
-                descHtml += '<button class="btn btn-sm" id="' + targetId + '-desc-fetch" style="margin:0.3rem 0" disabled title="Disabled for now">Fetch from model.describe()</button>';
+                /* Hidden while the description fold is collapsed; the
+                   -desc-toggle handler shows it on expand. */
+                descHtml += '<button class="btn btn-sm" id="' + targetId + '-desc-fetch" style="margin:0.3rem 0;display:none" title="Regenerate the description from model.describe()">Fetch from model.describe()</button>';
             }
             descHtml += '<div class="gear-desc-editor" id="' + targetId + '-desc-ace" style="display:none"></div>';
             descWrap.innerHTML = descHtml;
@@ -1931,7 +1989,7 @@ function createCard(targetId, card, mgr, cardType) {
             }
 
             var _descFetchBtn = document.getElementById(targetId + "-desc-fetch");
-            if (hasClass && _descFetchBtn && !_descFetchBtn.disabled) {
+            if (hasClass && _descFetchBtn) {
                 _descFetchBtn.onclick = async function () {
                     this.textContent = "Loading...";
                     this.disabled = true;
@@ -1959,6 +2017,7 @@ function createCard(targetId, card, mgr, cardType) {
                 var editorDiv = document.getElementById(targetId + "-desc-ace");
                 if (editorDiv.style.display === "none") {
                     editorDiv.style.display = "";
+                    if (_descFetchBtn) _descFetchBtn.style.display = "";
                     this.innerHTML = "Description &#9652;";
                     if (!descEditorReady) {
                         await ensureAce();
@@ -1974,6 +2033,7 @@ function createCard(targetId, card, mgr, cardType) {
                     }
                 } else {
                     editorDiv.style.display = "none";
+                    if (_descFetchBtn) _descFetchBtn.style.display = "none";
                     this.innerHTML = "Description &#9662;";
                 }
             };
@@ -2896,6 +2956,14 @@ document.addEventListener("DOMContentLoaded", function () {
         if (sub && sub.dataset.subtab) parts.push("subview=" + encodeURIComponent(sub.dataset.subtab));
         var sess = sessionMgr.cards.find(function (s) { return s.id === sessionMgr.selectedId; });
         if (sess && sess.title) parts.push("session=" + encodeURIComponent(sess.title));
+        /* selected card of the active tab (+ whether its code editor is open),
+           so a link can point straight at "this model, editor open". */
+        var mgr = managers[activeTabId];
+        if (mgr && mgr.selectedId) {
+            parts.push("card=" + encodeURIComponent(mgr.selectedId.replace(/^card-/, "")));
+            var cardEl = document.getElementById(mgr.selectedId);
+            if (cardEl && cardEl.classList.contains("edit-open")) parts.push("editor=code");
+        }
         return base + (parts.length ? "?" + parts.join("&") : "");
     }
     var copyBtn = document.getElementById("btn-copy-link");
@@ -2926,7 +2994,7 @@ document.addEventListener("DOMContentLoaded", function () {
         var meshState = getCardState("card-" + meshCard.id, meshCard, "mesh", "");
         var solverState = getCardState("card-" + solverCard.id, solverCard, "solver", "");
         function _fill(t, init) { if (!t || !init) return t || ""; return t.replace(/\{(\w+)\}/g, function (_m, k) { return init[k] !== undefined ? init[k] : "{" + k + "}"; }); }
-        function _rc(state, card) { var d = card.template || card.snippet || ""; if (state.code && state.code !== d) return state.code; if (card.template) return _fill(card.template, state.params && Object.keys(state.params).length ? state.params : card.init); return state.code || ""; }
+        function _rc(state, card) { var d = card.template || card.snippet || ""; if (state.code && state.code !== d) return state.code; if (card.template) return _fill(card.template, state.params && Object.keys(state.params).length ? state.params : card.init); var mc = meshCodeFromCatalog(card); if (mc) return mc; return state.code || ""; }
         var tag = solverCard.requires_tag || "numpy";
         /* TWO-LEVEL settings: general keys (valid for every backend) at the
            top; solver-SPECIFIC options (limiters, schemes, ...) go into a
@@ -3126,6 +3194,8 @@ document.addEventListener("DOMContentLoaded", function () {
             /* Template with {placeholder} substitution */
             if (card.template) return fillTemplate(card.template, state.params && Object.keys(state.params).length ? state.params : card.init);
             if (card["class"]) return autoTemplate(card["class"], card.init);
+            var mc = meshCodeFromCatalog(card);
+            if (mc) return mc;
             return state.code || "";
         }
 

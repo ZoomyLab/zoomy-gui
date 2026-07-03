@@ -1,29 +1,47 @@
 [
   {
-    "id": "mesh-gen-square-mesh",
-    "title": "Square / Mesh",
+    "id": "mesh-gen-curved-curved_open_channel-mesh",
+    "title": "Curved Open Channel / Mesh",
     "source": "generated",
-    "category": "Square",
-    "description": "Square: Square / Mesh",
-    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/../../meshes/square/mesh.msh",
-    "preview": "previews/mesh-gen-square-mesh.svg"
+    "category": "Curved Geometries",
+    "description": "Curved Open Channel / Mesh",
+    "mesh_file": "meshes/curved/curved_open_channel/mesh.msh",
+    "preview": "previews/mesh-gen-curved-curved_open_channel-mesh.png"
+  },
+  {
+    "id": "mesh-gen-curved-curved_open_channel-mesh_v2",
+    "title": "Curved Open Channel / Mesh V2",
+    "source": "generated",
+    "category": "Curved Geometries",
+    "description": "Curved Open Channel / Mesh V2",
+    "mesh_file": "meshes/curved/curved_open_channel/mesh_v2.msh",
+    "preview": "previews/mesh-gen-curved-curved_open_channel-mesh_v2.png"
+  },
+  {
+    "id": "mesh-gen-square-mesh",
+    "title": "Mesh",
+    "source": "generated",
+    "category": "Channels",
+    "description": "Mesh",
+    "mesh_file": "meshes/square/mesh.msh",
+    "preview": "previews/mesh-gen-square-mesh.png"
   },
   {
     "id": "mesh-gen-square-mesh3d",
-    "title": "Square / Mesh3D",
+    "title": "Mesh3D",
     "source": "generated",
-    "category": "Square",
-    "description": "Square: Square / Mesh3D",
-    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/../../meshes/square/mesh3d.msh",
-    "preview": "previews/mesh-gen-square-mesh3d.svg"
+    "category": "Channels",
+    "description": "Mesh3D",
+    "mesh_file": "meshes/square/mesh3d.msh",
+    "preview": "previews/mesh-gen-square-mesh3d.png"
   },
   {
     "id": "mesh-gen-square-mesh_triangular",
-    "title": "Square / Mesh Triangular",
+    "title": "Mesh Triangular",
     "source": "generated",
-    "category": "Square",
-    "description": "Square: Square / Mesh Triangular",
-    "mesh_file": "/mnt/userdrive/Users/home/adam-obbpb5az1dhsjzf/git/Zoomy/library/zoomy_gui/../../meshes/square/mesh_triangular.msh",
-    "preview": "previews/mesh-gen-square-mesh_triangular.svg"
+    "category": "Channels",
+    "description": "Mesh Triangular",
+    "mesh_file": "meshes/square/mesh_triangular.msh",
+    "preview": "previews/mesh-gen-square-mesh_triangular.png"
   }
 ]

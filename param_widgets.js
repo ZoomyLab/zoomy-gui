@@ -41,25 +41,30 @@ function createWidgetRow(label, input, doc) {
     return row;
 }
 
+/* Bounded numerics render as a NUMBER SPINNER (type-in + up/down arrows,
+   bounds enforced as min/max) — one global rule derived from the param
+   introspection; no per-model UI code. (Replaced the old range slider.) */
 function createSlider(name, p, isInt, onChange) {
-    var wrap = document.createElement("div");
-    wrap.className = "param-slider-wrap";
     var input = document.createElement("input");
-    input.type = "range";
-    input.min = p.bounds[0];
-    input.max = p.bounds[1];
-    input.value = p.default !== null ? p.default : p.bounds[0];
-    input.step = isInt ? (p.step || 1) : (p.step || (p.bounds[1] - p.bounds[0]) / 100);
-    var valSpan = document.createElement("span");
-    valSpan.className = "param-value";
-    valSpan.textContent = input.value;
-    input.oninput = function () {
-        valSpan.textContent = input.value;
-        if (onChange) onChange(name, isInt ? parseInt(input.value) : parseFloat(input.value));
-    };
-    wrap.appendChild(input);
-    wrap.appendChild(valSpan);
-    return createWidgetRow(name, wrap, p.doc);
+    input.type = "number";
+    input.className = "param-spinner";
+    if (p.bounds) {
+        if (p.bounds[0] !== null && p.bounds[0] !== undefined) input.min = p.bounds[0];
+        if (p.bounds[1] !== null && p.bounds[1] !== undefined) input.max = p.bounds[1];
+    }
+    input.value = p.default !== null && p.default !== undefined
+        ? p.default : (p.bounds && p.bounds[0] != null ? p.bounds[0] : 0);
+    input.step = isInt ? (p.step || 1) : (p.step || "any");
+    function emit() {
+        var v = isInt ? parseInt(input.value, 10) : parseFloat(input.value);
+        if (isNaN(v)) return;
+        /* clamp into the declared bounds */
+        if (input.min !== "" && v < Number(input.min)) { v = Number(input.min); input.value = v; }
+        if (input.max !== "" && v > Number(input.max)) { v = Number(input.max); input.value = v; }
+        if (onChange) onChange(name, v);
+    }
+    input.onchange = emit;   /* typing + arrow clicks both fire change */
+    return createWidgetRow(name, input, p.doc);
 }
 
 function createCheckbox(name, p, onChange) {

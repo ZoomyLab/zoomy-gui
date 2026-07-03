@@ -317,7 +317,13 @@ def main():
             "source": "generated",
             "category": cat_label,
             "description": title,
-            "mesh_file": os.path.abspath(msh_path),
+            # REPO-RELATIVE (e.g. "meshes/square/mesh.msh") so the card is
+            # portable: the GUI resolves it against the deployed site
+            # (../meshes/... next to gui/), never a build machine's path.
+            "mesh_file": os.path.relpath(
+                os.path.abspath(msh_path),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            ).replace(os.sep, "/"),
         }
         # Point the card at its generated coarse-mesh image so the GUI shows
         # the picture in the description slot instead of plain text.
