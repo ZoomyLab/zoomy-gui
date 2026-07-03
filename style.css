@@ -498,7 +498,7 @@ button { margin-bottom: 0; }
     opacity: 0.85; transition: opacity 0.15s;
 }
 .footer-logo:hover { opacity: 1; }
-.footer-logo img { height: 26px; width: auto; display: block; }
+.footer-logo img { height: 44px; width: auto; display: block; }
 
 /* --- Toast stack ---
    Bottom-left, newest-on-top (flex-direction:column-reverse + appendChild).
@@ -577,7 +577,7 @@ button { margin-bottom: 0; }
     .card-header { padding: 0.4rem 0.5rem; }
     .footer { padding: 0.5rem 1rem; }
     .footer-logo { right: 1rem; }
-    .footer-logo img { height: 20px; }
+    .footer-logo img { height: 32px; }
     .card.maximized .editor-layout { flex-direction: column; }
 }
 
