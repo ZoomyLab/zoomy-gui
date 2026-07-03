@@ -1015,14 +1015,14 @@ CardManager.prototype.select = function (cardId) {
    server adapters. Returns null for non-catalog cards. */
 function meshCodeFromCatalog(card) {
     if (!card || !card.mesh_file) return null;
-    /* portable path: repo-relative "meshes/..."; legacy absolute paths from
-       older generated.json builds are salvaged by extracting "meshes/...". */
-    var rel = card.mesh_file;
-    var i = rel.indexOf("meshes/");
-    if (i > 0) rel = rel.slice(i);
-    var url;
-    try { url = new URL("../" + rel, window.location.href).href; }
-    catch (e) { url = rel; }
+    /* The mesh catalog is hosted (meshes-repo Pages) with FLAT names, e.g.
+       https://zoomylab.github.io/meshes/meshes/channel_2d__coarse.msh — the
+       CI card generator walks those same flat release files, so mapping by
+       BASENAME resolves every deployed card. (Locally-built dev meshes may
+       not exist there; the generated cell just reports the 404.) */
+    var base = card.mesh_url_base || "https://zoomylab.github.io/meshes/meshes/";
+    var name = String(card.mesh_file).split("/").pop();
+    var url = base + name;
     return [
         '# Catalog mesh "' + (card.title || card.id) + '" — fetch once, then load.',
         "import os",
