@@ -356,7 +356,19 @@ button { margin-bottom: 0; }
 .card-timeline input[type="range"] { flex: 1; }
 .card-timeline span { font-size: var(--fs-s); font-family: var(--f-mono); min-width: 32px; text-align: right; }
 
-/* --- Backend indicator (navbar) --- */
+/* --- Backend indicator (navbar): one pill per connected backend --- */
+.backend-indicator-row {
+    display: inline-flex; gap: 0.35rem; align-items: center;
+    white-space: nowrap; overflow: hidden; max-width: 420px;
+}
+.backend-pill {
+    font-size: var(--fs-s); color: var(--c-muted);
+    padding: 0.15rem 0.5rem; border-radius: 10px;
+    border: var(--bw) solid var(--c-muted);
+    white-space: nowrap;
+}
+.backend-pill.connected { color: #22c55e; border-color: #22c55e; }
+/* legacy single-blob style kept for the disconnected state */
 .backend-indicator {
     font-size: var(--fs-s); color: var(--c-muted);
     padding: 0.15rem 0.5rem; border-radius: 10px;

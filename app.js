@@ -2979,8 +2979,10 @@ document.addEventListener("DOMContentLoaded", function () {
         var adapter = await cli.connect(url);
         if (adapter) {
             logDebug("info", "Backend connected: " + adapter.tag + " at " + url);
+            toast.success("Connected: " + adapter.tag, { ttl: 2500 });
         } else {
             logDebug("warn", "Backend not reachable: " + url);
+            toast.error("Backend not reachable: " + url + " — check the server/tunnel (try opening " + url + "/api/v1/health in a tab)");
         }
     };
 
@@ -3107,6 +3109,14 @@ document.addEventListener("DOMContentLoaded", function () {
             settings: settings,
             solver: { tag: tag, params: params },
         };
+        /* Custom run section: a solver card whose CODE was edited (session
+           override / imported case) carries the case's own runner — pass it
+           as spec.run so composeCase keeps it instead of the generated
+           in-process runner (parseCase already round-trips run this way). */
+        var _solverDefault = solverCard.template || solverCard.snippet || "";
+        if (solverState.code && solverState.code !== _solverDefault && solverState.code.trim()) {
+            spec.run = { code: solverState.code };
+        }
         /* Visualization: the selected viz card's code (snippet fetched on
            demand, wrapped in the notebook prelude that provides the
            GUI-injected globals). When nothing resolves, compose falls back
@@ -3500,8 +3510,15 @@ document.addEventListener("DOMContentLoaded", function () {
 function _updateBackendIndicator() {
     var el = document.getElementById("backend-indicator");
     if (!el || !_cli) return;
-    el.textContent = _cli.availableTags().join(" | ");
-    el.className = "backend-indicator connected";
+    /* one green pill per backend, not one joined blob */
+    el.innerHTML = "";
+    _cli.availableTags().forEach(function (tag) {
+        var pill = document.createElement("span");
+        pill.className = "backend-pill connected";
+        pill.textContent = tag;
+        el.appendChild(pill);
+    });
+    el.className = "backend-indicator-row";
 }
 function _updateSolverCardBadges() {
     document.querySelectorAll(".card[data-requires-tag]").forEach(function (c) {
