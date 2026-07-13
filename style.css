@@ -373,6 +373,26 @@ button { margin-bottom: 0; }
 }
 .card-connection-status.connected { color: #22c55e; border-color: #22c55e; }
 
+/* --- Post-processing chain strip (visualization tab) --- */
+.postproc-chain {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 1.2rem;
+    padding: 0.5rem 1rem; margin-bottom: 1rem;
+    background: var(--c-surface); border: var(--bw) solid var(--c-border);
+    border-radius: var(--r); font-size: var(--fs-s);
+}
+.postproc-chain-title { color: var(--c-muted); font-weight: 600; }
+.postproc-step {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    margin: 0; cursor: pointer; white-space: nowrap; font-size: var(--fs-s);
+}
+.postproc-step input[type="checkbox"] { accent-color: var(--c-accent); margin: 0; }
+.postproc-step-status {
+    font-size: var(--fs-s); color: var(--c-muted);
+    padding: 0.1rem 0.4rem; border-radius: 10px;
+    border: var(--bw) solid var(--c-muted);
+}
+.postproc-step-status.connected { color: #22c55e; border-color: #22c55e; }
+
 /* --- Session connection tags --- */
 .session-connections { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
 .session-conn-tag {

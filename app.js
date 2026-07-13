@@ -2361,8 +2361,98 @@ function createDashboard(panel) {
 
 /* === Build tab === */
 
+/* === Post-processing chain (visualization tab strip) ===
+ *
+ * Two zoomy_prepost steps that run BEFORE visualization:
+ *   lift3d — 2D→3D lift; heavy (needs the case model), so it prefers a
+ *            connected "postprocess" backend — same _cliIsTagConnected
+ *            gating as solver cards;
+ *   to_h5  — VTK→H5 (vtk_to_hdf5); light, runs locally in pyodide
+ *            (meshio is available there).
+ * Toggles persist in localStorage ("zoomy-postproc-chain", v1). The chain
+ * reaches exports through gatherCaseSpec: enabled steps' code (from
+ * ZoomyCLI.chainCode) is PREPENDED to the viz cell, and spec.postproc
+ * rides as the metadata hint parseCase round-trips. */
+var POSTPROC_STEPS = [
+    { id: "lift3d", label: "2D→3D lift", tag: "postprocess" },
+    { id: "to_h5", label: "VTK→H5", tag: null },
+];
+
+function _postprocState() {
+    try {
+        var raw = window.localStorage && window.localStorage.getItem("zoomy-postproc-chain");
+        if (raw) return JSON.parse(raw) || {};
+    } catch (e) { /* storage disabled / bad JSON — fall through to defaults */ }
+    return { lift3d: true, to_h5: true };   // approved design: chain on by default
+}
+function _postprocSaveState(st) {
+    try { if (window.localStorage) window.localStorage.setItem("zoomy-postproc-chain", JSON.stringify(st)); } catch (e) { }
+}
+function _postprocEnabledSteps() {
+    var st = _postprocState();
+    return POSTPROC_STEPS.filter(function (s) { return !!st[s.id]; }).map(function (s) { return s.id; });
+}
+/* Restore the strip from an imported case's spec.postproc. */
+function _postprocSetEnabled(steps) {
+    var st = {};
+    POSTPROC_STEPS.forEach(function (s) { st[s.id] = steps.indexOf(s.id) !== -1; });
+    _postprocSaveState(st);
+    POSTPROC_STEPS.forEach(function (s) {
+        var cb = document.getElementById("postproc-step-" + s.id);
+        if (cb) cb.checked = !!st[s.id];
+    });
+}
+/* Where each step runs right now — "local" (pyodide) or the connected
+   postprocess backend. Re-run on every connections change. */
+function _updatePostprocStatus() {
+    document.querySelectorAll(".postproc-step-status").forEach(function (el) {
+        var tag = el.dataset.tag;
+        var remote = tag && _cliIsTagConnected(tag);
+        el.textContent = remote ? "backend: " + tag : "local";
+        el.classList.toggle("connected", !!remote);
+    });
+}
+function buildPostprocStrip(panel) {
+    var state = _postprocState();
+    var strip = document.createElement("div");
+    strip.className = "postproc-chain";
+    strip.id = "postproc-chain";
+    var title = document.createElement("span");
+    title.className = "postproc-chain-title";
+    title.textContent = "Post-processing chain";
+    strip.appendChild(title);
+    POSTPROC_STEPS.forEach(function (s) {
+        var lbl = document.createElement("label");
+        lbl.className = "postproc-step";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.id = "postproc-step-" + s.id;
+        cb.checked = !!state[s.id];
+        cb.onchange = function () {
+            var st = _postprocState();
+            st[s.id] = cb.checked;
+            _postprocSaveState(st);
+        };
+        var txt = document.createElement("span");
+        txt.textContent = s.label;
+        var status = document.createElement("span");
+        status.className = "postproc-step-status";
+        status.dataset.tag = s.tag || "";
+        lbl.appendChild(cb);
+        lbl.appendChild(txt);
+        lbl.appendChild(status);
+        strip.appendChild(lbl);
+    });
+    panel.appendChild(strip);
+    _updatePostprocStatus();
+}
+
 function buildCardsTab(panel, tab) {
     var isVis = tab.cardType === "vis";
+    /* The post-processing chain strip sits ABOVE the viz cards — the
+       chain runs BEFORE visualization. Injected here (not static
+       index.html markup) because the tab panels are built dynamically. */
+    if (tab.id === "visualization") buildPostprocStrip(panel);
     /* collapseUnselected:true — deselecting a card auto-collapses it and
        selecting one expands it. Combined with the initial .collapsed
        class set in createCard this gives "everything closed on load,
@@ -3036,6 +3126,20 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
             }
         }
+        /* Post-processing chain: PREPEND the enabled steps' code to the viz
+           code — the chain runs BEFORE visualization, and exports/notebooks
+           reproduce the pipeline. spec.postproc is the metadata hint the
+           CLI attaches to the viz cell (round-trips via parseCase). */
+        var ppSteps = _postprocEnabledSteps();
+        if (ppSteps.length) {
+            var cliP = await _readyCli();
+            var chain = cliP.chainCode(ppSteps);
+            if (chain) {
+                var baseViz = (spec.visualization && spec.visualization.code) || cliP._vizCode();
+                spec.visualization = { code: chain + "\n" + baseViz };
+            }
+            spec.postproc = ppSteps;
+        }
         return spec;
     }
 
@@ -3100,6 +3204,8 @@ document.addEventListener("DOMContentLoaded", function () {
             } catch (e) { toast.error("Not a valid .ipynb"); return; }
         }
         spec = cli.parseCase(text);
+        /* Restore the post-processing chain strip from the case's hint. */
+        if (spec.postproc) _postprocSetEnabled(spec.postproc);
         var applied = [];
         function applyCode(tab, code) {
             var mgr = managers[tab];
@@ -3382,6 +3488,7 @@ document.addEventListener("DOMContentLoaded", function () {
             if (window.renderDashboardConnections) renderDashboardConnections();
             _updateBackendIndicator();
             _updateSolverCardBadges();
+            _updatePostprocStatus();
         });
         cli.discover();
     });
