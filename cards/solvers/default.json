@@ -24,6 +24,13 @@
     "template": "import os\nfrom zoomy_core.fvm.solver_imex_numpy import IMEXSolver\nimport zoomy_core.fvm.timestepping as ts\nfrom zoomy_core.misc.misc import Zstruct\n\n# IMEX: explicit Riemann flux + implicit (Newton/GMRES) source. Same\n# HDF5-first pattern as the Hyperbolic card \u2014 mesh written first, the\n# solver appends /fields/, and open_hdf5 hands the store to the viz layer.\n_h5_path = '/tmp/zoomy_sim/sim.h5'\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\nclose_store()\n\nsettings = Zstruct(output=Zstruct(\n    directory=os.path.dirname(_h5_path),\n    filename=os.path.splitext(os.path.basename(_h5_path))[0],\n    snapshots=20,\n    clean_directory=True,\n))\n\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\nnsm = NumericalSystemModel.from_system_model(\n    model, reconstruction=ReconstructionSpec(order=1))\n\nsolver = IMEXSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    settings=settings,\n)\n\nmesh.write_to_hdf5(_h5_path)\nsolver.solve(mesh, nsm, write_output=True)\n\nopen_hdf5(_h5_path)\n"
   },
   {
+    "id": "solver-split-numpy",
+    "title": "Split (NumPy)",
+    "description": "Chorin pressure-projection split (SplittingSolver \u2014 IMEX flux + GMRES Poisson pressure correction). Runs locally via Pyodide; free-surface [b, h, hu] models want the FSFSplittingSolver subclass (velocity slots default to INS layout).",
+    "requires_tag": "numpy",
+    "class": "zoomy_core.fvm.solver_splitting_numpy.SplittingSolver"
+  },
+  {
     "id": "solver-jax",
     "title": "Hyperbolic (JAX)",
     "description": "Explicit finite-volume march (HyperbolicSolver) on the JAX/GPU backend \u2014 needs the zoomy-jax container.",
