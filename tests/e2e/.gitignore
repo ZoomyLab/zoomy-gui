@@ -1,0 +1,4 @@
+# harness runtime artifacts — never committed
+.cache/
+work/
+*.log
