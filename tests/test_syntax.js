@@ -27,7 +27,6 @@ console.log("\nJSON validity:");
 for (const f of [
     "cards/tabs.json",
     "cards/meshes/default.json",
-    "cards/meshes/generated.json",
     "cards/models/default.json",
     "cards/solvers/default.json",
     "cards/visualizations/default.json",

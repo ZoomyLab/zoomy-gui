@@ -1,7 +1,14 @@
-"""Generate visualization preview SVGs and update cards/visualizations/generated.json.
+"""Authoring tool: visualization preview SVGs + a scratch generated.json.
+
+NOTE — the card catalog is now an AUTHORED registry. Its output is NO LONGER
+shipped or merged: CI does not run this script, and the visualization tab
+loads ONLY cards/visualizations/default.json (hand-curated). Use this as an
+offline authoring aid — run it to regenerate preview SVGs and eyeball
+candidate card entries, then copy the ones you want BY HAND into default.json.
+The generated.json it writes is a throwaway (not read by the GUI).
 
 Scans snippets/ for .py files, executes them to produce Plotly figures,
-exports as SVG, and writes card entries to generated.json.
+exports as SVG, and emits candidate card entries.
 
 Usage:
     python generate_previews.py

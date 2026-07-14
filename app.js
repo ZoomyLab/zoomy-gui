@@ -1008,8 +1008,9 @@ CardManager.prototype.select = function (cardId) {
     if (this.onSelect) this.onSelect(this.selectedId);
 };
 
-/* Catalog mesh cards (generated.json) carry a mesh FILE reference, not a
-   code template — generate portable fetch-or-load code for them: download
+/* Catalog mesh cards (curated in meshes/default.json) carry a mesh FILE
+   reference, not a code template — generate portable fetch-or-load code
+   for them: download
    the .msh from the deployed catalog if missing (pyodide open_url in
    JupyterLite, urllib elsewhere), then BaseMesh.from_msh + mesh.h5 for the
    server adapters. Returns null for non-catalog cards. */
@@ -2605,12 +2606,12 @@ var CARD_CATEGORIES = [
 ];
 
 async function _loadCategoryCards(dir, sessionId) {
-    /* Load default + generated + user for one category, merge, deduplicate.
-       ZoomyCLI.listCards handles the default -> generated -> user ->
-       session-user precedence (with later layers overriding earlier on
-       matching id). The extra `seen` pass here is redundant but harmless;
-       it's kept as a belt-and-braces guard in case a caller bypasses the
-       CLI's dedup in the future. */
+    /* Load the authored default.json (plus per-session runtime user cards)
+       for one category, merge, deduplicate. ZoomyCLI.listCards handles the
+       authored-default -> session-user precedence (later overrides earlier
+       on matching id). The extra `seen` pass here is redundant but
+       harmless; it's kept as a belt-and-braces guard in case a caller
+       bypasses the CLI's dedup in the future. */
     var cli = await getCli();
     var list = await cli.listCards(dir, { session: sessionId });
     var seen = {};
@@ -2874,6 +2875,7 @@ async function reloadCards() {
     var config;
     try { config = await _loadAllCards(); }
     catch (e) { console.error("reloadCards: _loadAllCards failed:", e); return; }
+    await mergeBackendCards(config);
 
     config.tabs.forEach(function (tab) {
         if (tab.type !== "cards") return;
@@ -2898,33 +2900,51 @@ async function reloadCards() {
     updateDashboardSummary();
 }
 
+/* The card catalog is an AUTHORED registry. Cards discovered from a
+   connected backend's /api/v1/registry are only merged when the user
+   opts in via this localStorage flag (default OFF). */
+var BACKEND_CARDS_KEY = "zoomyShowBackendCards";
+function backendCardsEnabled() {
+    try { return window.localStorage && window.localStorage.getItem(BACKEND_CARDS_KEY) === "1"; }
+    catch (e) { return false; }
+}
+function setBackendCardsEnabled(on) {
+    try { window.localStorage && window.localStorage.setItem(BACKEND_CARDS_KEY, on ? "1" : "0"); }
+    catch (e) { /* storage disabled */ }
+}
+
+/* When (and only when) the toggle is on, merge auto-discovered cards from a
+   connected backend's /api/v1/registry into `config`. Merged cards are
+   tagged source:"backend" so they are visually distinguishable from the
+   authored default.json cards. Never merges when off (the default). */
+async function mergeBackendCards(config) {
+    if (!backendCardsEnabled()) return config;
+    try {
+        var regUrl = (_cliGetUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
+        var cliReg = await getCli().then(function (cli) { return cli.listRegistry("numpy"); }).catch(function () { return null; });
+        var registry = cliReg || await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
+        if (registry && registry.tabs) {
+            var regTabs = {};
+            registry.tabs.forEach(function (t) { regTabs[t.id] = t; });
+            config.tabs.forEach(function (tab) {
+                var rt = regTabs[tab.id];
+                if (!rt || !rt.cards) return;
+                var existing = {};
+                (tab.cards || []).forEach(function (c) { existing[c.id] = true; });
+                rt.cards.forEach(function (c) {
+                    if (!existing[c.id]) { c.source = "backend"; tab.cards.push(c); }
+                });
+            });
+        }
+    } catch (e) { /* server not available */ }
+    return config;
+}
+
 async function initApp() {
     try {
         var config = await _loadAllCards();
 
-        /* Also try server registry for additional auto-discovered cards.
-           Route through the CLI when a matching HTTP adapter is connected;
-           fall back to a direct fetch against the default discovery URL
-           so the existing single-URL probe still works before any
-           adapters are registered. */
-        try {
-            var regUrl = (_cliGetUrlForTag("numpy") || "http://localhost:8000") + "/api/v1/registry";
-            var cliReg = await getCli().then(function (cli) { return cli.listRegistry("numpy"); }).catch(function () { return null; });
-            var registry = cliReg || await fetch(regUrl, { signal: AbortSignal.timeout(2000) }).then(function (r) { return r.json(); });
-            if (registry && registry.tabs) {
-                var regTabs = {};
-                registry.tabs.forEach(function (t) { regTabs[t.id] = t; });
-                config.tabs.forEach(function (tab) {
-                    var rt = regTabs[tab.id];
-                    if (!rt || !rt.cards) return;
-                    var existing = {};
-                    (tab.cards || []).forEach(function (c) { existing[c.id] = true; });
-                    rt.cards.forEach(function (c) {
-                        if (!existing[c.id]) { tab.cards.push(c); }
-                    });
-                });
-            }
-        } catch (e) { /* server not available */ }
+        await mergeBackendCards(config);
 
         initProject(config);
         var tabBar = document.getElementById("tab-bar");
@@ -2985,6 +3005,17 @@ document.addEventListener("DOMContentLoaded", function () {
             toast.error("Backend not reachable: " + url + " — check the server/tunnel (try opening " + url + "/api/v1/health in a tab)");
         }
     };
+
+    /* Backend-card discovery toggle: reflect the persisted flag, and on
+       change persist + reload the catalog so the merge takes effect. */
+    var chkBackendCards = document.getElementById("chk-backend-cards");
+    if (chkBackendCards) {
+        chkBackendCards.checked = backendCardsEnabled();
+        chkBackendCards.onchange = function () {
+            setBackendCardsEnabled(chkBackendCards.checked);
+            if (typeof reloadCards === "function") reloadCards();
+        };
+    }
 
     /* --- Navbar dropdown menus (settings & account) ---
        Each icon button toggles its panel; opening one closes the other.

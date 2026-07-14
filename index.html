@@ -80,6 +80,11 @@
                             <p class="dropdown-hint">In-browser numpy needs no backend. Point this at a local or remote Zoomy server to unlock the other solvers.</p>
                             <input class="sidebar-input" id="backend-url" placeholder="http://localhost:8080" value="http://localhost:8080">
                             <button class="sidebar-btn" id="btn-connect">Connect</button>
+                            <label class="dropdown-check" style="display:flex;align-items:center;gap:.5em;margin-top:.6em;font-size:.85em">
+                                <input type="checkbox" id="chk-backend-cards">
+                                <span>Show cards discovered from the connected backend</span>
+                            </label>
+                            <p class="dropdown-hint">Off by default — the card catalog is a curated, authored list. Turn this on to also list any extra cards a connected backend advertises (tagged as <em>backend</em>).</p>
                         </div>
                     </div>
                 </div>

@@ -54,8 +54,9 @@ async function main() {
     const secondInitial = await page.evaluate(() => {
         return window.managers.model.cards.filter((c) => c.source === "user").map((c) => c.title);
     });
-    // Legacy cards/models/user.json ships with one demo card — it's a
-    // cross-session builtin, so it shows up in every session.
+    // The authored cards/models/default.json ships one demo card
+    // (source="user") — it's a cross-session builtin, so it shows up in
+    // every session.
     const legacyAllowed = "Tutorial: SWE Dam Break";
     const secondInitialCustom = secondInitial.filter((t) => t !== legacyAllowed);
     if (secondInitialCustom.length === 0) pass("second session has no user cards of its own yet");

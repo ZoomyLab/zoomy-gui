@@ -79,10 +79,10 @@ async function main() {
 
         const newCard = await page.evaluate((t, wantTitle) => {
             const mgr = window.managers[t];
-            // Match by title too — the model tab ships a demo user card
-            // (cards/models/user.json → "Tutorial: SWE Dam Break") that
-            // also has source="user", so match-by-title pins this assertion
-            // to the card the test just created.
+            // Match by title too — the model tab ships a demo card folded
+            // into cards/models/default.json ("Tutorial: SWE Dam Break",
+            // source="user"), so match-by-title pins this assertion to the
+            // card the test just created.
             const c = mgr.cards.find((c) => c.source === "user" && c.title === wantTitle);
             return c ? { id: c.id, title: c.title, source: c.source } : null;
         }, tabId, title);

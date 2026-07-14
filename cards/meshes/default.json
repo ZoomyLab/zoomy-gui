@@ -43,5 +43,15 @@
     },
     "description": "Uniform 3D hex mesh",
     "template": "from zoomy_core.mesh import BaseMesh\nmesh = BaseMesh.create_3d(({x_min}, {x_max}, {y_min}, {y_max}, {z_min}, {z_max}), nx={nx}, ny={ny}, nz={nz})\n\nmesh.write_to_hdf5(\"mesh.h5\")\ntry:\n    from zoomy_prepost import mesh_to_gmsh\n    mesh_to_gmsh(mesh, \"mesh.msh\", boundary_group=None)\nexcept Exception:\n    pass  # .msh (dmplex/firedrake) — server has zoomy_prepost; local Pyodide skips\n"
+  },
+  {
+    "id": "mesh-gen-channels-channel_quad_2d_mesh",
+    "title": "Channel Quad 2D",
+    "source": "curated",
+    "category": "Channels",
+    "description": "placeholder — curated list TBD. A quad channel from the meshes catalog; fetched on demand from zoomylab.github.io/meshes.",
+    "mesh_file": "meshes/channel_quad_2d_mesh.msh",
+    "mesh_sizes": ["coarse", "medium", "fine"],
+    "preview": "previews/mesh_channel_quad_2d_mesh.svg"
   }
 ]

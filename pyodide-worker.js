@@ -415,10 +415,9 @@ onmessage = async function (e) {
 
     /* Pre-extract params for all cards with a class — cold imports happen here, not on gear click */
     try {
-        /* Load cards from the folder structure (default + generated) */
+        /* Load cards from the authored registry (single default.json/tab). */
         var allCards = [];
-        var dirs = ["cards/models/default.json", "cards/models/generated.json",
-                    "cards/solvers/default.json", "cards/solvers/generated.json"];
+        var dirs = ["cards/models/default.json", "cards/solvers/default.json"];
         for (var di = 0; di < dirs.length; di++) {
             try {
                 var arr = await fetch(dirs[di]).then(function (r) { return r.ok ? r.json() : []; });

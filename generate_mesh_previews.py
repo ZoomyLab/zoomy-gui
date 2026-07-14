@@ -1,7 +1,14 @@
-"""Generate mesh preview SVGs and cards/meshes/generated.json.
+"""Authoring tool: mesh preview images + a scratch cards/meshes/generated.json.
+
+NOTE — the card catalog is now an AUTHORED registry. Its output is NO LONGER
+shipped or merged: CI does not run this script, and the mesh tab loads ONLY
+cards/meshes/default.json (hand-curated). Use this script as an offline
+authoring aid — run it to eyeball previews / candidate card entries, then
+copy the ones you want BY HAND into cards/meshes/default.json. The
+generated.json it writes is a throwaway (git-ignored / not read by the GUI).
 
 Scans the meshes/ directory for .msh files produced by run.sh,
-generates SVG previews (2D or 3D), and writes GUI card entries.
+generates SVG previews (2D or 3D), and emits candidate GUI card entries.
 
 Prerequisites:
     - Run meshes/run.sh first to generate .msh files from .geo sources
