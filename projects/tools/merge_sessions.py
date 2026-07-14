@@ -16,7 +16,8 @@ import json, os, zipfile
 
 P = os.path.expanduser("~/git/Zoomy/library/zoomy_gui/projects")
 SRC = ["bingham-analytics-session.zip", "bingham-threshold-session.zip",
-       "bingham-session.zip", "malpasset-session.zip", "coupling-session.zip"]
+       "bingham-session.zip", "malpasset-session.zip", "coupling-session.zip",
+       "coupling-live-session.zip"]
 # SRC.append("coupling-triple-session.zip")   # enable after payload upload
 OUT = os.path.join(P, "zoomy-cases.zip")
 
