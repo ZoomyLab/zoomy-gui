@@ -16,7 +16,13 @@ CardState.prototype.init = function (cardId, defaults, tabId, subtab) {
     // NOTE: defaults.snippet is a FILE PATH (e.g. "snippets/foo.py"), not code.
     // Only defaults.template is actual code. Leave code empty for snippet cards;
     // the refresh handler fetches the file contents on demand.
+    // A _placeholder default (registered by applySaveData for an override whose
+    // card's tab was never opened) is replaced by the real catalog default.
     var defCode = defaults.template || "";
+    if (this.defaults[cardId] && this.defaults[cardId]._placeholder &&
+            (defaults.title || defaults.template)) {
+        delete this.defaults[cardId];
+    }
     if (!this.defaults[cardId]) {
         this.defaults[cardId] = {
             tab: tabId || "", subtab: subtab || "",
@@ -301,12 +307,14 @@ Project.prototype.applySaveData = function (projectJson, cardEntries) {
     function resolveCardId(meta) {
         var targetId = meta.id || null;
         if (targetId && !proj.cardState.cards[targetId]) targetId = null;
-        if (!targetId) {
+        /* Title matching only with a real title — placeholder defaults may
+           carry empty titles and would soak up every unresolved override. */
+        if (!targetId && meta.title) {
             Object.keys(proj.cardState.defaults).forEach(function (cid) {
                 if (!targetId && proj.cardState.defaults[cid].title === meta.title) targetId = cid;
             });
         }
-        if (!targetId) {
+        if (!targetId && meta.title) {
             Object.keys(proj.cardState.cards).forEach(function (cid) {
                 if (!targetId && proj.cardState.cards[cid].title === meta.title) targetId = cid;
             });
@@ -322,12 +330,26 @@ Project.prototype.applySaveData = function (projectJson, cardEntries) {
             var ov = s.cardOverrides || {};
             Object.keys(ov).forEach(function (cardId) {
                 var resolved = cardId;
+                var matching = cardEntries.filter(function (e) { return e.sessionId === s.id && e.meta.id === cardId; });
                 if (!proj.cardState.cards[resolved]) {
                     /* Try to resolve by scanning card entries for this session */
-                    var matching = cardEntries.filter(function (e) { return e.sessionId === s.id && e.meta.id === cardId; });
                     if (matching.length > 0) resolved = resolveCardId(matching[0].meta) || cardId;
                 }
-                if (proj.cardState.cards[resolved]) resolvedOverrides[resolved] = ov[cardId];
+                if (!proj.cardState.cards[resolved]) {
+                    /* Card state not registered yet — states are init'ed
+                       LAZILY when the UI first touches a card, so overrides
+                       for cards in never-opened tabs (solver, visualization)
+                       used to be dropped here and the compose fell back to
+                       defaults. Register a placeholder from the save data;
+                       CardState.init swaps in the real catalog default when
+                       that card is eventually rendered. */
+                    var m = (matching[0] && matching[0].meta) || {};
+                    proj.cardState.init(resolved,
+                        { title: m.title || "", description: m.description || "" },
+                        m.tab || "", m.subtab || "");
+                    proj.cardState.defaults[resolved]._placeholder = true;
+                }
+                resolvedOverrides[resolved] = ov[cardId];
             });
             return {
                 id: s.id, title: s.title, description: s.description || "",
