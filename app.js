@@ -1570,9 +1570,17 @@ function renderDashboardSessionCard() {
             { type: "description", content: s.description },
             {
                 type: "params",
-                localParams: { name: { type: "String", default: s.title, doc: "Session name" } },
+                localParams: {
+                    name: { type: "String", default: s.title, doc: "Session name" },
+                    description: { type: "String", default: s.description, doc: "Session description" }
+                },
                 onParamChange: function (n, v) {
                     if (n === "name") { s.title = v; renderSessionSidebar(); }
+                    else if (n === "description") {
+                        s.description = v;
+                        var descEl = el.querySelector(".card-description");
+                        if (descEl) descEl.textContent = v;
+                    }
                 }
             }
         ]
