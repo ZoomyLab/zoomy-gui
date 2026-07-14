@@ -57,6 +57,12 @@ const SESSIONS = [
     { id: "session-bingham-analytics", title: "Bingham (analytics)",
       tag: "numpy", port: 8190, timeEnd: null, timeoutMs: 6 * 60e3,
       outputH5: null, localRun: false, localOnly: true },
+    // threshold runs its OWN 3-beta sweep in run.py (visualize.py reads the npz),
+    // so it is localOnly with a SMALL t_end override (physical seconds — do NOT
+    // run the ~100 min full sweep); GUI output_snapshots default trims frames.
+    { id: "session-bingham-threshold", title: "Bingham (threshold)",
+      tag: "numpy", port: 8190, timeEnd: 4.0, timeoutMs: 10 * 60e3,
+      outputH5: null, localRun: false, localOnly: true },
     { id: "session-bingham",         title: "Bingham roll-wave",
       tag: "numpy", port: 8190, timeEnd: 0.05, timeoutMs: 8 * 60e3,
       outputH5: "output/bingham_permanent_rollwave.h5", localRun: false },
