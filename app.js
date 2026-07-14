@@ -1111,6 +1111,7 @@ var _loadProjectImpl     = loadProject;
 window._zoomyBuildProjectZipWithUserCards = async function () {
     var zip = _buildProjectZipImpl();
     await _addUserCardsToZip(zip);
+    await _addCatalogToZip(zip);
     return zip;
 };
 window._zoomyLoadProject = function (file) { return _loadProjectImpl(file); };
@@ -1150,6 +1151,62 @@ async function _addUserCardsToZip(zip) {
     return paths.length;
 }
 
+/* Emit the EFFECTIVE card catalog (shipped default.json ⊕ the {removed,
+   added} overlay) into the ZIP as cards/<dir>/default.json for every
+   card tab, in the shipped file format. A user can copy those files
+   straight over library/zoomy_gui/cards/<dir>/default.json to bake their
+   curation into the shipped default. Load adopts them again via
+   _adoptCatalogFromZip. Returns the number of files written. */
+var _CATALOG_DIRS = ["models", "solvers", "meshes", "visualizations"];
+async function _addCatalogToZip(zip) {
+    var cli;
+    try { cli = await getCli(); }
+    catch (e) { return 0; }
+    if (!cli.effectiveCatalog) return 0;
+    var n = 0;
+    for (var i = 0; i < _CATALOG_DIRS.length; i++) {
+        var dir = _CATALOG_DIRS[i];
+        var eff;
+        try { eff = await cli.effectiveCatalog(dir); }
+        catch (e) { continue; }
+        if (!Array.isArray(eff)) continue;
+        zip.file("cards/" + dir + "/default.json", JSON.stringify(eff, null, 2) + "\n");
+        n++;
+    }
+    return n;
+}
+
+/* Adopt cards/<dir>/default.json entries from a loaded zip as the catalog
+   overlay (replacing it per dir). Returns the number of dirs adopted; 0
+   when the zip carries no catalog (leaving the overlay untouched). */
+async function _adoptCatalogFromZip(zip) {
+    var entries = {};
+    zip.forEach(function (relativePath, entry) {
+        if (entry.dir) return;
+        var m = /^cards\/(models|solvers|meshes|visualizations)\/default\.json$/.exec(relativePath);
+        if (m) entries[m[1]] = entry;
+    });
+    var dirs = Object.keys(entries);
+    if (!dirs.length) return 0;
+    var cli;
+    try { cli = await getCli(); }
+    catch (e) { return 0; }
+    if (!cli.adoptCatalog) return 0;
+    var n = 0;
+    for (var i = 0; i < dirs.length; i++) {
+        var dir = dirs[i];
+        try {
+            var arr = JSON.parse(await entries[dir].async("string"));
+            await cli.adoptCatalog(dir, arr);
+            n++;
+        } catch (e) {
+            logDebug("error", "Catalog adopt failed for " + dir + ": " + (e && e.message || e));
+        }
+    }
+    if (n) logDebug("info", "Project: adopted catalog for " + n + " tab(s)");
+    return n;
+}
+
 function buildProjectZip() {
     /* Sync UI selections into core project */
     Object.keys(managers).forEach(function (tabId) {
@@ -1180,6 +1237,8 @@ async function saveProject() {
        tolerates late additions up until generateAsync. */
     var userFiles = await _addUserCardsToZip(zip);
     if (userFiles) logDebug("info", "Project: " + userFiles + " user-card file(s) included");
+    var catFiles = await _addCatalogToZip(zip);
+    if (catFiles) logDebug("info", "Project: effective catalog written for " + catFiles + " tab(s)");
     var blob = await zip.generateAsync({ type: "blob" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1234,6 +1293,13 @@ async function loadProject(file) {
             }
             logDebug("info", "Project: restored " + userCardEntries.length + " user-card file(s) to IndexedDB");
         }
+
+        /* Adopt any cards/<dir>/default.json the zip carries as this
+           browser's catalog overlay (replacing it for that dir). Zips
+           WITHOUT cards/<dir>/default.json (every existing session zip,
+           incl. projects/*.zip) skip this entirely and load exactly as
+           before — the overlay is left untouched. */
+        var adoptedCatalog = await _adoptCatalogFromZip(zip);
 
         /* Parse card files from ZIP */
         var cardFiles = {};
@@ -1290,7 +1356,7 @@ async function loadProject(file) {
            reloadCards also restores selections from the active session,
            but do an explicit manager sync below for the cards that
            applySaveData already synced into _project.selections. */
-        if (userCardEntries.length && typeof reloadCards === "function") {
+        if ((userCardEntries.length || adoptedCatalog) && typeof reloadCards === "function") {
             await reloadCards();
         }
 
@@ -1768,10 +1834,15 @@ function createCard(targetId, card, mgr, cardType) {
                 (tagConnected ? 'Connected' : 'Disconnected') + '</span>';
     }
     if (hasMaximize) html += '<button class="icon-btn sm" id="' + targetId + '-max" title="Maximize">&#9723;</button>';
-    /* Trash icon — only on user-authored cards. Builtins never show it
-       so users can't accidentally delete a shipped model. */
+    /* Remove affordance on EVERY card. Per-session user cards get a trash
+       icon (destructive delete). Shipped + catalog-added cards get a
+       catalog-remove icon: shipped ids go to the overlay's `removed` set,
+       catalog-added cards drop from `added`. "Restore defaults" (per tab)
+       brings shipped cards back. */
     if (card.source === "user") {
         html += '<button class="icon-btn sm card-trash-btn" id="' + targetId + '-trash" title="Delete this user card">&#128465;</button>';
+    } else {
+        html += '<button class="icon-btn sm card-remove-btn" id="' + targetId + '-remove" title="Remove from catalog (Restore defaults brings shipped cards back)">&#10005;</button>';
     }
     html += '</div></div>';
 
@@ -1867,6 +1938,15 @@ function createCard(targetId, card, mgr, cardType) {
                 e.stopPropagation();
                 var tabId = mgr ? mgr.id : null;
                 deleteUserCard(tabId, card);
+            };
+        }
+    } else {
+        var removeBtn = document.getElementById(targetId + "-remove");
+        if (removeBtn) {
+            removeBtn.onclick = function (e) {
+                e.stopPropagation();
+                var tabId = mgr ? mgr.id : null;
+                removeCatalogCard(tabId, card);
             };
         }
     }
@@ -2569,6 +2649,24 @@ function buildCardsTab(panel, tab) {
         newBtn.onclick = function (e) { e.stopPropagation(); newUserCard(tab.id); };
         placeholder.appendChild(newBtn);
 
+        /* Catalog affordances: "+ Add to catalog" mints a permanent card
+           in the overlay's `added`; "Restore defaults" clears the tab's
+           overlay. These curate the shipped catalog (distinct from the
+           per-session "+ New card" scratch above). */
+        var addCatBtn = document.createElement("button");
+        addCatBtn.className = "new-card-btn";
+        addCatBtn.id = "btn-add-catalog-" + tab.id;
+        addCatBtn.innerHTML = "&#43; Add to catalog";
+        addCatBtn.onclick = function (e) { e.stopPropagation(); addCatalogCard(tab.id); };
+        placeholder.appendChild(addCatBtn);
+
+        var restoreBtn = document.createElement("button");
+        restoreBtn.className = "new-card-btn";
+        restoreBtn.id = "btn-restore-catalog-" + tab.id;
+        restoreBtn.innerHTML = "&#8635; Restore defaults";
+        restoreBtn.onclick = function (e) { e.stopPropagation(); restoreCatalogDefaults(tab.id); };
+        placeholder.appendChild(restoreBtn);
+
         if (tab.cardType === "mesh") {
             /* Uploading a .msh is usually the shorter path to a working
                mesh card than hand-editing a snippet. Share the
@@ -2873,6 +2971,105 @@ async function deleteUserCard(tabId, card) {
     }
     await reloadCards();
     toast.success("Deleted '" + (card.title || card.id) + "'", { ttl: 1500 });
+}
+
+/* === Catalog overlay (shipped ⊕ {removed, added}) ======================
+
+   The single card-curation mechanism. Remove works on shipped and
+   catalog-added cards; "+ Add to catalog" mints a permanent catalog card;
+   "Restore defaults" clears a tab's overlay. Save/Load project export and
+   adopt the effective catalog (see _addCatalogToZip / _adoptCatalogFromZip
+   and cli.effectiveCatalog / cli.adoptCatalog). */
+
+/* Remove a shipped or catalog-added card from the catalog. Shipped ids go
+   to the overlay's `removed` set (reversible via Restore defaults);
+   catalog-added cards drop from `added`. */
+async function removeCatalogCard(tabId, card) {
+    if (!card) return;
+    var dir = _userCardDirForTab(tabId);
+    if (!dir) return;
+    var isAdded = card.source === "catalog";
+    var msg = isAdded
+        ? "Remove catalog card '" + (card.title || card.id) + "'?"
+        : "Remove '" + (card.title || card.id) + "' from the catalog? Restore defaults brings it back.";
+    if (!window.confirm(msg)) return;
+    try {
+        var cli = await getCli();
+        var ov = await cli.readCatalogOverlay(dir);
+        if (isAdded) {
+            ov.added = ov.added.filter(function (c) { return c && c.id !== card.id; });
+        } else if (ov.removed.indexOf(card.id) === -1) {
+            ov.removed.push(card.id);
+        }
+        await cli.writeCatalogOverlay(dir, ov);
+    } catch (e) {
+        toast.error("Couldn't remove card: " + (e && e.message || e));
+        return;
+    }
+    /* Drop any per-card state so a ghost doesn't linger. */
+    if (_project && _project.cardState && _project.cardState.cards) {
+        delete _project.cardState.cards["card-" + card.id];
+        delete _project.cardState.defaults["card-" + card.id];
+    }
+    await reloadCards();
+    toast.success("Removed '" + (card.title || card.id) + "' from catalog", { ttl: 1500 });
+}
+
+/* "+ Add to catalog" — mint a new permanent catalog card (source
+   "catalog") into the overlay's `added` list. Reuses the shared
+   cardStarter skeleton; the starter code is inlined as `template` so the
+   card is self-contained (runs without a snippet file and survives
+   export). Model cards are marked `untested` so an exported catalog stays
+   green through the registry gate until the author fills them in. */
+async function addCatalogCard(tabId) {
+    var cardType = _userCardTypeForTab(tabId);
+    var dir = _userCardDirForTab(tabId);
+    if (!cardType || !dir) return null;
+    var title = window.prompt("Title for new catalog " + cardType + " card:");
+    if (title === null) return null;
+    title = String(title).trim();
+    if (!title) return null;
+
+    var id = "catalog-" + _slugify(title) + "-" + Math.random().toString(36).slice(2, 6);
+    var starter = _userCardStarter(cardType, title);
+    var card = Object.assign({}, starter.meta, {
+        id: id,
+        source: "catalog",
+        template: starter.snippet,
+    });
+    if (cardType === "model") card.untested = true;
+
+    try {
+        var cli = await getCli();
+        var ov = await cli.readCatalogOverlay(dir);
+        ov.added = ov.added.filter(function (c) { return c && c.id !== id; });
+        ov.added.push(card);
+        await cli.writeCatalogOverlay(dir, ov);
+    } catch (e) {
+        toast.error("Couldn't add catalog card: " + (e && e.message || e));
+        return null;
+    }
+    await reloadCards();
+    if (managers[tabId]) managers[tabId].select("card-" + id);
+    toast.success("Added '" + title + "' to catalog", { ttl: 1800 });
+    return id;
+}
+
+/* "Restore defaults" — clear a tab's catalog overlay so the shipped
+   default.json shows verbatim again. */
+async function restoreCatalogDefaults(tabId) {
+    var dir = _userCardDirForTab(tabId);
+    if (!dir) return;
+    if (!window.confirm("Restore the shipped " + dir + " catalog? This discards catalog removals and additions for this tab.")) return;
+    try {
+        var cli = await getCli();
+        await cli.clearCatalogOverlay(dir);
+    } catch (e) {
+        toast.error("Couldn't restore defaults: " + (e && e.message || e));
+        return;
+    }
+    await reloadCards();
+    toast.success("Restored shipped " + dir + " catalog", { ttl: 1500 });
 }
 
 /* Full rebuild of every cards-tab. Used on session switch and after
