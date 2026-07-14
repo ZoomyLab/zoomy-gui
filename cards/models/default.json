@@ -32,6 +32,18 @@
     "template": "from zoomy_core.model.models import MLSWE\nfrom zoomy_core.model.models.closures import UpwindInterface\n\n# Multi-layer shallow water; UpwindInterface closes the interface transfer velocity.\nmodel = MLSWE(\n    n_layers=2,\n    dimension=2,\n    closures=[UpwindInterface()],\n).system_model\n"
   },
   {
+    "id": "mlsme",
+    "title": "Multi-layer Shallow Moments",
+    "description": "Layered shallow moments: n_layers x (level+1) velocity moments per column.",
+    "class": "zoomy_core.model.models.MLSME",
+    "init": {
+      "n_layers": 2,
+      "level": 1,
+      "dimension": 2
+    },
+    "template": "from zoomy_core.model.models import MLSME\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree, UpwindInterface\n\n# Multi-layer shallow moments; UpwindInterface closes the interface transfer,\n# Newtonian bulk + Navier-slip bed + stress-free surface close tau_xz.\nmodel = MLSME(\n    n_layers=2,\n    level=1,\n    dimension=2,\n    closures=[Newtonian(), NavierSlip(), StressFree(), UpwindInterface()],\n).system_model\n"
+  },
+  {
     "id": "vam",
     "title": "VAM",
     "class": "zoomy_core.model.models.VAM",
@@ -41,6 +53,14 @@
     },
     "description": "**Vertically-Averaged Moment model (VAM).** Non-hydrostatic moment closure (`level` = truncation order) for dispersive shallow flow; u, w and the non-hydrostatic pressure share the basis.",
     "template": "from zoomy_core.model.models import VAM\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree\n\n# Non-hydrostatic vertically-averaged moment model (`level` = truncation order).\n# closures close tau_xz: Newtonian bulk + Navier-slip bed + stress-free surface.\nmodel = VAM(\n    level=1,\n    dimension=2,\n    small_slope=True,\n    closures=[Newtonian(), NavierSlip(), StressFree()],\n).system_model\n"
+  },
+  {
+    "id": "sigma3d",
+    "title": "3-D sigma-coordinate (Sigma3D)",
+    "description": "Sigma-coordinate 3-D model; runs via its dedicated split solver (Sigma3DSplitSolver), not the generic backends.",
+    "class": "zoomy_core.model.models.sigma3d.Sigma3D",
+    "init": {},
+    "template": "from zoomy_core.model.models.sigma3d import Sigma3D\n\n# 3-D sigma-coordinate model (conservative-sigma form).\nmodel = Sigma3D().system_model\n"
   },
   {
     "id": "user-swe-dambreak",
