@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Four-session end-to-end harness for the Zoomy GUI.
+ * Five-session end-to-end harness for the Zoomy GUI.
  *
  * Proves, headlessly, exactly what a GUI user does with
- * ``projects/zoomy-cases.zip``: for each of its four sessions
- *   Bingham roll-wave / Malpasset dam break / Malpasset (AMReX) /
- *   SME-VOF coupling (replay)
+ * ``projects/zoomy-cases.zip``: for each of its five sessions
+ *   Bingham (analytics) / Bingham roll-wave / Malpasset dam break /
+ *   Malpasset (AMReX) / SME-VOF coupling (replay)
  * it
  *   1. reads the session's card selections + overrides from project.json,
  *   2. resolves the case spec exactly as app.js::gatherCaseSpec does
@@ -54,6 +54,9 @@ const PY = process.env.ZOOMY_PY ||
 // Per-session harness knobs. selections + overrides come from project.json;
 // only the backend routing + smoke-run time_end + viz-check hints live here.
 const SESSIONS = [
+    { id: "session-bingham-analytics", title: "Bingham (analytics)",
+      tag: "numpy", port: 8190, timeEnd: null, timeoutMs: 6 * 60e3,
+      outputH5: null, localRun: false, localOnly: true },
     { id: "session-bingham",         title: "Bingham roll-wave",
       tag: "numpy", port: 8190, timeEnd: 0.05, timeoutMs: 8 * 60e3,
       outputH5: "output/bingham_permanent_rollwave.h5", localRun: false },
@@ -250,6 +253,32 @@ async function runSession(session, project, catalog, cli) {
 
     if (opt.composeOnly) {
         return { ok: true, note: `compose-only; folder={${wrote}}`, secs: (Date.now() - t0) / 1e3 };
+    }
+
+    // Analysis-only session (Bingham analytics): NO server-side time-stepping and
+    // NO simulation.h5 (the case writes .npz analytics stores, so the numpy
+    // runner's results/hdf5 would 404). Run the composed folder's run.py (writes
+    // the stores) then its visualize.py LOCALLY — mirrors the coupling row's
+    // local run.py, minus the h5-download flow — and assert figures only.
+    if (session.localOnly) {
+        const vizStart = Date.now();
+        const env = { ...process.env, MPLBACKEND: "Agg" };
+        const rp = sh(PY, ["run.py"], { cwd: folder, env });
+        if (rp.status !== 0)
+            throw new Error("run.py (analytics) failed: " +
+                (rp.stderr || rp.stdout).trim().split("\n").slice(-6).join(" | "));
+        const vz = sh(PY, ["visualize.py"], { cwd: folder, env });
+        if (vz.status !== 0)
+            throw new Error("visualize.py failed: " +
+                (vz.stderr || vz.stdout).trim().split("\n").slice(-6).join(" | "));
+        const figs = figuresNewerThan(folder, vizStart);
+        if (!figs.length) throw new Error("no figure (png/gif) produced by visualize.py");
+        return {
+            ok: true,
+            secs: (Date.now() - t0) / 1e3,
+            note: `local-only (no server); figs=${figs.length} ` +
+                  `[${figs.map((f) => path.relative(folder, f)).join(", ")}]`,
+        };
     }
 
     // 4. submit to the backend server + download simulation.h5

@@ -13,7 +13,9 @@ solver card PARAMS = {"time_end": <t_end_prime>}  (default = full benchmark)
 import json, os, pprint, re, zipfile
 
 ROOT = os.path.expanduser("~/git/Zoomy")
-CASE = os.path.join(ROOT, "thesis/cases/bingham")
+# REQ-150: the roll-wave case moved verbatim into the transient/ sub-case
+# (analytics/ is the sibling linear-stability case, packed separately).
+CASE = os.path.join(ROOT, "thesis/cases/bingham/transient")
 ZIP = os.path.join(ROOT, "library/zoomy_gui/projects/bingham-session.zip")
 
 read = lambda f: open(os.path.join(CASE, f)).read()
