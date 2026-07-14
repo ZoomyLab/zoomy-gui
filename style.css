@@ -121,7 +121,7 @@ button { margin-bottom: 0; }
     grid-template-columns: 200px 1fr;
     max-width: 960px;
     margin: 0 auto;
-    min-height: calc(100vh - 44px - 32px);
+    min-height: calc(100vh - 44px - 48px);   /* navbar + footer reserve */
 }
 
 /* --- Sidebar --- */
@@ -141,6 +141,13 @@ button { margin-bottom: 0; }
 .sidebar-btn.danger { background: #c0392b; color: #fff; border-color: #a93226; }
 .sidebar-btn.danger:hover { background: #a93226; }
 .sidebar-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* Groups the primary trio (Save / Load / Run) apart from the case-interchange
+   actions (Export / Import / Jupyter) with a hairline + breathing room. */
+.sidebar-divider {
+    height: 0; margin: 0.45rem 0.2rem;
+    border-top: var(--bw) solid var(--c-border);
+}
 
 .sidebar-list { list-style: none; padding: 0; margin: 0 0 0.1rem 0; }
 .sidebar-list-item {
@@ -404,10 +411,11 @@ button { margin-bottom: 0; }
     border: var(--bw) solid var(--c-muted);
 }
 .postproc-step-status.connected { color: #22c55e; border-color: #22c55e; }
+/* A step that runs in-browser carries an empty badge -> render nothing. */
+.postproc-step-status:empty { display: none; }
 
 /* --- Results picker (visualization tab) --- */
 .results-picker-list { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
-.results-picker-empty { color: var(--c-muted); font-style: italic; }
 .results-chip {
     font-size: var(--fs-s); cursor: pointer; white-space: nowrap;
     padding: 0.15rem 0.5rem; border-radius: 10px;
@@ -526,8 +534,11 @@ button { margin-bottom: 0; }
 .footer {
     position: relative;            /* positioning context for .footer-logo */
     padding: 0.5rem 2rem;
+    /* Contain the 44px .footer-logo: the old ~32px footer clipped its
+       bottom edge at the document boundary. 48px leaves a ~2px margin. */
+    min-height: 48px; box-sizing: border-box;
     background: var(--c-surface); border-top: var(--bw) solid var(--c-border);
-    display: flex; justify-content: center; gap: 1.5rem;
+    display: flex; justify-content: center; align-items: center; gap: 1.5rem;
     font-size: var(--fs-s); color: var(--c-muted);
 }
 .footer a { color: var(--c-muted); text-decoration: none; }

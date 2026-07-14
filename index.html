@@ -55,6 +55,12 @@
                             <span class="di-label">Add backend</span>
                             <svg class="di-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
                         </button>
+                        <!-- Direct action (no drill-in): clears the catalog overlay for
+                             every card tab so the shipped catalogs show verbatim again. -->
+                        <button class="dropdown-item" type="button" id="btn-restore-gui">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                            <span class="di-label">Restore default GUI</span>
+                        </button>
                     </div>
 
                     <!-- Sub-view: share a link -->
@@ -122,6 +128,9 @@
                 <button class="sidebar-btn" id="btn-save">Save project</button>
                 <button class="sidebar-btn" id="btn-load">Load project</button>
                 <button class="sidebar-btn primary" id="btn-run-sim">&#9654; Run simulation</button>
+                <!-- Visual break: Save / Load / Run are the primary trio;
+                     Export / Import / Jupyter are the case-interchange group. -->
+                <div class="sidebar-divider"></div>
                 <div class="export-menu-wrap" style="position:relative">
                     <button class="sidebar-btn" id="btn-export-case" title="Export the composed case (model + mesh + settings + solver, optional visualization)">&#8681; Export &#9662;</button>
                     <div id="export-menu" hidden style="position:absolute;left:0;right:0;z-index:30">

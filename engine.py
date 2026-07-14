@@ -193,6 +193,10 @@ def open_hdf5(path):
     if not os.path.isfile(path):
         raise FileNotFoundError(f"open_hdf5: no such file: {path}")
 
+    # Installing a new store replaces the old one: release the previous
+    # run's h5py handle first so re-opens never leak file handles.
+    close_store()
+
     store = zp.read_hdf5(path)    # validates schema internally
 
     # Sanity: the mesh we loaded must match the fields we loaded.
@@ -296,8 +300,10 @@ def close_store():
 
     The previous run's ``SimulationStore`` holds an open ``h5py.File`` via
     ``_resource``; that lock prevents ``mesh.write_to_hdf5(path)`` from
-    truncating the same path on a subsequent run. The solver template
-    calls this before writing so re-runs succeed cleanly."""
+    truncating the same path on a subsequent run. ``process_code`` now calls
+    this automatically at the start of every store-producing (solver) run, so
+    card code NEVER needs it — it is kept as a public no-op-compatible shim
+    for backward compatibility with older cards that still call it."""
     s = sys._shallowflow_scope.get("store")
     if s is None:
         return
@@ -309,6 +315,14 @@ def close_store():
 
 
 sys._shallowflow_scope["close_store"] = close_store
+
+
+def _is_store_producer(code):
+    """A run that re-creates the results store — it truncates a fresh HDF5
+    (``mesh.write_to_hdf5``) and/or re-opens it (``open_hdf5``). Pure viz
+    cards do neither; they read the scope ``store`` the solver run installed,
+    so we must NOT close it out from under them."""
+    return ("write_to_hdf5" in code) or ("open_hdf5" in code)
 
 
 # --- Autocomplete via jedi ------------------------------------------------
@@ -427,6 +441,12 @@ def process_code(code_string):
     # the previous one" behaviour in the GUI a simple clear-then-append.
     res = {"status": "success", "output": "", "store_meta": None}
     scope = sys._shallowflow_scope
+
+    # Auto-close the previous run's store before a solver run truncates the
+    # same HDF5 path. Card code never needs close_store(); pure viz runs (no
+    # write_to_hdf5/open_hdf5) keep the installed store so plots still resolve.
+    if _is_store_producer(code_string):
+        close_store()
 
     try:
         if _plt is not None:

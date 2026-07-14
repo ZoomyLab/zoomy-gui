@@ -12,10 +12,12 @@
 const puppeteer = require("puppeteer");
 const { startServer, waitForWorkerReady, clickTab } = require("./_lib");
 
+/* Per-session scratch-card CRUD. The visualization tab is intentionally
+   excluded: its per-session "+ New card" scratch UI was retired in favour
+   of a single catalog-level add (the catalog persists with the project). */
 const TABS_TO_TEST = [
     { tabId: "model",         title: "My Custom Model"  },
     { tabId: "solver",        title: "My Custom Solver" },
-    { tabId: "visualization", title: "My Custom Vis"    },
     { tabId: "mesh",          title: "My Custom Mesh"   },
 ];
 
