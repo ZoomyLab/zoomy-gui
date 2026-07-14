@@ -129,6 +129,28 @@ self.addEventListener("fetch", function (event) {
        undefined to respondWith() raises a page error), so fall back to a
        synthetic 503 wrapped with the same CORP header. */
     if (crossOrigin) {
+        /* PyPI *metadata* must be network-first: micropip resolves "latest"
+           from the index, and a stale-while-revalidate index pins the kernel
+           to the PREVIOUS release until the next reload (a fresh zoomy-core
+           upload appeared one reload late). Wheel/CDN files stay SWR below —
+           they are immutable by filename. */
+        var isPypiIndex = /(^|\.)pypi\.org$/.test(url.hostname);
+        if (isPypiIndex) {
+            event.respondWith(caches.open(CDN_CACHE).then(function (cache) {
+                return fetch(req).then(function (response) {
+                    if (response.ok) cache.put(req, response.clone());
+                    return withCoiHeaders(response, true);
+                }).catch(function () {
+                    return cache.match(req).then(function (cached) {
+                        return withCoiHeaders(cached || new Response("", {
+                            status: 503,
+                            statusText: "Service Unavailable (SW offline fallback)",
+                        }), true);
+                    });
+                });
+            }));
+            return;
+        }
         event.respondWith(caches.open(CDN_CACHE).then(function (cache) {
             return cache.match(req).then(function (cached) {
                 var fetched = fetch(req).then(function (response) {
