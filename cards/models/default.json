@@ -7,7 +7,7 @@
       "dimension": 1
     },
     "description": "**Shallow Water Equations.** Depth-averaged free-surface flow with bed topography and optional Manning friction (`n_m`); the level-0 base model.",
-    "template": "from zoomy_core.model.models import SWE\n\n# Shallow water equations (+ bed, optional Manning friction via n_m).\nmodel = SWE(dimension=1, parameters={\"g\": 9.81, \"n_m\": 0.0}).system_model\n"
+    "template": "from zoomy_core.model.models import SWE\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# Shallow water equations (+ bed, optional Manning friction via n_m).\nmodel = SystemModel.from_model(SWE(dimension=1, parameters={\"g\": 9.81, \"n_m\": 0.0}))\n"
   },
   {
     "id": "sme",
@@ -18,7 +18,7 @@
       "dimension": 2
     },
     "description": "**Shallow Moment Equations (SME).** Depth-averaged flow resolving a polynomial vertical velocity profile through `level` moments (Kowalski & Torrilhon); `level = 0` recovers shallow water.",
-    "template": "from zoomy_core.model.models import SME\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree\n\n# Shallow Moment Equations: `level` velocity-profile moments (level 0 = SWE).\n# closures close tau_xz: Newtonian bulk + Navier-slip bed + stress-free surface.\nmodel = SME(\n    level=2,\n    dimension=2,\n    closures=[Newtonian(), NavierSlip(), StressFree()],\n).system_model\n"
+    "template": "from zoomy_core.model.models import SME\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# Shallow Moment Equations: `level` velocity-profile moments (level 0 = SWE).\n# closures close tau_xz: Newtonian bulk + Navier-slip bed + stress-free surface.\nmodel = SystemModel.from_model(SME(\n    level=2,\n    dimension=2,\n    closures=[Newtonian(), NavierSlip(), StressFree()],\n))\n"
   },
   {
     "id": "mlswe",
@@ -29,7 +29,7 @@
       "dimension": 2
     },
     "description": "**Multi-layer Shallow Water.** `n_layers` surface-following layers coupled by an interface mass-flux closure; resolves vertical structure without going fully 3-D.",
-    "template": "from zoomy_core.model.models import MLSWE\nfrom zoomy_core.model.models.closures import UpwindInterface\n\n# Multi-layer shallow water; UpwindInterface closes the interface transfer velocity.\nmodel = MLSWE(\n    n_layers=2,\n    dimension=2,\n    closures=[UpwindInterface()],\n).system_model\n"
+    "template": "from zoomy_core.model.models import MLSWE\nfrom zoomy_core.model.models.closures import UpwindInterface\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# Multi-layer shallow water; UpwindInterface closes the interface transfer velocity.\nmodel = SystemModel.from_model(MLSWE(\n    n_layers=2,\n    dimension=2,\n    closures=[UpwindInterface()],\n))\n"
   },
   {
     "id": "mlsme",
@@ -41,7 +41,7 @@
       "level": 1,
       "dimension": 2
     },
-    "template": "from zoomy_core.model.models import MLSME\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree, UpwindInterface\n\n# Multi-layer shallow moments; UpwindInterface closes the interface transfer,\n# Newtonian bulk + Navier-slip bed + stress-free surface close tau_xz.\nmodel = MLSME(\n    n_layers=2,\n    level=1,\n    dimension=2,\n    closures=[Newtonian(), NavierSlip(), StressFree(), UpwindInterface()],\n).system_model\n"
+    "template": "from zoomy_core.model.models import MLSME\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree, UpwindInterface\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# Multi-layer shallow moments; UpwindInterface closes the interface transfer,\n# Newtonian bulk + Navier-slip bed + stress-free surface close tau_xz.\nmodel = SystemModel.from_model(MLSME(\n    n_layers=2,\n    level=1,\n    dimension=2,\n    closures=[Newtonian(), NavierSlip(), StressFree(), UpwindInterface()],\n))\n"
   },
   {
     "id": "vam",
@@ -52,7 +52,7 @@
       "dimension": 2
     },
     "description": "**Vertically-Averaged Moment model (VAM).** Non-hydrostatic moment closure (`level` = truncation order) for dispersive shallow flow; u, w and the non-hydrostatic pressure share the basis.",
-    "template": "from zoomy_core.model.models import VAM\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree\n\n# Non-hydrostatic vertically-averaged moment model (`level` = truncation order).\n# closures close tau_xz: Newtonian bulk + Navier-slip bed + stress-free surface.\nmodel = VAM(\n    level=1,\n    dimension=2,\n    small_slope=True,\n    closures=[Newtonian(), NavierSlip(), StressFree()],\n).system_model\n"
+    "template": "from zoomy_core.model.models import VAM\nfrom zoomy_core.model.models.closures import Newtonian, NavierSlip, StressFree\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# Non-hydrostatic vertically-averaged moment model (`level` = truncation order).\n# closures close tau_xz: Newtonian bulk + Navier-slip bed + stress-free surface.\nmodel = SystemModel.from_model(VAM(\n    level=1,\n    dimension=2,\n    small_slope=True,\n    closures=[Newtonian(), NavierSlip(), StressFree()],\n))\n"
   },
   {
     "id": "sigma3d",
@@ -60,7 +60,7 @@
     "description": "Sigma-coordinate 3-D model; runs via its dedicated split solver (Sigma3DSplitSolver), not the generic backends.",
     "class": "zoomy_core.model.models.sigma3d.Sigma3D",
     "init": {},
-    "template": "from zoomy_core.model.models.sigma3d import Sigma3D\n\n# 3-D sigma-coordinate model (conservative-sigma form).\nmodel = Sigma3D().system_model\n"
+    "template": "from zoomy_core.model.models.sigma3d import Sigma3D\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# 3-D sigma-coordinate model (conservative-sigma form).\nmodel = SystemModel.from_model(Sigma3D())\n"
   },
   {
     "id": "user-swe-dambreak",
@@ -71,6 +71,6 @@
       "dimension": 1
     },
     "description": "**Tutorial**: 1D dam-break with SWE.\n\nA classic test case: water at h=2 on the left, h=1 on the right.\nThe dam breaks and a shock + rarefaction wave develop.",
-    "template": "from zoomy_core.model.models import SWE\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\n\n# Dam break: still water h=2 (left) / h=1 (right), flat bed, open ends.\ndef dam_break_ic(x):\n    return np.array([0.0, 2.0 if x[0] < 5.0 else 1.0, 0.0])\n\nmodel = SWE(\n    dimension=1,\n    initial_conditions=IC.UserFunction(function=dam_break_ic),\n    boundary_conditions=BC.BoundaryConditions([\n        BC.Extrapolation(tag=\"left\"),\n        BC.Extrapolation(tag=\"right\"),\n    ]),\n).system_model\n"
+    "template": "from zoomy_core.model.models import SWE\nimport zoomy_core.model.boundary_conditions as BC\nimport zoomy_core.model.initial_conditions as IC\nimport numpy as np\nfrom zoomy_core.systemmodel.system_model import SystemModel\n\n# Dam break: still water h=2 (left) / h=1 (right), flat bed, open ends.\ndef dam_break_ic(x):\n    return np.array([0.0, 2.0 if x[0] < 5.0 else 1.0, 0.0])\n\nmodel = SystemModel.from_model(SWE(\n    dimension=1,\n    initial_conditions=IC.UserFunction(function=dam_break_ic),\n    boundary_conditions=BC.BoundaryConditions([\n        BC.Extrapolation(tag=\"left\"),\n        BC.Extrapolation(tag=\"right\"),\n    ]),\n))\n"
   }
 ]
