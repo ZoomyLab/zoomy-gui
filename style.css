@@ -405,6 +405,19 @@ button { margin-bottom: 0; }
 }
 .postproc-step-status.connected { color: #22c55e; border-color: #22c55e; }
 
+/* --- Results picker (visualization tab) --- */
+.results-picker-list { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.results-picker-empty { color: var(--c-muted); font-style: italic; }
+.results-chip {
+    font-size: var(--fs-s); cursor: pointer; white-space: nowrap;
+    padding: 0.15rem 0.5rem; border-radius: 10px;
+    border: var(--bw) solid var(--c-border); background: var(--c-bg);
+    color: var(--c-text);
+}
+.results-chip:hover { border-color: var(--c-accent); }
+.results-chip.loaded { border-color: #22c55e; color: #22c55e; }
+.results-chip.loading { opacity: 0.5; }
+
 /* --- Session connection tags --- */
 .session-connections { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
 .session-conn-tag {

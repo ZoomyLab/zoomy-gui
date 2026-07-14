@@ -2365,6 +2365,118 @@ function updateDashboardJob(status) {
     updateDashboardStatus();
 }
 
+/* === Results shelf ===================================================
+ *
+ * A finished run can be SAVED UNDER A NAME and any visualization can OPEN
+ * other results by name — across sessions and runs.
+ *   - remote run  -> the backend's server-side registry (POST /api/v1/results)
+ *   - local run   -> the Pyodide-VFS shelf (IDBFS-backed, survives reloads)
+ * The Visualization-tab picker lists both and stages a picked result into
+ * the Pyodide FS so a viz card can do `ref = open_result("swe-reference")`.
+ * A small localStorage index remembers saved names so the picker can list
+ * a remote result even while its backend is momentarily offline. */
+
+var _lastRun = null;   // {mode:"http", tag, jobId} | {mode:"pyodide"} | null
+function _setLastRun(v) { _lastRun = v; _refreshSaveResultBtn(); }
+
+function _resultsIndex() {
+    try {
+        var raw = window.localStorage && window.localStorage.getItem("zoomy-results-index");
+        var arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+}
+function _resultsIndexAdd(entry) {
+    try {
+        var arr = _resultsIndex().filter(function (e) {
+            return !(e.name === entry.name && (e.srcTag || null) === (entry.srcTag || null));
+        });
+        arr.unshift(entry);
+        if (window.localStorage) window.localStorage.setItem("zoomy-results-index", JSON.stringify(arr.slice(0, 100)));
+    } catch (e) { /* storage disabled — index is best-effort */ }
+}
+
+/* "Save result as…" — save the last finished run under a user-supplied
+   name. Remote runs go to the backend shelf (and are staged into the local
+   FS so the picker + open_result work immediately); local runs go to the
+   Pyodide-VFS shelf. */
+async function saveResultPrompt() {
+    if (!_lastRun) { toast.error("Run a simulation first, then save its result."); return; }
+    var name = window.prompt("Save this result as… (a name you can open() later)");
+    if (name == null) return;
+    name = String(name).trim();
+    if (!name) { toast.error("A result name is required."); return; }
+    var cli = await getCli();
+    try {
+        if (_lastRun.mode === "http") {
+            var entry = await cli.saveResult(_lastRun.tag, _lastRun.jobId, name);
+            try { await cli.stageResult(entry.name, { tag: _lastRun.tag }); } catch (e) { /* offline-ok */ }
+            _resultsIndexAdd({ name: entry.name, srcTag: _lastRun.tag,
+                               size: entry.size, created: entry.created });
+            toast.success("Saved result '" + entry.name + "' on " + _lastRun.tag, { ttl: 2500 });
+            logDebug("info", "Saved result '" + entry.name + "' -> backend " + _lastRun.tag +
+                     " (open with open_result('" + entry.name + "'))");
+        } else {
+            var slug = await cli.saveResultLocal(name);
+            _resultsIndexAdd({ name: slug, srcTag: null, size: null,
+                               created: new Date().toISOString() });
+            toast.success("Saved local result '" + slug + "'", { ttl: 2500 });
+            logDebug("info", "Saved local result '" + slug +
+                     "' (open with open_result('" + slug + "'))");
+        }
+        if (document.getElementById("results-picker")) refreshResultsPicker();
+    } catch (err) {
+        toast.error("Save failed: " + (err && err.message || err));
+        logDebug("error", "Save result failed: " + (err && err.message || err));
+    }
+}
+
+function _refreshSaveResultBtn() {
+    var btn = document.getElementById("dash-save-result");
+    if (btn) btn.disabled = !_lastRun;
+}
+
+/* Merge every reachable result: each connected backend's shelf + the local
+   Pyodide shelf + remembered names from the index (for offline backends).
+   Returns [{name, srcTag, label, size, created}] deduped by name+srcTag. */
+async function listAllResults() {
+    var cli = await getCli();
+    var byKey = {};
+    var put = function (e) {
+        var key = e.name + "|" + (e.srcTag || "");
+        if (!byKey[key]) byKey[key] = e;
+    };
+    // Connected backends.
+    if (cli.http && cli.http.forEach) {
+        var tasks = [];
+        cli.http.forEach(function (a, tag) {
+            if (a.isConnected && a.isConnected()) {
+                tasks.push(a.listResults().then(function (list) {
+                    (list || []).forEach(function (e) {
+                        put({ name: e.name, srcTag: tag, label: tag,
+                              size: e.size, created: e.created });
+                    });
+                }).catch(function () {}));
+            }
+        });
+        await Promise.all(tasks);
+    }
+    // Local Pyodide shelf.
+    try {
+        var localNames = await cli.listResultsLocal();
+        (localNames || []).forEach(function (n) {
+            put({ name: n, srcTag: null, label: "local", size: null, created: null });
+        });
+    } catch (e) { /* worker not up yet — index still covers it */ }
+    // Remembered (index) — fills in offline backends.
+    _resultsIndex().forEach(function (e) {
+        put({ name: e.name, srcTag: e.srcTag || null,
+              label: e.srcTag ? e.srcTag + " (saved)" : "local",
+              size: e.size, created: e.created });
+    });
+    return Object.keys(byKey).map(function (k) { return byKey[k]; });
+}
+
 /* === Dashboard === */
 
 function createDashboard(panel) {
@@ -2379,11 +2491,19 @@ function createDashboard(panel) {
         var div = document.createElement("div");
         div.id = "card-" + c.id;
         gridWrap.appendChild(div);
-        createSlotCard("card-" + c.id, {
-            title: c.title,
-            slots: [{ type: "text", content: c.text }]
-        }, gridMgr);
+        var cfg = { title: c.title, slots: [{ type: "text", content: c.text }] };
+        /* The Status card carries "Save result as…" — shelve the finished
+           run's store under a name for cross-session/-run visualization. */
+        if (c.id === "dash-run") {
+            cfg.titleActions = [{
+                id: "dash-save-result", icon: "&#128190;",
+                title: "Save result as… (name this run's store)",
+                onclick: saveResultPrompt,
+            }];
+        }
+        createSlotCard("card-" + c.id, cfg, gridMgr);
     });
+    _refreshSaveResultBtn();
 
     var backendsDiv = document.createElement("div");
     backendsDiv.id = "card-dash-backends";
@@ -2536,12 +2656,91 @@ function buildPostprocStrip(panel) {
     _updatePostprocStatus();
 }
 
+/* === Results picker (visualization tab) ===
+ * Lists every reachable named result (connected backends + local shelf).
+ * Clicking a result STAGES it into the Pyodide FS (/tmp/zoomy_results/
+ * <name>.h5) so a viz card can `ref = open_result("<name>")`. */
+function _fmtBytes(n) {
+    if (n == null) return "";
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+}
+
+function buildResultsStrip(panel) {
+    var strip = document.createElement("div");
+    strip.className = "postproc-chain results-picker";
+    strip.id = "results-picker";
+    var title = document.createElement("span");
+    title.className = "postproc-chain-title";
+    title.textContent = "Results";
+    strip.appendChild(title);
+    var list = document.createElement("span");
+    list.className = "results-picker-list";
+    list.id = "results-picker-list";
+    strip.appendChild(list);
+    var refresh = document.createElement("button");
+    refresh.className = "icon-btn sm";
+    refresh.innerHTML = "&#8635;";
+    refresh.title = "Refresh results";
+    refresh.onclick = refreshResultsPicker;
+    strip.appendChild(refresh);
+    panel.appendChild(strip);
+    refreshResultsPicker();
+}
+
+async function refreshResultsPicker() {
+    var list = document.getElementById("results-picker-list");
+    if (!list) return;
+    var results;
+    try { results = await listAllResults(); } catch (e) { results = []; }
+    list.innerHTML = "";
+    if (!results.length) {
+        var em = document.createElement("span");
+        em.className = "results-picker-empty";
+        em.textContent = "no saved results yet — run a case, then “Save result as…”.";
+        list.appendChild(em);
+        return;
+    }
+    results.forEach(function (e) {
+        var chip = document.createElement("button");
+        chip.className = "results-chip";
+        chip.title = "Load '" + e.name + "' → open_result('" + e.name + "')" +
+                     (e.size ? " · " + _fmtBytes(e.size) : "");
+        chip.textContent = e.name + " · " + e.label;
+        chip.onclick = function () { loadResultForViz(e, chip); };
+        list.appendChild(chip);
+    });
+}
+
+async function loadResultForViz(entry, chip) {
+    var cli = await getCli();
+    if (chip) { chip.disabled = true; chip.classList.add("loading"); }
+    try {
+        if (entry.srcTag) {
+            /* Remote: fetch the bytes and stage them into the Pyodide FS. */
+            await cli.stageResult(entry.name, { tag: entry.srcTag });
+        }
+        /* Local results already live in the shelf. */
+        toast.success("Loaded '" + entry.name + "' — use open_result('" +
+                      entry.name + "') in a viz card", { ttl: 4000 });
+        logDebug("info", "Result '" + entry.name + "' staged; viz cards can call open_result('" +
+                 entry.name + "')");
+        if (chip) chip.classList.add("loaded");
+    } catch (err) {
+        toast.error("Load failed: " + (err && err.message || err));
+        logDebug("error", "Load result '" + entry.name + "' failed: " + (err && err.message || err));
+    } finally {
+        if (chip) { chip.disabled = false; chip.classList.remove("loading"); }
+    }
+}
+
 function buildCardsTab(panel, tab) {
     var isVis = tab.cardType === "vis";
     /* The post-processing chain strip sits ABOVE the viz cards — the
        chain runs BEFORE visualization. Injected here (not static
        index.html markup) because the tab panels are built dynamically. */
-    if (tab.id === "visualization") buildPostprocStrip(panel);
+    if (tab.id === "visualization") { buildPostprocStrip(panel); buildResultsStrip(panel); }
     /* collapseUnselected:true — deselecting a card auto-collapses it and
        selecting one expands it. Combined with the initial .collapsed
        class set in createCard this gives "everything closed on load,
@@ -3594,6 +3793,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     logDebug("info", "Pyodide result received");
                     toast.success("Simulation complete!");
                     updateDashboardJob({ job_id: "pyodide", status: "complete" });
+                    _setLastRun({ mode: "pyodide" });
                 }
             }).catch(function (err) {
                 if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
@@ -3693,6 +3893,7 @@ document.addEventListener("DOMContentLoaded", function () {
                          + ")");
                 toast.update("job", { text: "Ready to visualize!", kind: "success", sticky: false, ttl: 3000 });
                 updateDashboardJob({ job_id: id, status: "complete" });
+                _setLastRun({ mode: "http", tag: tag, jobId: id });
             } else if (outcome.result && outcome.result.status === "cancelled") {
                 logDebug("info", "Job " + (jobId || "?") + " cancelled");
                 updateDashboardJob({ job_id: jobId || "?", status: "cancelled" });

@@ -201,6 +201,37 @@ async function persistParsoCache() {
     }
 }
 
+/* The named-results shelf (/tmp/zoomy_results) is backed by IDBFS so a
+   locally-saved run survives a page reload (true cross-session access).
+   Mount once, syncfs(true) to load persisted stores, syncfs(false) after
+   each write. Failure is silent — worst case the shelf is in-memory only
+   (works within the session). */
+var _resultsShelfMounted = false;
+async function mountResultsShelf() {
+    if (_resultsShelfMounted) return;
+    try {
+        var path = "/tmp/zoomy_results";
+        py.FS.mkdirTree(path);
+        py.FS.mount(py.FS.filesystems.IDBFS, {}, path);
+        await new Promise(function (resolve, reject) {
+            py.FS.syncfs(true, function (err) { err ? reject(err) : resolve(); });
+        });
+        _resultsShelfMounted = true;
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "results shelf in-memory only: " + (e.message || e) });
+    }
+}
+async function persistResultsShelf() {
+    if (!_resultsShelfMounted) return;
+    try {
+        await new Promise(function (resolve, reject) {
+            py.FS.syncfs(false, function (err) { err ? reject(err) : resolve(); });
+        });
+    } catch (e) {
+        postMessage({ type: "log", level: "warn", msg: "results shelf persist failed: " + (e.message || e) });
+    }
+}
+
 var _jediPromise = null;
 function installJedi() {
     if (_jediPromise) return _jediPromise;
@@ -254,7 +285,7 @@ var _MESHIO_RE = /\b(import\s+meshio|from\s+meshio)/;
 /* zoomy-plotting is used via engine.open_hdf5 — every solver-template
    snippet ends with `open_hdf5(path)`, which lazy-imports zp inside
    Python. Run_code must block on the zp install if the snippet needs it. */
-var _ZP_RE     = /\b(open_hdf5|zoomy_plotting)\b/;
+var _ZP_RE     = /\b(open_hdf5|open_result|open_results|zoomy_plotting)\b/;
 
 async function ensureVizDeps(code) {
     var needs = [];
@@ -325,6 +356,9 @@ onmessage = async function (e) {
 
         } else if (msg.cmd === "run_code") {
             await installExec();
+            /* A viz card that references open_result(...) needs the
+               persisted results shelf mounted before it runs. */
+            if (_ZP_RE.test(msg.code)) await mountResultsShelf();
             await ensureVizDeps(msg.code);
             var result = py.globals.get("process_code")(msg.code);
             postMessage({ type: "result", id: msg.id, data: result });
@@ -363,6 +397,39 @@ onmessage = async function (e) {
             py.FS.writeFile(msg.path, new Uint8Array(msg.bytes));
             py.globals.get("open_hdf5")(msg.path);
             postMessage({ type: "result", id: msg.id, data: "ok" });
+
+        } else if (msg.cmd === "write_result_bytes") {
+            /* Stage an HDF5 store into the local results shelf
+               (/tmp/zoomy_results/<slug>.h5) WITHOUT opening it as the
+               active store — engine.result_path computes the slugged path
+               (single source of truth shared with open_result). Writing
+               needs no zp; only reading (open_result) does. */
+            await installExec();
+            await mountResultsShelf();
+            var rpath = py.globals.get("result_path")(msg.name);
+            var rdir = rpath.replace(/\/[^\/]*$/, "");
+            if (rdir) py.FS.mkdirTree(rdir);
+            py.FS.writeFile(rpath, new Uint8Array(msg.bytes));
+            await persistResultsShelf();
+            postMessage({ type: "result", id: msg.id, data: rpath });
+
+        } else if (msg.cmd === "save_result_local") {
+            /* Copy the current run's open store into the local results
+               shelf under msg.name (local "Save result as…"). */
+            await installExec();
+            await mountResultsShelf();
+            var slug = py.globals.get("save_result_local")(msg.name);
+            await persistResultsShelf();
+            postMessage({ type: "result", id: msg.id, data: slug });
+
+        } else if (msg.cmd === "list_results_local") {
+            /* Names present in the local (VFS) results shelf. */
+            await installExec();
+            await mountResultsShelf();
+            var names = py.globals.get("list_results")();
+            var arr = names.toJs ? names.toJs() : names;
+            if (names.destroy) names.destroy();
+            postMessage({ type: "result", id: msg.id, data: arr });
 
         } else if (msg.cmd === "write_user_mesh") {
             /* Materialise a user-uploaded gmsh .msh into the VFS at

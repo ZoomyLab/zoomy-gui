@@ -216,6 +216,81 @@ def open_hdf5(path):
 sys._shallowflow_scope["open_hdf5"] = open_hdf5
 
 
+# --- Named result shelf (cross-run / cross-session comparison). ----------
+# A run's HDF5 store can be saved under a NAME (by the GUI: remote job ->
+# server /api/v1/results, then staged into this VFS shelf; local run ->
+# staged directly). A viz card then does `ref = open_result("swe-reference")`
+# and composes comparisons. `open_result` returns a fresh SimulationStore and
+# does NOT touch the exec-scope ``store`` — the current run's plot stays put.
+_RESULTS_DIR = "/tmp/zoomy_results"
+
+
+def _result_slug(name):
+    """Slug identical to zoomy_server.results.slugify so a name saved to a
+    backend resolves to the same file when staged into this VFS shelf."""
+    import re
+    s = re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower()).strip("-")[:80]
+    if not s:
+        raise ValueError(f"result name {name!r} slugs to empty")
+    return s
+
+
+def result_path(name):
+    """VFS path for a named result: /tmp/zoomy_results/<slug>.h5."""
+    return os.path.join(_RESULTS_DIR, _result_slug(name) + ".h5")
+
+
+def open_result(name):
+    """Open a named result from the shelf as a fresh SimulationStore.
+
+    Unlike ``open_hdf5`` this returns the store WITHOUT installing it as the
+    scope ``store``, so a viz card can reference other results alongside the
+    current run:  ``ref = open_result("swe-reference")``."""
+    import zoomy_plotting as zp   # lazy; triggers micropip install
+
+    path = result_path(name)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"open_result: no such result {name!r} at {path} "
+            f"(available: {list_results()})")
+    return zp.read_hdf5(path)
+
+
+def open_results(names):
+    """Open several named results at once -> ``{name: SimulationStore}``."""
+    return {n: open_result(n) for n in names}
+
+
+def list_results():
+    """Names present in the local results shelf (sorted)."""
+    if not os.path.isdir(_RESULTS_DIR):
+        return []
+    return sorted(fn[:-3] for fn in os.listdir(_RESULTS_DIR) if fn.endswith(".h5"))
+
+
+def save_result_local(name):
+    """Copy the currently-open scope ``store``'s HDF5 into the local results
+    shelf under ``name`` (a local run's "Save result as…"). Returns the slug.
+    Raises if no store is open."""
+    import shutil
+    s = sys._shallowflow_scope.get("store")
+    src = getattr(s, "source_path", None) if s is not None else None
+    if not src or not os.path.isfile(src):
+        raise RuntimeError("save_result_local: no open store to save")
+    os.makedirs(_RESULTS_DIR, exist_ok=True)
+    dest = result_path(name)
+    if os.path.abspath(src) != os.path.abspath(dest):
+        shutil.copyfile(src, dest)
+    return _result_slug(name)
+
+
+sys._shallowflow_scope["result_path"] = result_path
+sys._shallowflow_scope["open_result"] = open_result
+sys._shallowflow_scope["open_results"] = open_results
+sys._shallowflow_scope["list_results"] = list_results
+sys._shallowflow_scope["save_result_local"] = save_result_local
+
+
 def close_store():
     """Close any store currently installed in scope and release its file handle.
 
