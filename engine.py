@@ -288,11 +288,22 @@ def save_result_local(name):
     return _result_slug(name)
 
 
+def store_source_path():
+    """VFS path of the current run's open store (its HDF5 file), or None.
+
+    The GUI reads these bytes to route the post-processing chain to a backend
+    after a local (Pyodide) run — the store the run just produced is the
+    chain's input."""
+    s = sys._shallowflow_scope.get("store")
+    return getattr(s, "source_path", None) if s is not None else None
+
+
 sys._shallowflow_scope["result_path"] = result_path
 sys._shallowflow_scope["open_result"] = open_result
 sys._shallowflow_scope["open_results"] = open_results
 sys._shallowflow_scope["list_results"] = list_results
 sys._shallowflow_scope["save_result_local"] = save_result_local
+sys._shallowflow_scope["store_source_path"] = store_source_path
 
 
 def close_store():

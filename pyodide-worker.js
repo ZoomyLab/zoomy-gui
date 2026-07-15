@@ -431,6 +431,17 @@ onmessage = async function (e) {
             if (names.destroy) names.destroy();
             postMessage({ type: "result", id: msg.id, data: arr });
 
+        } else if (msg.cmd === "read_store_bytes") {
+            /* Raw HDF5 bytes of the current run's open store — the source for
+               routing the post-processing chain to a backend after a local
+               (Pyodide) run. engine.store_source_path() returns the VFS path
+               the solver template wrote (simulation.h5); we read it back. */
+            await installExec();
+            var srcPath = py.globals.get("store_source_path")();
+            if (!srcPath) throw new Error("no open store to post-process (run a simulation first)");
+            var storeBytes = py.FS.readFile(srcPath);   // Uint8Array
+            postMessage({ type: "result", id: msg.id, data: storeBytes }, [storeBytes.buffer]);
+
         } else if (msg.cmd === "write_user_mesh") {
             /* Materialise a user-uploaded gmsh .msh into the VFS at
                `msg.path`. The card's snippet then calls

@@ -2436,6 +2436,69 @@ function _refreshSaveResultBtn() {
     if (btn) btn.disabled = !_lastRun;
 }
 
+/* === Post-processing chain execution ===
+ * The chain's steps (lift3d / to_vtk) live in zoomy_prepost, which the
+ * browser worker does NOT ship — so in a browser session they can only
+ * execute on a connected "postprocess" backend. Called after a finished
+ * run with the run's store bytes + the model cell (lift3d needs it):
+ *   - chain off (no enabled steps) -> nothing to do;
+ *   - steps enabled but no postprocess backend -> a clear hint, then skip;
+ *   - steps enabled AND a postprocess backend connected -> submit the store +
+ *     steps, wait, and stage the transformed h5 artifacts (the lifted 3-D
+ *     store, the normalized store) into the results shelf so the viz cards
+ *     (open_result) and the Results picker can reach them. */
+async function maybeRunPostprocChain(storeBytes, modelPy) {
+    var steps = _postprocEnabledSteps();
+    if (!steps.length) return;                       // chain off
+    if (!_cliIsTagConnected("postprocess")) {
+        toast.info("Chain steps (" + steps.join(", ") +
+                   ") need a postprocess backend — connect one to run them", { ttl: 5000 });
+        logDebug("info", "Post-processing chain enabled (" + steps.join(", ") +
+                 ") but no 'postprocess' backend is connected — steps skipped.");
+        return;
+    }
+    if (!storeBytes || !storeBytes.byteLength) {
+        logDebug("error", "Post-processing chain: no store bytes to submit (run produced no store?)");
+        return;
+    }
+    var cli = await getCli();
+    toast.show({ id: "chain", text: "Running post-processing chain…", sticky: true });
+    logDebug("info", "Routing post-processing chain [" + steps.join(", ") +
+             "] to the 'postprocess' backend (" + (_cliGetUrlForTag("postprocess") || "?") + ")");
+    try {
+        var res = await cli.runPostprocChain({
+            storeBytes: storeBytes, steps: steps, modelPy: modelPy,
+            onStatus: function (s) {
+                if (s && s.status) toast.update("chain",
+                    { text: "Chain " + (s.job_id || "") + " " + s.status + "…", sticky: true });
+            },
+        });
+        var staged = [];
+        for (var i = 0; i < res.artifacts.length; i++) {
+            var art = res.artifacts[i];
+            if (!/\.h5$/i.test(art.name)) continue;   // stage stores; VTK/figs stay as artifacts
+            var b = art.name.replace(/\.h5$/i, "");
+            /* simulation_3d.h5 -> "lifted-3d" (the /tmp/zoomy_results/<name>_lifted.h5
+               the viz cards + shelf reach); other stores keep their basename. */
+            var name = b === "simulation_3d" ? "lifted-3d" : (b === "simulation" ? "postproc" : b);
+            await cli.stageResult(name, { bytes: art.bytes });
+            _resultsIndexAdd({ name: name, srcTag: null, size: art.bytes.byteLength,
+                               created: new Date().toISOString() });
+            staged.push(name);
+        }
+        if (document.getElementById("results-picker")) refreshResultsPicker();
+        toast.update("chain", {
+            text: "Chain done — " + res.artifacts.length + " artifact(s)" +
+                  (staged.length ? "; staged: " + staged.join(", ") : ""),
+            kind: "success", sticky: false, ttl: 4000 });
+        logDebug("info", "Post-processing chain complete: " +
+                 res.artifacts.map(function (a) { return a.name + " (" + a.bytes.byteLength + "B)"; }).join(", "));
+    } catch (err) {
+        toast.update("chain", { text: "Chain failed — see Log", kind: "error", sticky: true });
+        logDebug("error", "Post-processing chain failed: " + ((err && err.message) || err));
+    }
+}
+
 /* Merge every reachable result: each connected backend's shelf + the local
    Pyodide shelf + remembered names from the index (for offline backends).
    Returns [{name, srcTag, label, size, created}] deduped by name+srcTag. */
@@ -3779,6 +3842,11 @@ document.addEventListener("DOMContentLoaded", function () {
             return state.code || "";
         }
 
+        /* Model cell code — the lift3d step of the post-processing chain
+           needs it (its interpolate_to_3d does the vertical lift). Captured
+           once so both the local and remote run paths can route the chain. */
+        var modelPyForChain = resolveCode(modelState, modelCard);
+
         /* Pyodide (in-browser numpy): concatenate editor code from all 3 cards */
         if (tag === "numpy" && !_cliGetUrlForTag("numpy")) {
             /* The script is: model.py + mesh.py + solver.py — exactly what the server runs */
@@ -3823,6 +3891,13 @@ document.addEventListener("DOMContentLoaded", function () {
                     toast.success("Simulation complete!");
                     updateDashboardJob({ job_id: "pyodide", status: "complete" });
                     _setLastRun({ mode: "pyodide" });
+                    /* Route the post-processing chain to a postprocess backend
+                       (if enabled + connected): the local run's store lives in
+                       the worker VFS — read its bytes and submit. */
+                    _readyCli()
+                        .then(function (c) { return c.readStoreBytes(); })
+                        .then(function (bytes) { return maybeRunPostprocChain(bytes, modelPyForChain); })
+                        .catch(function (e) { logDebug("error", "Post-processing chain (local run): " + ((e && e.message) || e)); });
                 }
             }).catch(function (err) {
                 if (_runningMode !== "pyodide" || _currentPyRunId !== runId) return;
@@ -3923,6 +3998,12 @@ document.addEventListener("DOMContentLoaded", function () {
                 toast.update("job", { text: "Ready to visualize!", kind: "success", sticky: false, ttl: 3000 });
                 updateDashboardJob({ job_id: id, status: "complete" });
                 _setLastRun({ mode: "http", tag: tag, jobId: id });
+                /* Route the post-processing chain to a postprocess backend (if
+                   enabled + connected): the GUI already downloaded the run's
+                   store bytes — reuse them, no second server round-trip. */
+                if (outcome.result.hdf5) {
+                    maybeRunPostprocChain(new Uint8Array(outcome.result.hdf5), modelPyForChain);
+                }
             } else if (outcome.result && outcome.result.status === "cancelled") {
                 logDebug("info", "Job " + (jobId || "?") + " cancelled");
                 updateDashboardJob({ job_id: jobId || "?", status: "cancelled" });
