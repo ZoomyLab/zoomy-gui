@@ -1678,6 +1678,10 @@ function switchTab(tabId) {
     document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.toggle("active", b.dataset.tab === tabId); });
     document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.toggle("active", p.id === "tab-" + tabId); });
     _focusSubtabOfSelection(tabId);
+    /* Showing the Visualization tab re-evaluates the Results box (hidden
+       until at least one named result exists) — replaces the removed
+       manual "Refresh results" button. */
+    if (tabId === "visualization" && document.getElementById("results-picker")) refreshResultsPicker();
 }
 
 /* When the user switches into a tab that has its selected card living
@@ -2644,17 +2648,17 @@ function createDashboard(panel) {
  * step in `try: from zoomy_prepost import … except ImportError: pass`, and
  * the chain is PREPENDED to the viz cell that runs in-browser via runCode.
  * So in a browser-only session BOTH steps silently no-op — they genuinely
- * need the "postprocess" backend/container. There is no per-step routing:
- * the tag only drives the badge. Hence both carry tag "postprocess" (the
- * badge shows that backend name); a genuinely in-browser step would carry
- * no tag and show no badge.
+ * need the "postprocess" backend/container. There is no per-step routing
+ * and no per-step availability badge: the steps read as plain labels, and
+ * the ONLY availability signal is the Run-time hint (maybeRunPostprocChain
+ * toasts when steps are enabled but no postprocess backend is connected).
  * Toggles persist in localStorage ("zoomy-postproc-chain", v1). The chain
  * reaches exports through gatherCaseSpec: enabled steps' code (from
  * ZoomyCLI.chainCode) is PREPENDED to the viz cell, and spec.postproc
  * rides as the metadata hint parseCase round-trips. */
 var POSTPROC_STEPS = [
-    { id: "lift3d", label: "2D→3D lift", tag: "postprocess" },
-    { id: "to_h5", label: "VTK→H5", tag: "postprocess" },
+    { id: "lift3d", label: "Lift 2D → 3D" },
+    { id: "to_h5", label: "VTK → HDF5" },
 ];
 
 function _postprocState() {
@@ -2681,21 +2685,6 @@ function _postprocSetEnabled(steps) {
         if (cb) cb.checked = !!st[s.id];
     });
 }
-/* Truthful step badge: a step that needs a backend shows that backend's
-   NAME (green once it's connected); a step that genuinely runs in-browser
-   shows NO badge (the "local" flag was noise). Re-run on connections change. */
-function _updatePostprocStatus() {
-    document.querySelectorAll(".postproc-step-status").forEach(function (el) {
-        var tag = el.dataset.tag;
-        if (!tag) {                                  // runs in-browser -> no badge
-            el.textContent = "";
-            el.classList.remove("connected");
-            return;
-        }
-        el.textContent = tag;                        // the backend that runs this step
-        el.classList.toggle("connected", _cliIsTagConnected(tag));
-    });
-}
 function buildPostprocStrip(panel) {
     var state = _postprocState();
     var strip = document.createElement("div");
@@ -2719,16 +2708,11 @@ function buildPostprocStrip(panel) {
         };
         var txt = document.createElement("span");
         txt.textContent = s.label;
-        var status = document.createElement("span");
-        status.className = "postproc-step-status";
-        status.dataset.tag = s.tag || "";
         lbl.appendChild(cb);
         lbl.appendChild(txt);
-        lbl.appendChild(status);
         strip.appendChild(lbl);
     });
     panel.appendChild(strip);
-    _updatePostprocStatus();
 }
 
 /* === Results picker (visualization tab) ===
@@ -2758,12 +2742,9 @@ function buildResultsStrip(panel) {
     list.className = "results-picker-list";
     list.id = "results-picker-list";
     strip.appendChild(list);
-    var refresh = document.createElement("button");
-    refresh.className = "icon-btn sm";
-    refresh.innerHTML = "&#8635;";
-    refresh.title = "Refresh results";
-    refresh.onclick = refreshResultsPicker;
-    strip.appendChild(refresh);
+    /* No manual "Refresh" button — the picker auto-refreshes on backend
+       connect/disconnect (onConnectionsChange), when a result is saved, and
+       whenever the Visualization tab is shown (switchTab). */
     panel.appendChild(strip);
     refreshResultsPicker();
 }
@@ -2774,10 +2755,14 @@ async function refreshResultsPicker() {
     var strip = document.getElementById("results-picker");
     var results;
     try { results = await listAllResults(); } catch (e) { results = []; }
+    /* A "named result" must actually have a name — drop any phantom/blank
+       entry so a backend that advertises an empty/malformed result on
+       connect can NEVER reveal an otherwise-empty box. */
+    results = (results || []).filter(function (e) { return e && e.name && String(e.name).trim(); });
     list.innerHTML = "";
     if (!results.length) {
-        /* Hide the whole box while empty — it appears the moment a result
-           is saved or discovered on a connected backend. */
+        /* Hide the ENTIRE box while empty — it appears only once at least one
+           named result is saved or discovered on a connected backend. */
         if (strip) strip.style.display = "none";
         return;
     }
@@ -2921,33 +2906,19 @@ function buildCardsTab(panel, tab) {
         placeholder.className = "card new-card-placeholder";
         placeholder.id = "card-new-" + tab.id;
 
-        /* The catalog now persists with the project, so the visualization
-           tab retires its per-session scratch card: a SINGLE button does a
-           catalog-level add. Other tabs keep the pair — a per-session "+ New
-           card" scratch plus "+ Add to catalog" (permanent). "Restore
-           defaults" moved to the settings gear as one GUI-wide action. */
-        if (tab.id === "visualization") {
-            var newVizBtn = document.createElement("button");
-            newVizBtn.className = "new-card-btn";
-            newVizBtn.id = "btn-add-catalog-" + tab.id;
-            newVizBtn.innerHTML = "&#43; New viz card";
-            newVizBtn.onclick = function (e) { e.stopPropagation(); addCatalogCard(tab.id); };
-            placeholder.appendChild(newVizBtn);
-        } else {
-            var newBtn = document.createElement("button");
-            newBtn.className = "new-card-btn";
-            newBtn.id = "btn-new-card-" + tab.id;
-            newBtn.innerHTML = "&#43; New " + (tab.cardType || "card") + " card";
-            newBtn.onclick = function (e) { e.stopPropagation(); newUserCard(tab.id); };
-            placeholder.appendChild(newBtn);
-
-            var addCatBtn = document.createElement("button");
-            addCatBtn.className = "new-card-btn";
-            addCatBtn.id = "btn-add-catalog-" + tab.id;
-            addCatBtn.innerHTML = "&#43; Add to catalog";
-            addCatBtn.onclick = function (e) { e.stopPropagation(); addCatalogCard(tab.id); };
-            placeholder.appendChild(addCatBtn);
-        }
+        /* The catalog now persists with the project, so EVERY card tab has a
+           SINGLE catalog-level add button (the pattern the visualization tab
+           adopted first). The former per-session "+ New card" scratch button
+           is retired — scratch (source:"user") cards still load from old
+           session zips (loader untouched), they just can't be minted here.
+           "Restore defaults" lives on the settings gear as one GUI-wide action. */
+        var typeLabel = tab.id === "visualization" ? "viz" : (tab.cardType || "card");
+        var newBtn = document.createElement("button");
+        newBtn.className = "new-card-btn";
+        newBtn.id = "btn-add-catalog-" + tab.id;
+        newBtn.innerHTML = "&#43; New " + typeLabel + " card";
+        newBtn.onclick = function (e) { e.stopPropagation(); addCatalogCard(tab.id); };
+        placeholder.appendChild(newBtn);
 
         if (tab.cardType === "mesh") {
             /* Uploading a .msh is usually the shorter path to a working
@@ -4045,7 +4016,6 @@ document.addEventListener("DOMContentLoaded", function () {
             if (window.renderDashboardConnections) renderDashboardConnections();
             _updateBackendIndicator();
             _updateSolverCardBadges();
-            _updatePostprocStatus();
             /* A newly-connected backend may advertise saved results — refresh
                the picker so the Results box appears (or hides) accordingly. */
             if (document.getElementById("results-picker")) refreshResultsPicker();

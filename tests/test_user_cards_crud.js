@@ -1,8 +1,9 @@
 /**
  * User-authored card CRUD end-to-end in the browser.
  *
- * Drives the `+ New card` button on each card-bearing tab, verifies the
- * new card appears in the tab, then clicks its trash icon to delete.
+ * Mints a scratch user card (newUserCard, the shared creator behind the
+ * retired "+ New card" button and old-zip loading) on each card-bearing
+ * tab, verifies it appears, then clicks its trash icon to delete.
  * Between cycles the page is reloaded so we're also testing that the
  * IndexedDB overlay actually persists the card across page loads.
  *
@@ -62,14 +63,17 @@ async function main() {
             return mgr ? mgr.cards.length : 0;
         }, tabId);
 
-        // Click + New card.
-        const clicked = await page.evaluate((t) => {
-            const btn = document.getElementById("btn-new-card-" + t);
-            if (!btn) return false;
-            btn.click();
+        // Mint a scratch (source:"user") card via the programmatic path.
+        // The per-session "+ New card" button was retired in favour of a
+        // single catalog-level add; scratch cards still load from old
+        // session zips (loader untouched) and newUserCard is the shared
+        // creator that loader-era cards go through.
+        const clicked = await page.evaluate(async (t) => {
+            if (typeof window.newUserCard !== "function") return false;
+            await window.newUserCard(t);
             return true;
         }, tabId);
-        if (!clicked) { fail(tabId + ": + New card button missing"); continue; }
+        if (!clicked) { fail(tabId + ": newUserCard() unavailable"); continue; }
 
         // Wait for the card to land.
         try {
@@ -164,7 +168,7 @@ async function main() {
     await clickTab(page, "model");
     await installPrompts(page, { prompt: null });
     const beforeCancel = await page.evaluate(() => window.managers.model.cards.length);
-    await page.evaluate(() => document.getElementById("btn-new-card-model").click());
+    await page.evaluate(async () => { await window.newUserCard("model"); });
     await new Promise((r) => setTimeout(r, 500));
     const afterCancel = await page.evaluate(() => window.managers.model.cards.length);
     if (afterCancel === beforeCancel) pass("prompt cancel creates no card");

@@ -405,14 +405,6 @@ button { margin-bottom: 0; }
     margin: 0; cursor: pointer; white-space: nowrap; font-size: var(--fs-s);
 }
 .postproc-step input[type="checkbox"] { accent-color: var(--c-accent); margin: 0; }
-.postproc-step-status {
-    font-size: var(--fs-s); color: var(--c-muted);
-    padding: 0.1rem 0.4rem; border-radius: 10px;
-    border: var(--bw) solid var(--c-muted);
-}
-.postproc-step-status.connected { color: #22c55e; border-color: #22c55e; }
-/* A step that runs in-browser carries an empty badge -> render nothing. */
-.postproc-step-status:empty { display: none; }
 
 /* --- Results picker (visualization tab) --- */
 .results-picker-list { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
@@ -454,6 +446,13 @@ button { margin-bottom: 0; }
    Run button's handler refuses the run with a toast. */
 .card.disabled { opacity: 0.5; }
 .card.disabled .card-play-btn { opacity: 0.6; cursor: not-allowed; }
+/* A SELECTED (or fullscreen-maximized) disconnected card becomes fully
+   opaque so its code is readable for editing / fullscreen; the dashed accent
+   border (over the solid .selected border) + the "Disconnected" badge keep
+   the disconnected signal. The play button stays visibly disabled. */
+.card.disabled.selected,
+.card.disabled.maximized { opacity: 1; }
+.card.disabled.selected { border-style: dashed; }
 
 /* --- Progress bar --- */
 .progress-bar { height: 4px; background: var(--c-border); border-radius: 2px; overflow: hidden; margin-top: 0.3rem; }

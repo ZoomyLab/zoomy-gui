@@ -71,9 +71,12 @@ function startServer(options) {
 }
 
 async function waitForWorkerReady(page, timeoutMs) {
+    // The worker's terminal readiness signal is "[Worker] all ready"
+    // (pyodide-worker.js) — the old "Python runtime ready" string is no
+    // longer emitted, so match the current message.
     await page.waitForFunction(() => {
         const el = document.getElementById("debug-log");
-        return el && el.textContent.includes("Python runtime ready");
+        return el && el.textContent.includes("all ready");
     }, { timeout: timeoutMs || 240000 });
 }
 

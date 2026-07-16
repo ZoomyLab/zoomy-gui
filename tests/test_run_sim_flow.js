@@ -41,7 +41,7 @@ async function main() {
     console.log("Waiting for worker ready...");
     await page.waitForFunction(() => {
         const logs = document.getElementById("debug-log");
-        return logs && logs.textContent.includes("Python runtime ready");
+        return logs && logs.textContent.includes("all ready");
     }, { timeout: 240000 });
 
     /* Cards start collapsed with no auto-selection. Explicitly select

@@ -66,7 +66,7 @@ async function main() {
     console.log("Create card in second session:");
     await clickTab(page, "model");
     await setPrompt("SecondOnly");
-    await page.evaluate(() => document.getElementById("btn-new-card-model").click());
+    await page.evaluate(async () => { await window.newUserCard("model"); });
     await page.waitForFunction(
         () => window.managers.model.cards.find((c) => c.title === "SecondOnly"),
         { timeout: 10000 },
@@ -86,7 +86,7 @@ async function main() {
     // Switch to default session, create another card.
     console.log("Create card in default session:");
     await setPrompt("DefaultOnly");
-    await page.evaluate(() => document.getElementById("btn-new-card-model").click());
+    await page.evaluate(async () => { await window.newUserCard("model"); });
     await page.waitForFunction(
         () => window.managers.model.cards.find((c) => c.title === "DefaultOnly"),
         { timeout: 10000 },

@@ -31,11 +31,13 @@ async function main() {
     const fail = (m) => { console.error("  \u2716 " + m); failed++; };
     const pass = (m) => console.log("  \u2713 " + m);
 
-    // --- 1. Seed: a model card (newUserCard) + a .msh upload.
+    // --- 1. Seed: a scratch model card (newUserCard) + a .msh upload.
+    //     newUserCard is the shared creator behind old-zip loading, so this
+    //     still exercises the source:"user" path the loader must round-trip.
     console.log("Seed two user cards:");
     await page.evaluate(() => { window.prompt = () => "RoundtripModel"; window.confirm = () => true; });
     await clickTab(page, "model");
-    await page.evaluate(() => document.getElementById("btn-new-card-model").click());
+    await page.evaluate(async () => { await window.newUserCard("model"); });
     await page.waitForFunction(
         () => window.managers.model.cards.find((c) => c.title === "RoundtripModel"),
         { timeout: 10000 },
