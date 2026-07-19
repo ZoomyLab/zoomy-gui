@@ -1,0 +1,31 @@
+# Slim numpy solver card template (HANDOFF for the regen agent -> cards/solvers/default.json "template").
+# engine.py now auto-closes the previous run's store, so NO close_store() call is needed here.
+import os
+from zoomy_core.fvm.solver_numpy import HyperbolicSolver
+import zoomy_core.fvm.timestepping as ts
+from zoomy_core.misc.misc import Zstruct
+from zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec
+
+_h5_path = '/tmp/zoomy_sim/sim.h5'
+os.makedirs(os.path.dirname(_h5_path), exist_ok=True)
+
+settings = Zstruct(output=Zstruct(
+    directory=os.path.dirname(_h5_path),
+    filename=os.path.splitext(os.path.basename(_h5_path))[0],
+    snapshots=20,
+    clean_directory=True,
+))
+
+nsm = NumericalSystemModel.from_system_model(
+    model, reconstruction=ReconstructionSpec(order=1))
+
+solver = HyperbolicSolver(
+    time_end=0.1,
+    compute_dt=ts.adaptive(CFL=0.3),
+    settings=settings,
+)
+
+mesh.write_to_hdf5(_h5_path)
+solver.solve(mesh, nsm, write_output=True)
+
+open_hdf5(_h5_path)
