@@ -398,7 +398,7 @@ Project.prototype.applySaveData = function (projectJson, cardEntries) {
     return restored;
 };
 
-/* === Initialize from cards.json config === */
+/* === Initialize from the loaded tab/card config (see _loadAllCards) === */
 
 Project.fromConfig = function (config) {
     var proj = new Project();

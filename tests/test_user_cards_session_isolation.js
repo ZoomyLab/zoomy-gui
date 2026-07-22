@@ -54,13 +54,11 @@ async function main() {
     const secondInitial = await page.evaluate(() => {
         return window.managers.model.cards.filter((c) => c.source === "user").map((c) => c.title);
     });
-    // The authored cards/models/default.json ships one demo card
-    // (source="user") — it's a cross-session builtin, so it shows up in
-    // every session.
-    const legacyAllowed = "Tutorial: SWE Dam Break";
-    const secondInitialCustom = secondInitial.filter((t) => t !== legacyAllowed);
-    if (secondInitialCustom.length === 0) pass("second session has no user cards of its own yet");
-    else fail("second session started with unexpected user cards: " + JSON.stringify(secondInitialCustom));
+    // The authored cards/models/default.json ships NO source="user" card
+    // (the "Tutorial: SWE Dam Break" demo was removed), so a fresh session
+    // must start with an empty user tier — no allow-list needed.
+    if (secondInitial.length === 0) pass("second session has no user cards of its own yet");
+    else fail("second session started with unexpected user cards: " + JSON.stringify(secondInitial));
 
     // Create a user card in the second session.
     console.log("Create card in second session:");

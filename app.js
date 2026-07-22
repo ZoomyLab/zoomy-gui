@@ -3009,12 +3009,10 @@ async function _loadAllCards() {
         }
     } catch (e) { /* storage disabled; stay on null */ }
 
-    /* Fallback: if tabs.json doesn't exist, use legacy cards.json */
-    if (!tabsMeta || Object.keys(tabsMeta).length === 0) {
-        var legacy = await cli.storage.tryReadJson("cards.json");
-        if (legacy && legacy.tabs) return legacy;
-        tabsMeta = {};
-    }
+    /* cards/tabs.json is the ONLY tab registry (the legacy cards.json
+       catalog is gone). A missing/empty tabs.json falls through to the
+       per-category defaults built below. */
+    if (!tabsMeta) tabsMeta = {};
 
     var tabs = [];
 

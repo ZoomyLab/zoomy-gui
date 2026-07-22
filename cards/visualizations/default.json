@@ -8,41 +8,11 @@
     "has_timeline": true
   },
   {
-    "id": "vis-mesh-wireframe",
-    "subtab": "matplotlib",
-    "title": "Mesh Wireframe",
-    "snippet": "snippets/mesh_wireframe.py",
-    "description": "Cell edges over a faint field — a quick resolution check (`show_mesh=True`).",
-    "has_timeline": true
-  },
-  {
-    "id": "vis-timeseries",
-    "subtab": "matplotlib",
-    "title": "Probe Time Series",
-    "snippet": "snippets/timeseries.py",
-    "description": "A field at one probe cell over time, via `zoomy_plotting.line_plot`. Edit `cell` to move the probe."
-  },
-  {
-    "id": "vis-empty-mpl",
-    "subtab": "matplotlib",
-    "title": "Empty Figure",
-    "template": "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(1, 1, figsize=(6, 4))\nax.set_title('Empty View')",
-    "description": "Empty matplotlib canvas for custom plots."
-  },
-  {
     "id": "vis-mesh-plotly",
     "subtab": "plotly",
     "title": "Mesh Viewer (Plotly)",
     "snippet": "snippets/mesh_plotly.py",
     "description": "Unified 1D/2D/3D interactive mesh visualization using Plotly. Rotate, pan, zoom with mouse. Edit `field_name` and `colormap`, use the timeline slider for snapshots.",
     "has_timeline": true
-  },
-  {
-    "id": "vis-sine",
-    "subtab": "plotly",
-    "title": "Sine Wave (demo)",
-    "snippet": "snippets/sine_wave.py",
-    "preview": "previews/sine_wave.svg",
-    "description": "Standalone interactive plotly demo (no simulation data needed)."
   }
 ]
