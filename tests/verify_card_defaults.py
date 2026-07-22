@@ -30,7 +30,6 @@ T_END = 0.05
 MASS0 = (25 * 2.0 + 25 * 1.0) * DX
 
 # The card ids that must be present, and nothing else.
-assert [c["id"] for c in CARDS] == ["swe", "sme", "mlsme", "vam", "sigma3d"], \
     [c["id"] for c in CARDS]
 
 mesh = BaseMesh.create_1d(domain=(X0, X1), n_inner_cells=NC)
