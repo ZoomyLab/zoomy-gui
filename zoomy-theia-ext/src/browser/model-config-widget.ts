@@ -28,7 +28,7 @@ function renderMd(s: string): string {
  *  to HTML with katex.renderToString and splice it back AFTER marked, so (a) the
  *  markdown parser never mangles the `\\` matrix row separators, and (b) the baked
  *  KaTeX HTML survives React re-renders (no fragile post-render auto-typeset). */
-function renderMathMd(md: string): string {
+export function renderMathMd(md: string): string {
     const math: string[] = [];
     const stash = (raw: string, tex: string, display: boolean) => {
         let out = raw;

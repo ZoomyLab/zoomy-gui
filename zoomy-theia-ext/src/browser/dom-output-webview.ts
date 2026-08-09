@@ -3,6 +3,7 @@ import * as ReactDOMNS from '@theia/core/shared/react-dom';
 const createPortal = (ReactDOMNS as any).createPortal as (node: React.ReactNode, container: Element, key?: string) => React.ReactPortal;
 import { Emitter, Event } from '@theia/core';
 import { CellOutputWebview, OutputRenderEvent } from '@theia/notebook/lib/browser/renderers/cell-output-webview';
+import { renderMathMd } from './model-config-widget';
 
 /** DOM (no-iframe) notebook output surface for browser-only Theia, where the
  *  default iframe webview factory is unbound. Instead of one overlay stacked at
@@ -55,6 +56,13 @@ function bytesToBase64(bytes: Uint8Array): string {
     for (let i = 0; i < bytes.length; i++) { s += String.fromCharCode(bytes[i]); }
     return btoa(s);
 }
+/** text/latex payloads may or may not carry their own $ delimiters; renderMathMd
+ *  keys off them, so add a pair when they are absent. */
+function wrapTex(t: string): string {
+    const s = (t || '').trim();
+    if (!s) { return s; }
+    return (s.startsWith('$') && s.endsWith('$')) ? s : '$$' + s + '$$';
+}
 function text(item: any): string {
     try { return item.data?.toString?.() ?? ''; } catch { return ''; }
 }
@@ -67,6 +75,13 @@ function renderItem(item: any, key: string): React.ReactNode {
     }
     if (mime === 'text/html') {
         return React.createElement('div', { key, className: 'zoomy-html-output', dangerouslySetInnerHTML: { __html: text(item) } });
+    }
+    // Math-bearing text mimes go through KaTeX. Without this they fell into the
+    // <pre> below and an equation rendered as literal `$h^{*} = ...$` monospace,
+    // which is why show(eq=...) looked broken in the GUI.
+    if (mime === 'text/latex' || mime === 'text/markdown') {
+        const src = mime === 'text/latex' ? wrapTex(text(item)) : text(item);
+        return React.createElement('div', { key, className: 'zoomy-html-output', dangerouslySetInnerHTML: { __html: renderMathMd(src) } });
     }
     const isErr = mime.includes('error');
     return React.createElement('pre', { key, style: { margin: '2px 0', whiteSpace: 'pre-wrap', fontFamily: 'var(--theia-code-font-family, monospace)', fontSize: 12, color: isErr ? 'var(--theia-errorForeground, #f66)' : undefined } }, text(item));

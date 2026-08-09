@@ -11,12 +11,50 @@
 // Python helpers: notebook-cell exec (last-expression display + matplotlib PNG +
 // rich repr) and jedi autocomplete (copied from zoomy_gui/engine.py).
 const PY_HELPERS = `
-import sys, io, os, base64, json, ast
+import sys, io, os, base64, json, ast, builtins
 os.environ.setdefault("MPLBACKEND", "AGG")
 __zoomy_ns__ = {"__name__": "__main__"}
 
+#: Rich outputs emitted DURING a cell by display(), in call order.
+__zoomy_outs__ = []
+
+
+def __zoomy_rich__(obj):
+    """The richest representation obj offers, as an output dict."""
+    for meth, mime in (("_repr_html_", "text/html"),
+                       ("_repr_markdown_", "text/markdown"),
+                       ("_repr_latex_", "text/latex")):
+        fn = getattr(obj, meth, None)
+        if fn:
+            try:
+                r = fn()
+                if r:
+                    return {"mime": mime, "data": r}
+            except Exception:
+                pass
+    return {"mime": "text/plain", "data": repr(obj)}
+
+
+def display(obj=None, *args, **kwargs):
+    """Notebook-style display: emit a rich output NOW, mid-cell.
+
+    Without this the kernel rendered only a cell's LAST expression, so a loop
+    emitting one equation per iteration could not produce rich output at all --
+    every equation fell back to ASCII pretty-print. Library code
+    (zoomy_core.misc.show) looks for exactly this name, in builtins and in the
+    cell namespace, to decide whether rich rendering is available.
+    """
+    for o in ((obj,) + args):
+        if o is not None:
+            __zoomy_outs__.append(__zoomy_rich__(o))
+
+
+builtins.display = display
+__zoomy_ns__["display"] = display
+
+
 def __zoomy_exec__(src):
-    outs = []
+    __zoomy_outs__.clear()
     tree = ast.parse(src, mode="exec")
     val = None
     if tree.body and isinstance(tree.body[-1], ast.Expr):
@@ -25,21 +63,11 @@ def __zoomy_exec__(src):
         val = eval(compile(ast.Expression(last.value), "<cell>", "eval"), __zoomy_ns__)
     else:
         exec(compile(tree, "<cell>", "exec"), __zoomy_ns__)
+    # Mid-cell display() output comes first: it happened before the final value.
+    outs = list(__zoomy_outs__)
+    __zoomy_outs__.clear()
     if val is not None:
-        rich = None
-        for meth, mime in (("_repr_html_", "text/html"),
-                           ("_repr_markdown_", "text/markdown"),
-                           ("_repr_latex_", "text/latex")):
-            fn = getattr(val, meth, None)
-            if fn:
-                try:
-                    r = fn()
-                    if r:
-                        rich = {"mime": mime, "data": r}
-                        break
-                except Exception:
-                    pass
-        outs.append(rich if rich else {"mime": "text/plain", "data": repr(val)})
+        outs.append(__zoomy_rich__(val))
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
         for num in plt.get_fignums():
