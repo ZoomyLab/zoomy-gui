@@ -491,6 +491,10 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         // Seed the selected visualization viewer (single-select).
         const firstViz = (this.cardsByTab['visualizations'] || []).find(c => c.snippet);
         if (firstViz) { this.selected['visualizations'] = firstViz.id; this.selectedViz.clear(); this.selectedViz.add(firstViz.id); }
+        // Also here, not only in applySpec: a case created WITHOUT a spec never
+        // reaches applySpec, and that is the first-boot path — so the GUI opened
+        // on a selected-but-collapsed card, which is the case this is meant to fix.
+        this.expandSelectedInActiveTab();
         this.caseUri = this.caseFileUri(clean); this.caseName = clean;
         await this.persistCase();
         await this.listCases();
