@@ -6,6 +6,7 @@ import { URI, Emitter } from '@theia/core';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { getZoomyCli, setDisplaySink, setLogSink, ensureRenderLibs, ensureJSZip, emitCasesChanged, emitBackendsChanged, emitSimOutput, DisplayCell } from './zoomy-cli-loader';
+import { hasPendingProjectDeepLink } from './zoomy-deep-link';
 
 // The project root in the browser FS. A case is a folder here with a canonical
 // `case.py` (zoomy_prepost jupytext) that is the SINGLE SOURCE OF TRUTH — the GUI
@@ -273,22 +274,32 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             this.loaded = true;
             if (!this.caseWatchStarted) { this.caseWatchStarted = true; this.startActiveCaseWatch(); }
             await this.listCases();
-            // URL-autoload: ?project=<url> ships a SET of cases (a ZIP artefact,
-            // like the old GUI); ?case=<url> a single case; else restore last.
-            const params = new URLSearchParams(location.search);
-            const projectUrl = params.get('project');
-            const caseUrl = params.get('case');
-            if (projectUrl) {
-                await this.loadProjectFromUrl(projectUrl);
-            } else if (caseUrl) {
-                try { const text = await (await fetch(caseUrl)).text(); await this.newCase('imported', this.cli.parseCase(text)); } catch { /* ignore */ }
-            } else {
-                // Always open a case (no gate): the last one, else the first
-                // existing, else a fresh default "test" case.
-                const last = (() => { try { return localStorage.getItem(CURRENT_CASE_KEY); } catch { return null; } })();
-                if (last && this.cases.includes(last)) { await this.openCaseByName(last); }
-                else if (this.cases.length) { await this.openCaseByName(this.cases[0]); }
-                else { await this.newCase('test'); }
+            // A #/open?project=…&path=… deep link (zoomy-deep-link.ts) drives
+            // its OWN project load + case selection explicitly, via
+            // handleDeepLink() in zoomy-frontend-module.ts, calling
+            // loadProjectFromUrl() on THIS widget directly. Skip our own
+            // location.search-driven auto-open entirely in that case — racing
+            // it here would (worst case) spawn a spurious default "test" case
+            // from the "nothing to open yet" branch below while the deep
+            // link's own fetch is still in flight.
+            if (!hasPendingProjectDeepLink()) {
+                // URL-autoload: ?project=<url> ships a SET of cases (a ZIP artefact,
+                // like the old GUI); ?case=<url> a single case; else restore last.
+                const params = new URLSearchParams(location.search);
+                const projectUrl = params.get('project');
+                const caseUrl = params.get('case');
+                if (projectUrl) {
+                    await this.loadProjectFromUrl(projectUrl);
+                } else if (caseUrl) {
+                    try { const text = await (await fetch(caseUrl)).text(); await this.newCase('imported', this.cli.parseCase(text)); } catch { /* ignore */ }
+                } else {
+                    // Always open a case (no gate): the last one, else the first
+                    // existing, else a fresh default "test" case.
+                    const last = (() => { try { return localStorage.getItem(CURRENT_CASE_KEY); } catch { return null; } })();
+                    if (last && this.cases.includes(last)) { await this.openCaseByName(last); }
+                    else if (this.cases.length) { await this.openCaseByName(this.cases[0]); }
+                    else { await this.newCase('test'); }
+                }
             }
             // NO automatic backend scan on load: probing localhost ports makes
             // the browser (Firefox especially) prompt/warn about the page issuing

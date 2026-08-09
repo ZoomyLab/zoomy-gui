@@ -4,7 +4,7 @@ import { NavigatorContextMenu } from '@theia/navigator/lib/browser/navigator-con
 import {
     FrontendApplicationContribution, OpenerService, open, CommonMenus,
     WidgetFactory, WidgetManager, ApplicationShell, AbstractViewContribution, bindViewContribution,
-    QuickInputService, codicon
+    QuickInputService, codicon, OpenHandler, NavigatableWidgetOptions
 } from '@theia/core/lib/browser';
 import { OutlineViewService } from '@theia/outline-view/lib/browser/outline-view-service';
 import { OutlineSymbolInformationNode } from '@theia/outline-view/lib/browser/outline-view-widget';
@@ -33,6 +33,8 @@ import { ZoomyParamsWidget } from './zoomy-params-widget';
 import { ZoomySimOutputWidget } from './zoomy-sim-output-widget';
 import { getPyodideClient, PyodideClient } from './pyodide-runtime';
 import { registerZoomyCompletions } from './completion-provider';
+import { ZoomyImageViewerWidget, ZoomyImageOpenHandler } from './zoomy-image-viewer';
+import { consumeDeepLink, parseDeepLink, resolveDeepLinkPath, ZoomyNoticeWidget, DEEP_LINK_ROUTE } from './zoomy-deep-link';
 
 const VIEW_TYPE = 'zoomy-notebook';
 const NB_URI = new URI('file:///pyodide.ipynb');
@@ -208,8 +210,96 @@ class ZoomyContribution implements FrontendApplicationContribution, CommandContr
                 return;
             }
         } catch (e) { console.warn('zoomy workspace open', e); }
+        // A pending #/open?path=… deep link (captured in zoomy-deep-link.ts
+        // before WorkspaceService could misread window.location.hash as a
+        // workspace directory — see that file's captureDeepLinkHash() doc
+        // comment) wins over the default landing surface: jump straight to
+        // the linked file in the normal workbench area instead of the
+        // card-based model configuration.
+        const pendingLink = consumeDeepLink();
+        if (pendingLink !== undefined) {
+            this.handleDeepLink(pendingLink).catch(e => console.error('zoomy deep link', e));
+            return;
+        }
         // Land directly on the model configuration, in the classical IDE layout.
         this.openModelConfig().catch(e => console.error('zoomy open config', e));
+    }
+
+    /** Resolve and open a captured `#/open?path=…[&project=…]` deep link.
+     *  Always lands on something visible: the target file through its normal
+     *  OpenHandler (e.g. the image viewer for a .png) on success, or a clear
+     *  notice panel — never a silent blank screen — when the route, project
+     *  fetch, or path doesn't resolve. */
+    protected async handleDeepLink(fragment: string): Promise<void> {
+        const parsed = parseDeepLink(fragment);
+        if (!parsed || parsed.route !== DEEP_LINK_ROUTE) {
+            await this.showNotice('Unrecognized link', 'This link uses an unknown route ("#' + fragment + '"). Only #/' + DEEP_LINK_ROUTE + '?path=… is supported.', fragment);
+            return;
+        }
+        if (!parsed.path) {
+            await this.showNotice('Missing path', 'The link is missing a ?path=… parameter, e.g. #/' + DEEP_LINK_ROUTE + '?path=cases/<case>/outputs/1.png', '#' + fragment);
+            return;
+        }
+        let uri: URI;
+        try { uri = resolveDeepLinkPath(ZoomyContribution.WORKSPACE_ROOT, parsed.path); }
+        catch (e: any) { await this.showNotice('Invalid path', e?.message || String(e), parsed.path); return; }
+
+        // A &project=<url-or-zenodo:id> companion fetches/unpacks the case
+        // bundle through the EXACT SAME loader the existing ?project= query
+        // param already uses — ZoomyModelConfigWidget.loadProjectFromUrl(),
+        // which itself calls resolveArtefactUrl() + loadProjectFromZip() (zip
+        // fetch/unzip + FileService writes; not reimplemented here). This is
+        // what makes the link work for a visitor who has NEVER opened this
+        // GUI before (empty virtual FS — the QR-code-in-a-thesis case): the
+        // trigger differs from ?project=, the mechanism doesn't. Skipped when
+        // `path` already exists locally, so a returning visitor isn't forced
+        // to re-download. ZoomyModelConfigWidget.load() independently checks
+        // hasPendingProjectDeepLink() (zoomy-deep-link.ts) to stay out of the
+        // way — see that guard for why, otherwise its own location.search
+        // auto-open would race this fetch and could spawn a spurious default
+        // case while we're still downloading.
+        let projectAttempted = false;
+        let projectProducedSomething = false;
+        if (parsed.project) {
+            const alreadyPresent = await this.fileService.exists(uri).catch(() => false);
+            if (!alreadyPresent) {
+                projectAttempted = true;
+                const w = await this.mc();
+                const casesBefore = w.cases.length;
+                // loadProjectFromUrl() catches its own errors into a notice on
+                // a widget we never attach/show, so it never rejects — this
+                // await is still what sequences us AFTER the fetch+unzip+FS
+                // writes complete, so the exists()/resolve() calls below never
+                // race the write.
+                await w.loadProjectFromUrl(parsed.project);
+                projectProducedSomething = w.cases.length > casesBefore || await this.fileService.exists(uri).catch(() => false);
+            }
+        }
+
+        try {
+            const stat = await this.fileService.resolve(uri);
+            if (stat.isDirectory) { await this.showNotice('Not a file', 'The linked path is a folder, not a file: ' + parsed.path, uri.path.toString()); return; }
+        } catch {
+            if (projectAttempted && projectProducedSomething) {
+                // The project loaded fine — it just doesn't contain this path.
+                await this.showNotice('File not in project', 'Loaded ' + parsed.project + ', but ' + parsed.path + ' is not in it.', uri.path.toString());
+            } else if (projectAttempted) {
+                await this.showNotice('Could not load project', 'Tried to fetch ' + parsed.project + ', but it produced no cases (bad URL, network error, or an empty/invalid archive).', uri.path.toString());
+            } else {
+                await this.showNotice('File not found', 'No such file in this browser’s Zoomy library: ' + parsed.path + '. If you have not opened/loaded this'
+                    + ' case here before, it will not exist locally yet — add &project=<url-or-zenodo:id> to the link to fetch it automatically.', uri.path.toString());
+            }
+            return;
+        }
+        try { await open(this.openerService, uri); }
+        catch (e: any) { await this.showNotice('Could not open file', e?.message || String(e), uri.path.toString()); }
+    }
+    /** Show (or refresh) the single deep-link notice panel in the main area. */
+    protected async showNotice(heading: string, message: string, detail?: string): Promise<void> {
+        const w = (await this.widgetManager.getOrCreateWidget(ZoomyNoticeWidget.ID)) as ZoomyNoticeWidget;
+        w.setNotice({ heading, message, detail });
+        if (!w.isAttached) { this.shell.addWidget(w, { area: 'main' }); }
+        this.shell.activateWidget(w.id);
     }
 
     /** Register a Monaco document-symbol provider so the native Outline shows a
@@ -523,6 +613,23 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(ctx => ({ id: ZoomyStartWidget.ID, createWidget: () => ctx.container.get(ZoomyStartWidget) })).inSingletonScope();
     bind(ZoomyModelConfigWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({ id: ZoomyModelConfigWidget.ID, createWidget: () => ctx.container.get(ZoomyModelConfigWidget) })).inSingletonScope();
+    // Image viewer (PNG/SVG/GIF): an OpenHandler that beats the built-in text
+    // editor (see IMAGE_OPEN_PRIORITY in zoomy-image-viewer.ts), plus the
+    // widget factory it opens. One widget instance per URI.
+    bind(ZoomyImageViewerWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: ZoomyImageViewerWidget.ID,
+        createWidget: (options: NavigatableWidgetOptions) => {
+            const widget = ctx.container.get(ZoomyImageViewerWidget);
+            widget.setUri(new URI(options.uri));
+            return widget;
+        },
+    })).inSingletonScope();
+    bind(ZoomyImageOpenHandler).toSelf().inSingletonScope();
+    bind(OpenHandler).toService(ZoomyImageOpenHandler);
+    // Deep-link (#/open?path=…) error/notice panel.
+    bind(ZoomyNoticeWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({ id: ZoomyNoticeWidget.ID, createWidget: () => ctx.container.get(ZoomyNoticeWidget) })).inSingletonScope();
     bind(ZoomyContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(ZoomyContribution);
     bind(ZoomyNotebookOutlineContribution).toSelf().inSingletonScope();
