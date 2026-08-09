@@ -13,6 +13,10 @@ import { getZoomyCli, setDisplaySink, setLogSink, ensureRenderLibs, ensureJSZip,
 // folder / CLI / GUI can never drift out of sync.
 const PROJECT_ROOT = 'file:///zoomy/cases';
 const CURRENT_CASE_KEY = 'zoomy-current-case';
+/** Debounce before a viz param change re-renders. Long enough that dragging the
+ *  time-step slider does not queue a render per tick, short enough to still feel
+ *  like the plot follows the control. */
+const VIZ_RERENDER_MS = 250;
 
 declare const window: any;
 /** Render markdown via marked when available, else the minimal inline fallback. */
@@ -194,6 +198,9 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     // Parameters panel + its own Render + output.
     protected readonly selectedViz = new Set<string>();
     protected vizBusy = false;
+    // Debounce state for auto re-render on a viz param change (scheduleVizRerender).
+    protected vizRerenderTimer: ReturnType<typeof setTimeout> | undefined;
+    protected vizRerenderPending: any;
     protected storeMeta: any;
     // Post-processing chain: enabled steps routed to a connected `postprocess`
     // backend (zoomy_prepost.steps) — reuses the CLI's runPostprocChain.
@@ -816,7 +823,52 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     protected setParam(card: any, name: string, value: any): void {
         const e = this.edited.get(card.id) || {}; e[name] = value; this.edited.set(card.id, e); this.update();
         this.onParamsChangedEmitter.fire();
+        this.scheduleVizRerender(card);
         this.schedulePersist();
+    }
+
+    /** Expand the active tab's selected card, so opening the GUI (or a case)
+     *  shows that card's parameters instead of a wall of collapsed headers.
+     *
+     *  The accordion still allows only ONE expanded card, and selection remains
+     *  what drives the case — this just makes the two agree on arrival rather
+     *  than requiring a click to reveal what is already selected. */
+    protected expandSelectedInActiveTab(): void {
+        const sel = this.selected[this.active];
+        if (!sel) { return; }
+        this.expanded = sel;
+        this.activeParamCardId = sel;
+        this.activeParamDir = this.active;
+        this.paramsPanel?.sync();
+    }
+
+    /** Re-render a visualization whose params just changed, without a second
+     *  click on "Render visualization".
+     *
+     *  Deliberately narrow. It fires only for a card that is a SELECTED viewer
+     *  and has already been rendered once — changing params on a card showing
+     *  no plot should not conjure one, and a model/mesh/solver param must not
+     *  trigger a render at all (its result is only valid after a new run).
+     *
+     *  Debounced because the inline params include a time-step slider: without
+     *  it, one drag queues a render per tick. `vizBusy` serialises renders, so
+     *  a change arriving mid-render re-arms instead of being dropped — the last
+     *  value the user chose is the one that ends up on screen. */
+    protected scheduleVizRerender(card: any): void {
+        if (!card?.snippet || !this.simRan) { return; }
+        if (!this.selectedViz.has(card.id)) { return; }
+        if (!this.outputs.has(card.id)) { return; }
+        this.vizRerenderPending = card;
+        if (this.vizRerenderTimer !== undefined) { clearTimeout(this.vizRerenderTimer); }
+        this.vizRerenderTimer = setTimeout(() => {
+            this.vizRerenderTimer = undefined;
+            const c = this.vizRerenderPending;
+            if (!c) { return; }
+            // Still rendering the previous change — come back rather than drop it.
+            if (this.vizBusy) { this.scheduleVizRerender(c); return; }
+            this.vizRerenderPending = undefined;
+            void this.renderVizCard(c);
+        }, VIZ_RERENDER_MS);
     }
 
     protected async runCard(card: any): Promise<void> {
@@ -1373,6 +1425,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         // Seed the selected visualization viewer (single-select).
         const firstViz = (this.cardsByTab['visualizations'] || []).find(c => c.snippet);
         if (firstViz) { this.selected['visualizations'] = firstViz.id; this.selectedViz.clear(); this.selectedViz.add(firstViz.id); }
+        this.expandSelectedInActiveTab();
         // Restore enabled post-processing steps + Nz (round-trips via spec.postproc).
         this.postprocSteps.clear();
         if (Array.isArray(spec?.postproc)) { for (const s of spec.postproc) { this.postprocSteps.add(String(s)); } }
