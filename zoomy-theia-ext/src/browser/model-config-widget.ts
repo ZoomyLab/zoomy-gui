@@ -461,10 +461,34 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         } catch (e: any) { this.setNotice('Rename failed: ' + (e?.message || e)); }
     }
 
-    /** Run a coupling on the foam backend: POST the participants to /couple,
-     *  where build_coupled_bundle expands the OF-cases + shared precice-config
-     *  and launches both. Gated on a connected "foam" backend — all participants
-     *  run there. (Type is inferred from the child name/spec: vof vs sme.) */
+    /** Read a coupling folder into { path relative to it: text } — coupling.yml,
+     *  precice-config.xml, every participant's case.py and the runner. This is
+     *  what makes "Run coupled" run THIS coupling: the folder IS the definition,
+     *  so it travels to the backend instead of the backend guessing from a
+     *  server-side template. Binary members (a mesh, an output store) are
+     *  skipped; a coupling is defined by text. */
+    protected async readFolderFiles(dir: URI, prefix = ''): Promise<Record<string, string>> {
+        const out: Record<string, string> = {};
+        if (!(await this.fileService.exists(dir))) { return out; }
+        const stat = await this.fileService.resolve(dir);
+        for (const child of stat.children || []) {
+            const base = child.resource.path.base;
+            if (child.isDirectory) {
+                if (base === 'run' || base === 'outputs' || base.startsWith('precice-run')) { continue; }
+                Object.assign(out, await this.readFolderFiles(child.resource, prefix + base + '/'));
+            } else if (/\.(py|yml|yaml|xml|json|sh|md|txt|cfg)$/i.test(base)) {
+                out[prefix + base] = (await this.fileService.read(child.resource)).value;
+            }
+        }
+        return out;
+    }
+
+    /** Run a coupling on the foam backend: POST the coupling FOLDER to /couple,
+     *  which materializes it there and runs its own entry (run.py / run.sh) —
+     *  one job, because preCICE participants must be started together in one
+     *  exchange directory and the coupling's runner is what knows how. Gated on
+     *  a connected "foam" backend. (Type is inferred from the child name: vof
+     *  vs sme.) */
     async runCoupling(name: string): Promise<void> {
         const cp = this.couplings.find(c => c.name === name);
         if (!cp || cp.children.length < 2) { this.setNotice('Coupling "' + name + '" needs at least 2 participants.'); return; }
@@ -479,7 +503,12 @@ export class ZoomyModelConfigWidget extends ReactWidget {
                 const leaf = String(child.split('/').pop());
                 return { name: leaf, type: /vof/i.test(leaf) ? 'vof' : 'sme' };
             });
-            const res = await this.cli.submitCoupling({ tag: 'OpenFOAM', coupling_id: name, scheme: 'parallel-explicit', participants,
+            const files = await this.readFolderFiles(new URI(PROJECT_ROOT + '/' + name));
+            if (!files['run.py'] && !files['run.sh']) {
+                emitSimOutput({ kind: 'line', level: 'info', text: '· no run.py/run.sh in "' + name + '" — the backend falls back to its ZOOMY_COUPLING_TEMPLATE_<TYPE> cases.' });
+            }
+            emitSimOutput({ kind: 'line', level: 'stdout', text: '· sending ' + Object.keys(files).length + ' file(s): ' + Object.keys(files).sort().join(', ') });
+            const res = await this.cli.submitCoupling({ tag: 'OpenFOAM', coupling_id: name, scheme: 'parallel-explicit', participants, files,
                 onStatus: (s: any) => { const m = s?.message || s?.state || (typeof s === 'string' ? s : null); if (m) { emitSimOutput({ kind: 'line', level: 'stdout', text: String(m) }); } } });
             emitSimOutput({ kind: 'line', level: 'ok', text: '✓ Coupling "' + name + '" submitted — ' + ((res?.jobs || []).length) + ' participant job(s) on foam.' });
             this.setNotice('Coupling "' + name + '" running on the foam backend.');
