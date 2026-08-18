@@ -13,6 +13,10 @@ import { hasPendingProjectDeepLink } from './zoomy-deep-link';
 // only ever edits an open case, and every edit is written back to case.py, so the
 // folder / CLI / GUI can never drift out of sync.
 const PROJECT_ROOT = 'file:///zoomy/cases';
+// The workspace root PROJECT_ROOT sits inside. Deep links resolve ?path=
+// against THIS (see resolveDeepLinkPath / ZoomyContribution.WORKSPACE_ROOT), so
+// project assets that are not cases must land here to be reachable by a link.
+const WORKSPACE_ROOT = 'file:///zoomy';
 const CURRENT_CASE_KEY = 'zoomy-current-case';
 /** Debounce before a viz param change re-renders. Long enough that dragging the
  *  time-step slider does not queue a render per tick, short enough to still feel
@@ -1561,7 +1565,27 @@ export class ZoomyModelConfigWidget extends ReactWidget {
                 const ml = f.name.match(/(?:^|\/)([^/]+)\/case\.py$/) || f.name.match(/(?:^|\/)([^/]+)\.py$/);
                 if (ml) { name = ml[1]; rel = 'case.py'; }
             }
-            if (!name || !rel) { continue; }
+            if (!name || !rel) {
+                // Not case-shaped: an ASSET the project carries. The thesis gif
+                // archive is exactly this, bare *.gif at the zip root. These
+                // used to hit `continue` and be dropped in SILENCE, so a deep
+                // link with ?path=<that file> resolved to a path that had never
+                // been written and the GUI answered "File not in project" while
+                // the zip itself was correct. Every animation QR printed in the
+                // thesis points at such a path.
+                //
+                // Write them verbatim under the WORKSPACE root, which is what
+                // resolveDeepLinkPath() resolves ?path= against; PROJECT_ROOT is
+                // a subfolder of it and is only for cases.
+                const assetUri = new URI(WORKSPACE_ROOT + '/' + f.name.replace(/^\/+/, ''));
+                if (!(await this.fileService.exists(assetUri.parent))) {
+                    await this.fileService.createFolder(assetUri.parent);
+                }
+                await this.fileService.createFile(
+                    assetUri, BinaryBuffer.wrap(await f.async('uint8array')), { overwrite: true });
+                count++;
+                continue;
+            }
             name = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
             const uri = new URI(PROJECT_ROOT + '/' + name + '/' + rel);
             if (!(await this.fileService.exists(uri.parent))) { await this.fileService.createFolder(uri.parent); }
