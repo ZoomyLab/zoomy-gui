@@ -232,6 +232,14 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     /** External hook so the module can reflect connected backends in the status bar. */
     onBackendsChanged: ((tags: string[]) => void) | undefined;
 
+    /** Resolves once load() is done, its ?project= fetch and its case
+     *  selection included. A URL-driven caller (?view=notebook) has to act on
+     *  whichever case ended up open, and load() is fire-and-forget from init(),
+     *  so without this there is nothing to await but a poll. Declared before
+     *  whenLoaded so the promise executor's assignment is not overwritten. */
+    protected resolveLoaded: () => void = () => { /* replaced by the executor below */ };
+    readonly whenLoaded: Promise<void> = new Promise<void>(res => { this.resolveLoaded = res; });
+
     @postConstruct()
     protected init(): void {
         this.id = ZoomyModelConfigWidget.ID;
@@ -312,6 +320,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         } catch (e: any) {
             this.error = e?.message || String(e);
         }
+        this.resolveLoaded();
         this.update();
     }
 

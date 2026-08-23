@@ -254,6 +254,19 @@ class ZoomyContribution implements FrontendApplicationContribution, CommandContr
             } catch (e) { console.warn('zoomy: could not clear the restored layout', e); }
         }
         await this.openModelConfig();
+        // ?view=notebook lands the reader in the notebook instead of on the
+        // card surface, which is what the thesis session links want. It has to
+        // wait for whenLoaded: openInNotebook() exports whichever case is open,
+        // and until the ?project= fetch above has finished there is no case at
+        // all, so firing it early only raises "Open a case first".
+        try {
+            const q = new URLSearchParams(location.search);
+            if ((q.get('view') || '').toLowerCase() === 'notebook') {
+                const w = await this.mc();
+                await w.whenLoaded;
+                await w.openInNotebook();
+            }
+        } catch (e) { console.warn('zoomy: could not open the notebook view', e); }
     }
 
     /** Resolve and open a captured `#/open?path=…[&project=…]` deep link.
