@@ -53,6 +53,51 @@ builtins.display = display
 __zoomy_ns__["display"] = display
 
 
+# The case.ipynb exported from a GUI session ends its solver cell with
+# open_hdf5(_h5_path). That helper is defined in engine.py, which the CARD
+# worker fetches and execs but this kernel does not -- it only inlines
+# __zoomy_exec__ and complete_code from that file. So every exported notebook
+# died on NameError: name 'open_hdf5' is not defined. Same contract as
+# engine.py's, retargeted from sys._shallowflow_scope to this kernel's cell
+# namespace: close any store already open (its h5py handle would otherwise
+# stop a re-run truncating the same path), cross-check the mesh against the
+# fields, and publish store so later plotting cells find it.
+def close_store():
+    s = __zoomy_ns__.get("store")
+    if s is None:
+        return
+    try:
+        s.close()
+    except Exception:
+        pass
+    __zoomy_ns__["store"] = None
+
+
+def open_hdf5(path):
+    import zoomy_plotting as zp   # ensureDeps() installs it on seeing this name
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"open_hdf5: no such file: {path}")
+    close_store()
+    store = zp.read_hdf5(path)    # validates schema internally
+    if store.cells.shape[0] != store.n_cells:
+        raise ValueError(
+            f"open_hdf5: cells/Q mismatch in {path}: "
+            f"{store.cells.shape[0]} cells from /mesh, "
+            f"but fields report {store.n_cells} cells. "
+            f"Check the solver's HDF5 writer.")
+    __zoomy_ns__["store"] = store
+    print(f"[store] opened {path}  dim={store.dim} cell_type={store.cell_type} "
+          f"n_cells={store.n_cells} n_snapshots={store.n_snapshots}")
+    return store
+
+
+builtins.open_hdf5 = open_hdf5
+builtins.close_store = close_store
+__zoomy_ns__["open_hdf5"] = open_hdf5
+__zoomy_ns__["close_store"] = close_store
+
+
 def __zoomy_exec__(src):
     __zoomy_outs__.clear()
     tree = ast.parse(src, mode="exec")
