@@ -838,12 +838,28 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     /** Field selector + time slider for a visualization, from the last run's store
      *  (store_meta.fields / n_snapshots). Editable like any card parameter and
      *  passed to the viz snippet — no bespoke visualizer code needed. */
+    /** The field a case should open on: the depth if the store has one, else
+     *  whatever comes first. Kept next to the schema so the Parameters panel
+     *  and the viz snippets cannot drift apart on what "default" means. */
+    protected defaultVizField(fields: string[]): string | null {
+        // q1 is in the list because 20 of the thesis stores were written with no
+        // /fields@names attribute, so their keys fall back to q0..qN and there is
+        // no 'h' to find. Measured on those files: q0 is the bed (identically
+        // zero, unchanged over the run) and q1 is the depth.
+        for (const name of ['h', 'height', 'q1']) {
+            if (fields.indexOf(name) !== -1) { return name; }
+        }
+        return fields[0] ?? null;
+    }
     protected vizParamSchema(): any {
         const fields: string[] = (this.storeMeta?.fields || this.storeMeta?.field_names || []) as string[];
         const nSnap = Math.max(1, Number(this.storeMeta?.n_snapshots || this.storeMeta?.n_steps || 1));
         return {
-            field: { type: 'Selector', objects: fields, default: fields[0] ?? null, doc: 'Which stored field to plot (from the last run).' },
-            time_step: { type: 'Integer', default: 0, bounds: [0, nSnap - 1], step: 1, widget: 'slider', doc: 'Snapshot index (time) to plot.' },
+            // Default to the depth at the END of the run. fields[0] is the bed
+            // for every shallow-water state, so the old default opened each
+            // case on a flat bed at t = 0 and looked like nothing had run.
+            field: { type: 'Selector', objects: fields, default: this.defaultVizField(fields), doc: 'Which stored field to plot (from the last run).' },
+            time_step: { type: 'Integer', default: nSnap - 1, bounds: [0, nSnap - 1], step: 1, widget: 'slider', doc: 'Snapshot index (time) to plot.' },
         };
     }
     /** Load a card's real parameter schema (class introspection via the worker;
@@ -1374,8 +1390,11 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             const snippet = await this.cli.fetchSnippet(card.snippet);
             // Pass the card's edited field + time_step (its inline Parameters).
             const ed = this.edited.get(card.id) || {};
-            const ts = Number.isFinite(ed.time_step) ? ed.time_step : 0;
-            const fld = ed.field != null && ed.field !== '' ? JSON.stringify(String(ed.field)) : 'None';
+            const nSnap = Math.max(1, Number(this.storeMeta?.n_snapshots || this.storeMeta?.n_steps || 1));
+            const ts = Number.isFinite(ed.time_step) ? ed.time_step : nSnap - 1;
+            const fallback = this.defaultVizField((this.storeMeta?.fields || this.storeMeta?.field_names || []) as string[]);
+            const chosen = ed.field != null && ed.field !== '' ? String(ed.field) : fallback;
+            const fld = chosen ? JSON.stringify(chosen) : 'None';
             const code = 'time_step = ' + ts + '\nfield_name = ' + fld + '\n' + snippet;
             const res = await this.cli.runCode(code);
             out.stdout = res?.output || ''; out.status = res?.status || 'success';

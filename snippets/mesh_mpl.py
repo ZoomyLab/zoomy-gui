@@ -1,18 +1,17 @@
-"""Field on the mesh — matplotlib via ``zoomy_plotting.MatplotlibPlotter``.
-
-The GUI injects ``store`` (a ``zoomy_plotting.SimulationStore``), ``time_step``
-(timeline slider) and ``field_name`` (field selector). Unified 1D / 2D / 3D.
-"""
 import matplotlib
-matplotlib.use("agg")            # headless worker — no GUI backend
+matplotlib.use("agg")
 import matplotlib.pyplot as plt
 import zoomy_plotting as zp
 
 if store is None:
     raise RuntimeError("No data yet — run a simulation first.")
 
-field = field_name if ("field_name" in dir() and field_name) else next(iter(store.field.keys()))
-step = int(time_step) if "time_step" in dir() else 0
+names = list(store.field.keys())
+field = field_name if ("field_name" in dir() and field_name) else next(
+    (n for n in ("h", "height", "q1") if n in names), names[0])
+step = (int(time_step) if ("time_step" in dir() and time_step is not None)
+        else store.n_snapshots - 1)
+step = max(0, min(step, store.n_snapshots - 1))
 kw = {} if store.dim == 1 else {"cmap": "viridis", "colorbar": True}
 
 with zp.apply_style():

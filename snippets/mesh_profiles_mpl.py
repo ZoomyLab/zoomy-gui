@@ -1,19 +1,19 @@
-"""Field + vertical velocity profiles at three cross-sections.
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
 
-Top: the field on the mesh (same view as the Field Viewer). Bottom: the
-vertical velocity profile u(zeta) at three stations, lifted the SAME way for
-every model -- through the model's own symbolic ``interpolate_to_3d`` (the
-coupling contract). zeta = 0 is the bed, 1 the free surface. SME expands a
-polynomial profile, MLSME a piecewise per-layer one, VAM its own; the lift
-reproduces each exactly, with no ansatz hard-coded here.
-
-The GUI injects ``store`` (a ``zoomy_plotting.SimulationStore``), ``time_step``
-(timeline slider) and ``field_name`` (field selector). ``model`` (the run's
-SystemModel) persists in the shared exec scope, so the profiles come straight
-from the run that produced the store.
-"""
 import matplotlib
-matplotlib.use("agg")            # headless worker — no GUI backend
+matplotlib.use("agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import zoomy_plotting as zp
@@ -21,19 +21,20 @@ import zoomy_plotting as zp
 if store is None:
     raise RuntimeError("No data yet — run a simulation first.")
 
-step = int(time_step) if "time_step" in dir() else 0
+step = (int(time_step) if ("time_step" in dir() and time_step is not None)
+        else store.n_snapshots - 1)
+step = max(0, min(step, store.n_snapshots - 1))
 names = list(store.field.keys())
-field = field_name if ("field_name" in dir() and field_name) else names[0]
+field = field_name if ("field_name" in dir() and field_name) else next(
+    (n for n in ("h", "height", "q1") if n in names), names[0])
 
-# --- cell centres, for stations and the x axis ------------------------------
 verts, cells = np.asarray(store.vertices), np.asarray(store.cells)
 centers = verts[cells].mean(axis=1)
 n = store.n_inner_cells or len(centers)
 centers, x = centers[:n], centers[:n, 0]
 
-xs = np.quantile(x, [0.25, 0.50, 0.75])          # three stations across the span
+xs = np.quantile(x, [0.25, 0.50, 0.75])
 probes = [int(np.argmin(np.abs(x - xq))) for xq in xs]
-
 
 def _u_lift(M):
     """Lambdify the model's interpolate_to_3d ``u`` row (slot 2 of
@@ -54,33 +55,30 @@ def _u_lift(M):
     pvals = [float(v) for v in pv.values()] if pv is not None else [0.0] * len(params)
     return fn, len(state), len(aux), pvals
 
-
-M = globals().get("model")           # the run's SystemModel, from the shared scope
+M = globals().get("model")
 lift = _u_lift(M) if M is not None else None
 
 with zp.apply_style():
     fig = plt.figure(figsize=(9.0, 6.4))
     gs = fig.add_gridspec(2, 3, height_ratios=[1.35, 1.0], hspace=0.42, wspace=0.30)
 
-    # ---- top: the field ----------------------------------------------------
     ax0 = fig.add_subplot(gs[0, :], projection="3d" if store.dim == 3 else None)
     kw = {} if store.dim == 1 else {"cmap": "viridis", "colorbar": True}
     zp.MatplotlibPlotter(store).plot(ax0, time_step=step, field=field, **kw)
     times = getattr(store, "times", None)
     t_now = float(times[step]) if times is not None and len(times) else None
     ax0.set_title(f"{field}" + (f" — t = {t_now:.3f}" if t_now is not None else ""))
-    for k in probes:                                  # mark the stations
+    for k in probes:
         if store.dim == 1:
             ax0.axvline(x[k], color="k", lw=1.0, ls="--", alpha=0.7)
         elif store.dim == 2:
             ax0.plot(centers[k, 0], centers[k, 1], "o", ms=7, mfc="none",
                      mew=2, color="k")
 
-    # ---- bottom: u(zeta) at each station, via interpolate_to_3d ------------
     if lift is not None:
         fn, n_state, n_aux, pvals = lift
         zeta = np.linspace(0.0, 1.0, 60)
-        aux0 = [0.0] * n_aux            # u row is a function of the moments, not aux
+        aux0 = [0.0] * n_aux
         for j, k in enumerate(probes):
             ax = fig.add_subplot(gs[1, j])
             Qk = [float(store.get_cell(step, i)[k]) for i in range(n_state)]
@@ -106,3 +104,4 @@ with zp.apply_style():
                 ha="center", va="center", fontsize=11)
 
 display(fig)
+
