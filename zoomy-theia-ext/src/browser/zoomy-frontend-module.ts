@@ -224,7 +224,36 @@ class ZoomyContribution implements FrontendApplicationContribution, CommandContr
             return;
         }
         // Land directly on the model configuration, in the classical IDE layout.
-        this.openModelConfig().catch(e => console.error('zoomy open config', e));
+        this.openLanding().catch(e => console.error('zoomy open config', e));
+    }
+
+    /** Landing surface for a load carrying no #/open deep link.
+     *
+     *  A ?project= or ?case= query is an explicit instruction from the URL just
+     *  as much as a deep link is, and it needs the same protection from the
+     *  restored layout, which Theia reinstates after us and which puts the
+     *  reader back on whatever tab they last had open. Reported for
+     *  `?project=gui/projects/zoomy-codeprinter-session.zip`, which loaded the
+     *  session and then showed an old malpasset_flood_wave.gif on top of it.
+     *  A plain visit carries no such instruction and still gets its session
+     *  back untouched.
+     *
+     *  The model configuration widget is deliberately spared: closing it would
+     *  dispose it, and the next mc() would build a fresh one whose load() runs
+     *  the ?project= branch a second time. */
+    protected async openLanding(): Promise<void> {
+        const explicit = (() => {
+            try { const q = new URLSearchParams(location.search); return q.has('project') || q.has('case'); }
+            catch { return false; }
+        })();
+        if (explicit) {
+            await this.appState.reachedState('initialized_layout');
+            try {
+                const stale = this.shell.getWidgets('main').filter(w => w.id !== ZoomyModelConfigWidget.ID);
+                await this.shell.closeMany(stale);
+            } catch (e) { console.warn('zoomy: could not clear the restored layout', e); }
+        }
+        await this.openModelConfig();
     }
 
     /** Resolve and open a captured `#/open?path=…[&project=…]` deep link.
