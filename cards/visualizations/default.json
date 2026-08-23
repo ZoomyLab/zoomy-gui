@@ -1,5 +1,14 @@
 [
   {
+    "id": "vis-static-plot",
+    "subtab": "matplotlib",
+    "title": "Static plot",
+    "snippet": "snippets/static_plot.py",
+    "description": "The free surface over the bed at the end of the run, in the thesis matplotlib style. Hand-written and short, so it reads as a figure script rather than a viewer: no timeline, no field selector, no branches beyond 1D versus 2D/3D. This is the default a case and its exported notebook open with. Pick the Field Viewer to scrub the timeline or choose another field.",
+    "has_timeline": false,
+    "category": "Matplotlib"
+  },
+  {
     "id": "vis-mesh-mpl",
     "subtab": "matplotlib",
     "title": "Field Viewer",
