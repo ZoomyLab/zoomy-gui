@@ -48,16 +48,17 @@ self.addEventListener('fetch', function (e) {
             try { if (cacheable && resp && resp.status === 200 && resp.type !== 'opaque') { cache.put(req, resp.clone()); } } catch (x) { }
             return withCoi(resp);
         }).catch(function () { return cached ? withCoi(cached.clone()) : Response.error(); });
-        // A navigation must never be served stale. index.html names the hashed
-        // bundles, so a cached shell pins the whole GUI to an old build: a fix
-        // shipped today would reach a returning reader only on their SECOND
-        // visit, and someone scanning a QR code out of a printed thesis gets
-        // one. Navigations go to the network first; `network` already falls
-        // back to `cached` when the fetch fails, so offline still works.
-        // Everything else stays cache-first, which is safe because those URLs
-        // are content-hashed and change whenever their content does.
-        var isNavigation = req.mode === 'navigate' || req.destination === 'document';
-        if (cached && !isNavigation) {
+        // Nothing same-origin here is content-hashed: bundle.js, gui/engine.py,
+        // gui/zoomy_cli/src/cli.mjs and the cards all keep their path across
+        // builds, so cache-first pins the GUI to whatever shipped first and
+        // every fix arrives one reload late. That was measured, not guessed: a
+        // reader on the new bundle.js was still running the previous cli.mjs
+        // and hit an error that had already been fixed. Same-origin therefore
+        // goes to the network first; `network` falls back to `cached` when the
+        // fetch fails, so the offline promise is unchanged. Cross-origin stays
+        // cache-first: the CDN libs and PyPI wheels are versioned in their URL
+        // and are the slow, bulky part worth keeping local.
+        if (cached && !sameOrigin) {
             // Serve cached immediately (offline-capable); refresh cache in background.
             network.catch(function () { });
             return withCoi(cached.clone());
