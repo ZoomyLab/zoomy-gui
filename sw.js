@@ -7,7 +7,9 @@
  *    after the first (online) visit the whole GUI — kernel included — works with
  *    no network.
  */
-var CACHE = 'zoomy-preview-v1';
+// v2: bumped so activate() drops every v1 entry once. Without the bump the
+// shells cached under the old cache-first rule below would survive the fix.
+var CACHE = 'zoomy-preview-v2';
 // Cache these origins/paths (same-origin app + gui/, Pyodide/CDN libs, wheels).
 var CACHEABLE = /(^\/|jsdelivr\.net|esm\.sh|files\.pythonhosted\.org|pypi\.org|cdn\.jsdelivr)/;
 
@@ -46,7 +48,16 @@ self.addEventListener('fetch', function (e) {
             try { if (cacheable && resp && resp.status === 200 && resp.type !== 'opaque') { cache.put(req, resp.clone()); } } catch (x) { }
             return withCoi(resp);
         }).catch(function () { return cached ? withCoi(cached.clone()) : Response.error(); });
-        if (cached) {
+        // A navigation must never be served stale. index.html names the hashed
+        // bundles, so a cached shell pins the whole GUI to an old build: a fix
+        // shipped today would reach a returning reader only on their SECOND
+        // visit, and someone scanning a QR code out of a printed thesis gets
+        // one. Navigations go to the network first; `network` already falls
+        // back to `cached` when the fetch fails, so offline still works.
+        // Everything else stays cache-first, which is safe because those URLs
+        // are content-hashed and change whenever their content does.
+        var isNavigation = req.mode === 'navigate' || req.destination === 'document';
+        if (cached && !isNavigation) {
             // Serve cached immediately (offline-capable); refresh cache in background.
             network.catch(function () { });
             return withCoi(cached.clone());

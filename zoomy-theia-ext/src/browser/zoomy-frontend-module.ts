@@ -9,6 +9,7 @@ import {
 import { OutlineViewService } from '@theia/outline-view/lib/browser/outline-view-service';
 import { OutlineSymbolInformationNode } from '@theia/outline-view/lib/browser/outline-view-widget';
 import { StatusBar, StatusBarAlignment } from '@theia/core/lib/browser/status-bar';
+import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { FileService, FileServiceContribution } from '@theia/filesystem/lib/browser/file-service';
 import { RemoteFileServiceContribution } from '@theia/filesystem/lib/browser/remote-file-service-contribution';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -158,6 +159,7 @@ class ZoomyContribution implements FrontendApplicationContribution, CommandContr
     @inject(SelectionService) protected readonly selectionService: SelectionService;
     @inject(StatusBar) protected readonly statusBar: StatusBar;
     @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
+    @inject(FrontendApplicationStateService) protected readonly appState: FrontendApplicationStateService;
     protected kernel: PyodideKernel;
     protected client: PyodideClient;
 
@@ -276,6 +278,21 @@ class ZoomyContribution implements FrontendApplicationContribution, CommandContr
             }
         }
 
+        // The workbench layout of the PREVIOUS visit is restored after us, not
+        // before: FrontendApplication.start() runs startContributions() (where
+        // our onStart lives) first, attaches the shell, and only then calls
+        // initializeLayout(), which is where Theia's ShellLayoutRestorer reads
+        // its saved 'layout' back out of local storage and reopens every tab
+        // that was open last time, focusing the one that was active. So a
+        // scanned QR code opened the right file and was then covered by
+        // whatever the reader had looked at before -- reported as a link to
+        // macdonald_relax.gif landing on an old Malpasset gif. The same link
+        // works in a private tab precisely because there is no saved layout
+        // there. Wait for that restore to finish, drop what it brought back,
+        // and leave the reader on the one file the link names.
+        await this.appState.reachedState('initialized_layout');
+        try { await this.shell.closeMany(this.shell.getWidgets('main')); }
+        catch (e) { console.warn('zoomy deep link: could not clear the restored layout', e); }
         try {
             const stat = await this.fileService.resolve(uri);
             if (stat.isDirectory) { await this.showNotice('Not a file', 'The linked path is a folder, not a file: ' + parsed.path, uri.path.toString()); return; }
