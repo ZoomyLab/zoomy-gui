@@ -168,6 +168,8 @@ export class ZoomyModelConfigWidget extends ReactWidget {
      *  gatherSpec so free-form code round-trips exactly instead of being regenerated
      *  from `cardCode(template, params)`. Keyed by card id. */
     protected readonly codeByCard = new Map<string, string>();
+    /** Title + description of the open case (from its meta cell), kept across saves. */
+    protected caseMeta: { title: string; description: string } | undefined;
     /** The case.py content we last wrote (persistCase) — the echo guard so the
      *  active-case watcher only re-absorbs EXTERNAL (editor) edits, not our writes. */
     protected lastWritten: string | undefined;
@@ -536,7 +538,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     async newCase(name: string, spec?: any): Promise<void> {
         const clean = (name || 'case').trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'case';
         this.selected['models'] = ''; this.selected['meshes'] = ''; this.selected['solvers'] = ''; this.selected['visualizations'] = '';
-        this.edited.clear(); this.codeByCard.clear();
+        this.edited.clear(); this.codeByCard.clear(); this.caseMeta = undefined;
         if (spec) { this.applySpec(spec); }
         else {
             for (const dir of ['models', 'meshes', 'solvers']) { const c = this.pickedCard(dir); if (c) { this.selected[dir] = c.id; } }
@@ -1418,9 +1420,12 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     protected async gatherSpec(): Promise<any> {
         const model = this.pickedCard('models'), mesh = this.pickedCard('meshes'), solver = this.pickedCard('solvers'), viz = this.pickedCard('visualizations');
         const spec: any = {
-            meta: { title: (model?.title || 'Zoomy case'), description: 'Exported from the Zoomy model-config GUI.' },
+            // A case keeps the title and description it was opened with (a
+            // packed session names itself); only a case that never had one
+            // is named after its model card.
+            meta: this.caseMeta || { title: (model?.title || 'Zoomy case'), description: 'Exported from the Zoomy model-config GUI.' },
             model: { code: this.cardCodeFor(model), class_path: model?.class || null, init: this.mergedInit(model), card: model?.id || null },
-            mesh: { code: this.cardCodeFor(mesh), spec: this.mergedInit(mesh) },
+            mesh: { code: this.cardCodeFor(mesh), spec: this.mergedInit(mesh), card: mesh?.id || null },
             settings: {},
             solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: solver?.params ? this.mergedInit(solver) : {} },
         };
@@ -1434,9 +1439,23 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         const chosen = vizCards.length ? vizCards : (viz?.snippet ? [viz] : []);
         if (chosen.length) {
             try {
-                const parts: string[] = [this.cli.vizPrelude()];
-                for (const vc of chosen) { parts.push('# --- ' + (vc.title || vc.id) + ' ---'); parts.push(await this.cli.fetchSnippet(vc.snippet)); }
-                spec.visualization = { code: parts.join('\n') };
+                // The case's own viz code wins, exactly like its model / mesh /
+                // run code: absorbCode() stored it under the viewer's id when the
+                // case was opened, and it comes back verbatim. Only a viewer
+                // without such code is composed from its catalog snippet.
+                const own = chosen.length === 1 ? this.codeByCard.get(chosen[0].id) : undefined;
+                if (own !== undefined) {
+                    spec.visualization = { code: own, card: chosen[0].id };
+                } else {
+                    const prelude = this.cli.vizPrelude();
+                    const parts: string[] = [prelude];
+                    for (const vc of chosen) {
+                        const stored = this.codeByCard.get(vc.id);
+                        parts.push('# --- ' + (vc.title || vc.id) + ' ---');
+                        parts.push(stored !== undefined ? stored.replace(prelude, '').replace(/^\s*\n/, '') : await this.cli.fetchSnippet(vc.snippet));
+                    }
+                    spec.visualization = { code: parts.join('\n'), card: chosen[0].id };
+                }
             } catch { /* skip viz */ }
         }
         if (this.postprocSteps.size) { spec.postproc = [...this.postprocSteps]; spec.postproc_nz = this.postprocNz; }
@@ -1479,6 +1498,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         // Fresh code<->card map for this case: the parsed cell code below repopulates
         // it (a previous case's overrides must not leak into this one).
         this.codeByCard.clear();
+        this.caseMeta = (spec?.meta && spec.meta.title) ? { title: spec.meta.title, description: spec.meta.description || '' } : undefined;
         const byClass = (dir: string, cls: string) => (this.cardsByTab[dir] || []).find(c => c.class === cls);
         if (spec?.model) {
             // Match by class_path (the usual case); fall back to an explicit card id
@@ -1488,7 +1508,11 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             if (!mc && spec.model.card) { mc = (this.cardsByTab['models'] || []).find(c => c.id === spec.model.card); }
             if (mc) { this.selected['models'] = mc.id; if (spec.model.init) { this.edited.set(mc.id, { ...spec.model.init }); } }
         }
-        if (spec?.mesh?.spec) { const meshes = this.cardsByTab['meshes'] || []; const c = meshes[0]; if (c) { this.selected['meshes'] = c.id; this.edited.set(c.id, { ...spec.mesh.spec }); } }
+        if (spec?.mesh) {
+            const meshes = this.cardsByTab['meshes'] || [];
+            const c = (spec.mesh.card && meshes.find(m => m.id === spec.mesh.card)) || meshes[0];
+            if (c) { this.selected['meshes'] = c.id; if (spec.mesh.spec) { this.edited.set(c.id, { ...spec.mesh.spec }); } }
+        }
         if (spec?.solver) {
             const solvers = this.cardsByTab['solvers'] || [];
             // Prefer the exact card id (several solvers can share a backend tag,
@@ -1498,9 +1522,11 @@ export class ZoomyModelConfigWidget extends ReactWidget {
                 || (spec.solver.tag && solvers.find(s => this.canonTag(s.requires_tag || 'numpy') === this.canonTag(spec.solver.tag)));
             if (c) { this.selected['solvers'] = c.id; }
         }
-        // Seed the selected visualization viewer (single-select).
-        const firstViz = (this.cardsByTab['visualizations'] || []).find(c => c.snippet);
-        if (firstViz) { this.selected['visualizations'] = firstViz.id; this.selectedViz.clear(); this.selectedViz.add(firstViz.id); }
+        // The viewer the case was composed for; the first viewer only for a
+        // case that does not name one.
+        const vizCards = this.cardsByTab['visualizations'] || [];
+        const vizCard = (spec?.visualization?.card && vizCards.find(c => c.id === spec.visualization.card)) || vizCards.find(c => c.snippet);
+        if (vizCard) { this.selected['visualizations'] = vizCard.id; this.selectedViz.clear(); this.selectedViz.add(vizCard.id); }
         this.expandSelectedInActiveTab();
         // Restore enabled post-processing steps + Nz (round-trips via spec.postproc).
         this.postprocSteps.clear();
@@ -1582,6 +1608,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         const files: any[] = Object.values(zip.files).filter((f: any) => !f.dir);
         let manifest: any = null;
         const mf = zip.file('project.json'); if (mf) { try { manifest = JSON.parse(await mf.async('string')); } catch { /* ignore */ } }
+        if (manifest && Array.isArray(manifest.sessions)) { await this.materializeSessions(manifest); return; }
         const hasCasesPrefix = files.some((f: any) => /(?:^|\/)cases\/[^/]+\//.test(f.name));
         const names = new Set<string>(); let count = 0; let first: string | undefined;
         for (const f of files) {
@@ -1631,6 +1658,78 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         const open = first || this.cases[0];
         if (open) { await this.openCaseByName(open); }
         this.setNotice('Loaded project — ' + names.size + ' case(s), ' + count + ' file(s).');
+    }
+
+    /** A packed SESSION project — project.json `version: "1.1"` with
+     *  `sessions`, which is what every zip under gui/projects/ and every
+     *  packer under projects/tools/ produces: per session the card SELECTIONS
+     *  by id, plus `cardOverrides` {code, params} with the case's own code for
+     *  each card. That is a case with its cards spelled out, so it becomes
+     *  one: the overrides fill the cards exactly as an opened case.py fills
+     *  them, and composeCase writes cases/<title>/case.py. Handed to the
+     *  flat / legacy branches instead, every card's code.py matched the legacy
+     *  "<name>.py" rule and all of them landed in ONE case named "code", the
+     *  last card (the viewer) winning, while the card.json files were written
+     *  as loose assets — which is what every thesis session QR code showed. */
+    protected async materializeSessions(manifest: any): Promise<void> {
+        await this.ensureCards();
+        const catalog = (dir: string, id: string | undefined) => {
+            if (!id) { return undefined; }
+            const cards = this.cardsByTab[dir] || [];
+            // The old GUI prefixed every catalog id with "card-"; the packers still do.
+            return cards.find(c => c.id === id) || cards.find(c => 'card-' + c.id === id);
+        };
+        const slug = (t: string) => String(t || 'session').trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'session';
+        let first: string | undefined; let active: string | undefined; let n = 0;
+        for (const sess of manifest.sessions) {
+            const sel = sess.selections || {}; const ov = sess.cardOverrides || {};
+            const over = (id: string | undefined): any => (id && ov[id]) || {};
+            const params = (card: any, id: string | undefined) => ({ ...(card?.init || {}), ...(over(id).params || {}) });
+            const code = (card: any, id: string | undefined): string => {
+                const o = over(id);
+                return o.code != null ? String(o.code) : (card ? (cardCode(card, params(card, id)) || '') : '');
+            };
+            const model = catalog('models', sel.model), mesh = catalog('meshes', sel.mesh), solver = catalog('solvers', sel.solver);
+            // A viewer id the catalog no longer carries still has its code in the
+            // override; the first viewer then carries that code as its own.
+            const viz = catalog('visualizations', sel.visualization) || (this.cardsByTab['visualizations'] || []).find(c => c.snippet);
+            const spec: any = {
+                meta: { title: sess.title || slug(sess.id), description: sess.description || '' },
+                model: { code: code(model, sel.model), class_path: model?.class || null, init: params(model, sel.model), card: model?.id || null },
+                mesh: { code: code(mesh, sel.mesh), spec: params(mesh, sel.mesh), card: mesh?.id || null },
+                settings: {},
+                solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: over(sel.solver).params || {} },
+            };
+            const run = code(solver, sel.solver);
+            if (run) { spec.run = { code: run }; }
+            const own = over(sel.visualization).code;
+            if (own != null) { spec.visualization = { code: String(own), card: viz?.id || null }; }
+            else if (viz?.snippet) {
+                try { spec.visualization = { code: this.cli.vizPrelude() + '\n' + await this.cli.fetchSnippet(viz.snippet), card: viz.id }; }
+                catch { /* composeCase falls back to its default plot */ }
+            }
+            const name = slug(sess.title || sess.id);
+            const uri = this.caseFileUri(name);
+            if (!(await this.fileService.exists(uri.parent))) { await this.fileService.createFolder(uri.parent); }
+            await this.fileService.write(uri, this.cli.exportCase(spec, 'py'));
+            n++;
+            if (!first) { first = name; }
+            if (sess.id && sess.id === manifest.activeSession) { active = name; }
+        }
+        await this.listCases();
+        const open = active || first;
+        if (open) { await this.openCaseByName(open); }
+        this.setNotice('Loaded project — ' + n + ' session' + (n === 1 ? '' : 's') + '.');
+    }
+
+    /** The card catalog, whether or not load() has run yet (a deep link can
+     *  reach loadProjectFromUrl() before it has). */
+    protected async ensureCards(): Promise<void> {
+        if (!this.cli) { this.cli = await getZoomyCli(); }
+        for (const t of TABS) {
+            if (this.cardsByTab[t.dir]) { continue; }
+            try { this.cardsByTab[t.dir] = await this.cli.listCards(t.dir); } catch { this.cardsByTab[t.dir] = []; }
+        }
     }
 
     // --- #4 Connect a remote backend by URL. ---

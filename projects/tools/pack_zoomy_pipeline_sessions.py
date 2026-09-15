@@ -19,7 +19,11 @@ Run with the zoomy env:  PYTHONNOUSERSITE=1 micromamba run -n zoomy python <this
 """
 import json
 import os
+import sys
 import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from strip_comments import strip  # noqa: E402  (the notebook shows code, not commentary)
 
 ROOT = os.path.expanduser("~/git/Zoomy")
 CASES = os.path.join(ROOT, "thesis/cases/zoomy_example/gui")
@@ -94,7 +98,7 @@ def build(sess):
     code = {}
     for cid, (_tab, _title, fname) in CARDS.items():
         with open(os.path.join(src, fname)) as f:
-            code[cid] = f.read()
+            code[cid] = strip(f.read())
         compile(code[cid], f"{sess['dir']}/{fname}", "exec")
     print(f"  compile OK: {sess['dir']}",
           {CARDS[c][2]: len(s) for c, s in code.items()})

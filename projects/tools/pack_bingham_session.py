@@ -10,7 +10,10 @@ solver card CODE = run.py adapted: guarded sibling imports (notebook OR folder),
 viz   card = visualize.py (guarded `scales` import, __file__ guard)
 solver card PARAMS = {"time_end": <t_end_prime>}  (default = full benchmark)
 """
-import json, os, pprint, re, zipfile
+import json, os, pprint, re, sys, zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from strip_comments import strip  # noqa: E402  (the notebook shows code, not commentary)
 
 ROOT = os.path.expanduser("~/git/Zoomy")
 # REQ-150: the roll-wave case moved verbatim into the transient/ sub-case
@@ -112,6 +115,9 @@ viz_main = 'if __name__ == "__main__":\n    visualize()'
 assert viz_main in viz
 viz = viz.replace(viz_main, "visualize()")
 viz_card = guard_file(viz).strip() + "\n"
+
+# The splices above key on comment anchors, so the comments go LAST.
+model_card, mesh_card, run_card, viz_card = (strip(c) for c in (model_card, mesh_card, run_card, viz_card))
 
 # ---------------- verify: T1 model card standalone ----------------
 compile(model_card, "model_card", "exec")
