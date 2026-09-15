@@ -5,6 +5,7 @@ import {
     Navigatable, NavigatableWidgetOpenHandler, WidgetOpenerOptions,
 } from '@theia/core/lib/browser';
 import { URI, DisposableCollection } from '@theia/core';
+import { Message } from '@theia/core/shared/@lumino/messaging';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 
 /** Raster/vector image extensions this viewer claims. Required by the GUI spec:
@@ -57,8 +58,19 @@ export class ZoomyImageViewerWidget extends ReactWidget implements Navigatable {
     protected init(): void {
         this.addClass('zoomy-image-viewer-widget');
         this.node.style.overflow = 'hidden';
+        // Focusable, so ApplicationShell.activateWidget() resolves the moment
+        // the viewer is shown. Without a focus target every open() of an
+        // image stalled on the shell's 2 s "did not accept focus" timeout,
+        // which is what held the deep-link maximise back (and logged a
+        // warning) on every QR-code visit.
+        this.node.tabIndex = 0;
         this.title.closable = true;
         this.title.iconClass = 'codicon codicon-file-media';
+    }
+
+    protected override onActivateRequest(msg: Message): void {
+        super.onActivateRequest(msg);
+        this.node.focus();
     }
 
     override dispose(): void { this.toDisposeOnUri.dispose(); super.dispose(); }

@@ -1,4 +1,5 @@
 import { ContainerModule, injectable, inject } from '@theia/core/shared/inversify';
+import { Widget } from '@theia/core/shared/@lumino/widgets';
 import { CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry, MenuPath, MAIN_MENU_BAR, SelectionService, URI } from '@theia/core';
 import { NavigatorContextMenu } from '@theia/navigator/lib/browser/navigator-contribution';
 import {
@@ -34,7 +35,7 @@ import { ZoomyParamsWidget } from './zoomy-params-widget';
 import { ZoomySimOutputWidget } from './zoomy-sim-output-widget';
 import { getPyodideClient, PyodideClient } from './pyodide-runtime';
 import { registerZoomyCompletions } from './completion-provider';
-import { ZoomyImageViewerWidget, ZoomyImageOpenHandler } from './zoomy-image-viewer';
+import { ZoomyImageViewerWidget, ZoomyImageOpenHandler, imageMimeFor } from './zoomy-image-viewer';
 import { consumeDeepLink, parseDeepLink, resolveDeepLinkPath, ZoomyNoticeWidget, DEEP_LINK_ROUTE } from './zoomy-deep-link';
 
 const VIEW_TYPE = 'zoomy-notebook';
@@ -350,8 +351,33 @@ class ZoomyContribution implements FrontendApplicationContribution, CommandContr
             }
             return;
         }
-        try { await open(this.openerService, uri); }
-        catch (e: any) { await this.showNotice('Could not open file', e?.message || String(e), uri.path.toString()); }
+        // A deep link names ONE file, and the reader who scanned it (the
+        // thesis QR codes land here, on a phone) wants that file, not the
+        // workbench around it: with the Zoomy view and the Parameters panel
+        // open, a margin-QR gif measured 76 px wide on a 390 px phone. The QR
+        // URLs are printed and cannot change, so the DEFAULT changes for an
+        // image deep link: fold the side and bottom panels away BEFORE the
+        // file opens (so the reader never sees the cramped layout), then
+        // maximise the viewer, which also hides the activity bar. Every
+        // panel is one tap away (double-click the tab / "Toggle Maximized"
+        // restores the workbench), so a desktop reader loses nothing. Images
+        // only: a deep link to a notebook or a case.py keeps the Explorer.
+        const alone = !!imageMimeFor(uri.path.base);
+        if (alone) {
+            for (const area of ['left', 'right', 'bottom'] as const) {
+                this.shell.collapsePanel(area).catch(() => { /* not attached yet */ });
+            }
+        }
+        let opened: object | undefined;
+        try { opened = await open(this.openerService, uri); }
+        catch (e: any) { await this.showNotice('Could not open file', e?.message || String(e), uri.path.toString()); return; }
+        if (alone) {
+            const w = opened instanceof Widget ? opened : this.shell.currentWidget;
+            if (w && this.shell.getAreaFor(w) === 'main') {
+                try { this.shell.toggleMaximized(w); }
+                catch (e) { console.warn('zoomy deep link: could not maximise the viewer', e); }
+            }
+        }
     }
     /** Show (or refresh) the single deep-link notice panel in the main area. */
     protected async showNotice(heading: string, message: string, detail?: string): Promise<void> {
