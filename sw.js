@@ -7,11 +7,19 @@
  *    after the first (online) visit the whole GUI — kernel included — works with
  *    no network.
  */
-// v2: bumped so activate() drops every v1 entry once. Without the bump the
-// shells cached under the old cache-first rule below would survive the fix.
-var CACHE = 'zoomy-preview-v2';
+// v3: bumped so activate() drops every v2 entry once — the v2 caches hold the
+// PyPI package index cache-first (see MUTABLE below), which pinned every
+// returning reader's kernel to the zoomy-core release of their first visit.
+var CACHE = 'zoomy-preview-v3';
 // Cache these origins/paths (same-origin app + gui/, Pyodide/CDN libs, wheels).
 var CACHEABLE = /(^\/|jsdelivr\.net|esm\.sh|files\.pythonhosted\.org|pypi\.org|cdn\.jsdelivr)/;
+// The PyPI package INDEX (pypi.org/pypi/<name>/json) is mutable: micropip
+// resolves "zoomy-core" through it, so served cache-first it kept installing
+// the release of the reader's first visit long after PyPI had moved on (the
+// thesis notebooks failed on a store without field names while the fix had
+// been on PyPI for an hour). The index goes network-first; the wheels under
+// files.pythonhosted.org are versioned in their URL and stay cache-first.
+var MUTABLE = /pypi\.org\/pypi\//;
 
 self.addEventListener('install', function (e) { self.skipWaiting(); });
 self.addEventListener('activate', function (e) {
@@ -58,7 +66,7 @@ self.addEventListener('fetch', function (e) {
         // fetch fails, so the offline promise is unchanged. Cross-origin stays
         // cache-first: the CDN libs and PyPI wheels are versioned in their URL
         // and are the slow, bulky part worth keeping local.
-        if (cached && !sameOrigin) {
+        if (cached && !sameOrigin && !MUTABLE.test(url.href)) {
             // Serve cached immediately (offline-capable); refresh cache in background.
             network.catch(function () { });
             return withCoi(cached.clone());

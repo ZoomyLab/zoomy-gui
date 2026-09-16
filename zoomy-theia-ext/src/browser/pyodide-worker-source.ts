@@ -208,7 +208,10 @@ async function boot() {
         log("Installing zoomy-core…");
         try { await py.loadPackage(["h5py"]); } catch (e) {}
         var mp = py.pyimport("micropip");
-        await mp.install(["zoomy-core"]);
+        // The minimum the shipped notebooks need (a store with field names and
+        // the t = 0 / t = time_end records; analysis without IPython). A stale
+        // index then fails here, visibly, instead of running an older core.
+        await mp.install(["zoomy-core>=0.2.12"]);
         await py.runPythonAsync(PY_HELPERS);
         log("Kernel ready.");
     })();
@@ -263,7 +266,7 @@ function installZp() {
     if (_zpPromise) return _zpPromise;
     _zpPromise = (async function () {
         await boot();
-        try { var mp = py.pyimport("micropip"); await mp.install(["zoomy-plotting"]); log("plotting ready"); }
+        try { var mp = py.pyimport("micropip"); await mp.install(["zoomy-plotting>=0.2.4"]); log("plotting ready"); }
         catch (e) { log("zoomy-plotting failed: " + (e.message || e)); }
     })();
     return _zpPromise;

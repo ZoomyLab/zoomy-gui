@@ -56,7 +56,7 @@ function installParam() {
             postMessage({ type: "log", level: "warn", msg: "h5py failed: " + (e.message || e) });
         }
         var mp = py.pyimport("micropip");
-        await mp.install(["param", "zoomy-core"]);
+        await mp.install(["param", "zoomy-core>=0.2.12"]);
         var code = await fetch("param_extract.py").then(function (r) { return r.text(); });
         await py.runPythonAsync(code);
     })();
@@ -151,7 +151,7 @@ function installZoomyPlotting() {
         postMessage({ type: "log", level: "info", msg: "installing plotting" });
         try {
             var mp = py.pyimport("micropip");
-            await mp.install(["zoomy-plotting"]);
+            await mp.install(["zoomy-plotting>=0.2.4"]);
             postMessage({ type: "log", level: "info", msg: "plotting ready" });
         } catch (e) {
             postMessage({ type: "log", level: "warn", msg: "zoomy-plotting failed: " + (e.message || e) });
