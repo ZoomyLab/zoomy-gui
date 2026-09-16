@@ -1427,7 +1427,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             model: { code: this.cardCodeFor(model), class_path: model?.class || null, init: this.mergedInit(model), card: model?.id || null },
             mesh: { code: this.cardCodeFor(mesh), spec: this.mergedInit(mesh), card: mesh?.id || null },
             settings: {},
-            solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: solver?.params ? this.mergedInit(solver) : {} },
+            solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: solver ? this.mergedInit(solver) : {} },
         };
         // Run cell = the solver card's stored/template code (a coupling child's coupled
         // run note is stored here as a code override and round-trips verbatim).
@@ -1520,7 +1520,18 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             // back to the tag for older cases that only stored the backend.
             const c = (spec.solver.id && solvers.find(s => s.id === spec.solver.id))
                 || (spec.solver.tag && solvers.find(s => this.canonTag(s.requires_tag || 'numpy') === this.canonTag(spec.solver.tag)));
-            if (c) { this.selected['solvers'] = c.id; }
+            if (c) {
+                this.selected['solvers'] = c.id;
+                // The solver's parameters come back from the case: its Solver
+                // settings cell (the keys the card declares) and any explicit
+                // solver params. Without this a re-save reset a packed session's
+                // time_end to the card default.
+                const fromCase: any = { ...(spec.solver.params || {}) };
+                for (const k of Object.keys(c.init || {})) {
+                    if (spec.settings && spec.settings[k] !== undefined) { fromCase[k] = spec.settings[k]; }
+                }
+                if (Object.keys(fromCase).length) { this.edited.set(c.id, fromCase); }
+            }
         }
         // The viewer the case was composed for; the first viewer only for a
         // case that does not name one.

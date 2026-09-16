@@ -137,13 +137,18 @@ with zipfile.ZipFile(ZIP) as z:
     items = {n: z.read(n) for n in z.namelist()}
 meta = json.loads(items["project.json"])
 meta["sessions"][0]["description"] = (
-    "Liu&Mei Bingham roll wave, SME level 2 (numpy). "
-    "time_end is t-prime: 200 = full benchmark.")
+    "Liu & Mei (1994) Bingham roll wave, SME level 2, NumPy. time_end is the "
+    "dimensionless t': the default 2 is a short march the browser finishes in "
+    "minutes; the thesis benchmark runs to t' = 200 (hours, run it natively).")
+# The BROWSER default (user, 2026-09-16): t' = 2. The thesis benchmark value
+# stays in settings.json and in the card's own fallback; the reader who wants
+# it sets time_end in the Parameters panel.
+BROWSER_T_END_PRIME = 2.0
 ov = meta["sessions"][0]["cardOverrides"]
 ov["card-sme"] = {"code": model_card}
 ov["card-mesh-create-1d"] = {"code": mesh_card}
 ov["card-solver-numpy"] = {"code": run_card,
-                           "params": {"time_end": settings_json["run"]["t_end_prime"]}}
+                           "params": {"time_end": BROWSER_T_END_PRIME}}
 ov["card-vis-empty-mpl"] = {"code": viz_card}
 items["project.json"] = json.dumps(meta, indent=2).encode()
 S = "Bingham roll-wave/"
@@ -152,7 +157,7 @@ items[S + "mesh/Create 1D/code.py"] = mesh_card.encode()
 items[S + "solver/NumPy Solver/code.py"] = run_card.encode()
 items[S + "visualization/Empty (Matplotlib)/code.py"] = viz_card.encode()
 cj = json.loads(items[S + "solver/NumPy Solver/card.json"])
-cj["params"] = {"time_end": settings_json["run"]["t_end_prime"]}
+cj["params"] = {"time_end": BROWSER_T_END_PRIME}
 items[S + "solver/NumPy Solver/card.json"] = json.dumps(cj, indent=2).encode()
 with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED) as z:
     for n, b in items.items():
