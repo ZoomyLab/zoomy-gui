@@ -1418,14 +1418,19 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     // --- #3/#5 Case interchange via zoomy_prepost.case (through zoomy_cli). ---
     /** Build the canonical case spec from the current selection + edits. */
     protected async gatherSpec(): Promise<any> {
-        const model = this.pickedCard('models'), mesh = this.pickedCard('meshes'), solver = this.pickedCard('solvers'), viz = this.pickedCard('visualizations');
+        const model = this.pickedCard('models'), solver = this.pickedCard('solvers');
+        // A section exists iff a card is selected for it: a case opened without
+        // a Mesh or a Visualization section (a symbolic pipeline) keeps none,
+        // and selecting a card in that tab brings the section in.
+        const mesh = this.selected['meshes'] ? this.pickedCard('meshes') : undefined;
+        const viz = this.selected['visualizations'] ? this.pickedCard('visualizations') : undefined;
         const spec: any = {
             // A case keeps the title and description it was opened with (a
             // packed session names itself); only a case that never had one
             // is named after its model card.
             meta: this.caseMeta || { title: (model?.title || 'Zoomy case'), description: 'Exported from the Zoomy model-config GUI.' },
             model: { code: this.cardCodeFor(model), class_path: model?.class || null, init: this.mergedInit(model), card: model?.id || null },
-            mesh: { code: this.cardCodeFor(mesh), spec: this.mergedInit(mesh), card: mesh?.id || null },
+            mesh: mesh ? { code: this.cardCodeFor(mesh), spec: this.mergedInit(mesh), card: mesh.id } : null,
             settings: {},
             solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: solver ? this.mergedInit(solver) : {} },
         };
@@ -1437,6 +1442,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         // select → several plots of one run in the exported .py / .ipynb).
         const vizCards = (this.cardsByTab['visualizations'] || []).filter(c => this.selectedViz.has(c.id) && c.snippet);
         const chosen = vizCards.length ? vizCards : (viz?.snippet ? [viz] : []);
+        if (!chosen.length) { spec.visualization = null; }
         if (chosen.length) {
             try {
                 // The case's own viz code wins, exactly like its model / mesh /
@@ -1508,6 +1514,8 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             if (!mc && spec.model.card) { mc = (this.cardsByTab['models'] || []).find(c => c.id === spec.model.card); }
             if (mc) { this.selected['models'] = mc.id; if (spec.model.init) { this.edited.set(mc.id, { ...spec.model.init }); } }
         }
+        if (!spec?.mesh) { this.selected['meshes'] = ''; }
+        if (!spec?.visualization) { this.selected['visualizations'] = ''; this.selectedViz.clear(); }
         if (spec?.mesh) {
             const meshes = this.cardsByTab['meshes'] || [];
             const c = (spec.mesh.card && meshes.find(m => m.id === spec.mesh.card)) || meshes[0];
@@ -1536,7 +1544,9 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         // The viewer the case was composed for; the first viewer only for a
         // case that does not name one.
         const vizCards = this.cardsByTab['visualizations'] || [];
-        const vizCard = (spec?.visualization?.card && vizCards.find(c => c.id === spec.visualization.card)) || vizCards.find(c => c.snippet);
+        const vizCard = spec?.visualization
+            ? ((spec.visualization.card && vizCards.find(c => c.id === spec.visualization.card)) || vizCards.find(c => c.snippet))
+            : undefined;
         if (vizCard) { this.selected['visualizations'] = vizCard.id; this.selectedViz.clear(); this.selectedViz.add(vizCard.id); }
         this.expandSelectedInActiveTab();
         // Restore enabled post-processing steps + Nz (round-trips via spec.postproc).
@@ -1707,7 +1717,9 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             const spec: any = {
                 meta: { title: sess.title || slug(sess.id), description: sess.description || '' },
                 model: { code: code(model, sel.model), class_path: model?.class || null, init: params(model, sel.model), card: model?.id || null },
-                mesh: { code: code(mesh, sel.mesh), spec: params(mesh, sel.mesh), card: mesh?.id || null },
+                mesh: (mesh || over(sel.mesh).code != null)
+                    ? { code: code(mesh, sel.mesh), spec: params(mesh, sel.mesh), card: mesh?.id || null }
+                    : null,
                 settings: {},
                 solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: over(sel.solver).params || {} },
             };
@@ -1715,10 +1727,10 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             if (run) { spec.run = { code: run }; }
             const own = over(sel.visualization).code;
             if (own != null) { spec.visualization = { code: String(own), card: viz?.id || null }; }
-            else if (viz?.snippet) {
+            else if (sel.visualization && viz?.snippet) {
                 try { spec.visualization = { code: this.cli.vizPrelude() + '\n' + await this.cli.fetchSnippet(viz.snippet), card: viz.id }; }
                 catch { /* composeCase falls back to its default plot */ }
-            }
+            } else { spec.visualization = null; }
             const name = slug(sess.title || sess.id);
             const uri = this.caseFileUri(name);
             if (!(await this.fileService.exists(uri.parent))) { await this.fileService.createFolder(uri.parent); }

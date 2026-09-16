@@ -7,8 +7,14 @@
     "target": "browser-only",
     "frontend": {
       "config": {
-        "applicationName": "Zoomy (Theia + Baukasten preview)",
-        "preferences": { "files.enableTrash": false, "workbench.colorTheme": "Dark+", "security.workspace.trust.enabled": false, "window.menuBarVisibility": "compact" }
+        "applicationName": "Zoomy",
+        "preferences": {
+          "files.enableTrash": false,
+          "workbench.colorTheme": "Dark+",
+          "security.workspace.trust.enabled": false,
+          "window.menuBarVisibility": "compact",
+          "window.title": "${dirty} ${activeEditorShort}${separator}${appName}"
+        }
       }
     }
   },
@@ -26,7 +32,9 @@
     "@theia/notebook": "1.73.1",
     "zoomy-theia-ext": "file:./zoomy-theia-ext"
   },
-  "devDependencies": { "@theia/cli": "1.73.1" },
+  "devDependencies": {
+    "@theia/cli": "1.73.1"
+  },
   "scripts": {
     "build": "theia build --mode development",
     "start": "theia start"

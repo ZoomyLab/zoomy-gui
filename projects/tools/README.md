@@ -12,7 +12,7 @@ writes a per-session zip; `merge_sessions.py` combines them into the single
 PY=<zoomy env python>            # e.g. micromamba run -n zoomy python
 export CARD_OUT=/tmp            # where the packers stash card_*.py for smoke tests
 
-$PY pack_bingham_session.py           # -> bingham-session.zip            (roll-wave; thesis/cases/bingham/transient)
+$PY pack_zoomy_pipeline_sessions.py   # -> zoomy-{derivation,systemmodel,codeprinter}-session.zip + bingham-session.zip (thesis/cases/zoomy_example/gui)
 $PY pack_bingham_analytics_session.py # -> bingham-analytics-session.zip  (linear-stability analytics; thesis/cases/bingham/analytics)
 $PY pack_bingham_threshold_session.py # -> bingham-threshold-session.zip  (measured threshold sweep; thesis/cases/bingham/threshold)
 $PY pack_malpasset_session.py         # -> malpasset-session.zip          (session 1: jax)
@@ -22,7 +22,8 @@ $PY pack_coupling_triple_session.py   # -> coupling-triple-session.zip    (tripl
 $PY merge_sessions.py                 # -> zoomy-cases.zip                (6 shipped sessions)
 ```
 
-`pack_malpasset_amrex_session.py` mutates `malpasset-session.zip`, so it MUST
+`pack_zoomy_pipeline_sessions.py` writes comment-free card code (`strip_comments.py`)
+for the four thesis QR sessions. `pack_malpasset_amrex_session.py` mutates `malpasset-session.zip`, so it MUST
 run after `pack_malpasset_session.py`. `merge_sessions.py` reads the per-session
 zips, so it runs last (shipped session order: Bingham analytics · Bingham
 threshold · Bingham roll-wave · Malpasset dam break · Malpasset (AMReX) · SME-VOF
