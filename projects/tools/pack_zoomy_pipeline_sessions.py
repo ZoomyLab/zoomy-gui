@@ -18,95 +18,102 @@ ROOT = os.path.expanduser("~/git/Zoomy")
 CASES = os.path.join(ROOT, "thesis/cases/zoomy_example/gui")
 OUT = os.path.join(ROOT, "library/zoomy_gui/projects")
 
-# card id -> (tab, title, file). The ids are the catalog ids with the `card-`
-# prefix, which is what the GUI resolves a selection against; the code below
-# overrides each card's body. A session lists only the cards its notebook has:
-# a symbolic pipeline has no mesh to build and no field to plot, and the GUI
-# composes no section for a card that is not there.
+# card id -> (tab, title). The ids are the catalog ids with the `card-` prefix,
+# which is what the GUI resolves a selection against; a session lists only the
+# cards its notebook has (a symbolic pipeline has no mesh, no solver and no
+# field to plot; the GUI composes no section for a card that is not there).
 CARDS = {
-    "card-swe":            ("model",         "Shallow Water (SWE)",    "model.py"),
-    "card-sme":            ("model",         "Shallow Moments (SME)",  "model.py"),
-    "card-mesh-create-1d": ("mesh",          "Create 1D",              "mesh.py"),
-    "card-solver-numpy":   ("solver",        "NumPy Solver",           "run.py"),
-    "card-vis-empty-mpl":  ("visualization", "Empty (Matplotlib)",     "visualize.py"),
+    "card-swe":            ("model",         "Shallow Water (SWE)"),
+    "card-sme":            ("model",         "Shallow Moments (SME)"),
+    "card-mesh-create-1d": ("mesh",          "Create 1D"),
+    "card-solver-numpy":   ("solver",        "NumPy Solver"),
+    "card-vis-empty-mpl":  ("visualization", "Empty (Matplotlib)"),
 }
+
+# The three Zoomy-pipeline sessions share ONE derivation of the shallow water
+# equations (derivation/model.py) and differ in the steps that follow it;
+# each step is a named notebook section ("System model", ...).
+DERIVATION = "derivation/model.py"
 
 SESSIONS = [
     {
-        "dir": "derivation",
         "zip": "zoomy-derivation-session.zip",
         "id": "session-zoomy-derivation",
         "title": "Deriving the shallow water equations",
         "description": (
             "The shallow water equations derived from the general mass and "
-            "momentum balance, one operation at a time, the model displayed "
-            "after every step: the balances, the inviscid closure, the "
-            "hydrostatic pressure closure, the sigma transform, the level-0 "
-            "vertical ansatz, the Galerkin projection and the conservative "
-            "fold. Press Run All. The derived model is frozen into a system "
-            "model and a numerical system model and solved as a 2:1 dam break "
-            "on 200 cells; the last cell draws the initial and the final "
-            "free surface and discharge."),
-        "cards": ["card-swe", "card-mesh-create-1d", "card-solver-numpy", "card-vis-empty-mpl"],
-        "params": {"time_end": 0.5},
+            "momentum balance, one operation at a time, then frozen into a "
+            "system model and displayed."),
+        "cards": {"card-swe": DERIVATION},
+        "steps": [("System model", "derivation/system_model.py")],
+        "params": {},
     },
     {
-        "dir": "systemmodel",
         "zip": "zoomy-systemmodel-session.zip",
         "id": "session-zoomy-systemmodel",
         "title": "System model and dispersion relation",
         "description": (
-            "The transition from a model to a system model, and what the frozen "
-            "system can answer. Press Run All. The system model is displayed, "
-            "linearised about a uniform state, given a plane-wave ansatz and "
-            "solved for the dispersion relation, omega = k (u_0 +- sqrt(g h_0)): "
-            "both branches are straight and the phase speed does not depend on "
-            "the wavenumber, so the shallow water equations carry no dispersion."),
-        "cards": ["card-swe", "card-solver-numpy", "card-vis-empty-mpl"],
+            "The derived shallow water equations frozen into a system model "
+            "and displayed, then the dispersion relation of the system from "
+            "the analysis tools: omega = k (u_0 +- sqrt(g h_0)), so the phase "
+            "speed does not depend on the wavenumber."),
+        "cards": {"card-swe": DERIVATION},
+        "steps": [("System model", "systemmodel/system_model.py"),
+                  ("Dispersion relation", "systemmodel/dispersion.py")],
         "params": {},
     },
     {
-        "dir": "codeprinter",
         "zip": "zoomy-codeprinter-session.zip",
         "id": "session-zoomy-codeprinter",
         "title": "Numerical system model and AMReX code",
         "description": (
-            "The last two stages of the pipeline. Press Run All. The system "
-            "model is handed to the numerical system model, where the numerical "
-            "decisions live: 1/h is desingularised into a regularised auxiliary "
-            "symbol and the reconstruction and Riemann solver are attached. The "
-            "code printer then emits the AMReX header; the printer is syntax "
-            "only, the equations were fixed two steps earlier."),
-        "cards": ["card-swe", "card-solver-numpy"],
-        "params": {},
+            "The derived shallow water equations frozen into a system model, "
+            "handed to the numerical system model (1/h desingularised, "
+            "reconstruction and Riemann solver attached) and displayed, printed "
+            "as an AMReX header, and solved as a 2:1 dam break on 200 cells."),
+        "cards": {"card-swe": DERIVATION,
+                  "card-mesh-create-1d": "codeprinter/mesh.py",
+                  "card-solver-numpy": "codeprinter/run.py",
+                  "card-vis-empty-mpl": "codeprinter/visualize.py"},
+        "steps": [("System model", "codeprinter/system_model.py"),
+                  ("Numerical system model", "codeprinter/numerical_system_model.py"),
+                  ("Code", "codeprinter/code.py")],
+        "params": {"time_end": 0.5},
     },
     {
-        "dir": "bingham",
         "zip": "bingham-session.zip",
         "id": "session-bingham",
         "title": "Bingham roll-wave",
         "description": (
-            "Liu & Mei (1994) Bingham roll wave, SME level 2 on one seeded "
-            "wavelength, NumPy. time_end is the dimensionless t': the default "
-            "2 is a short march the browser finishes in minutes; the thesis "
-            "benchmark runs to t' = 200 (hours, run it natively). The last "
-            "cell draws the initial and the final depth and mean velocity."),
-        "cards": ["card-sme", "card-mesh-create-1d", "card-solver-numpy", "card-vis-empty-mpl"],
+            "Roll waves of a Bingham film on an incline, against Liu & Mei (1994), "
+            "*Roll waves on a layer of a muddy fluid flowing down a gentle "
+            "slope — a Bingham model*, Phys. Fluids 6, 2577–2590. "
+            "SME(2) with the Bingham closure "
+            "τ_xz = (ρ ν + τ_y / √((∂_z u)² + ε²)) ∂_z u, "
+            "Navier slip at the bed and a stress-free surface."),
+        "cards": {"card-sme": "bingham/model.py",
+                  "card-mesh-create-1d": "bingham/mesh.py",
+                  "card-solver-numpy": "bingham/run.py",
+                  "card-vis-empty-mpl": "bingham/visualize.py"},
+        "steps": [],
         "params": {"time_end": 2.0},
     },
 ]
 
 
+def read(rel):
+    with open(os.path.join(CASES, rel)) as f:
+        code = strip(f.read())
+    compile(code, rel, "exec")
+    return code
+
+
 def build(sess):
-    src = os.path.join(CASES, sess["dir"])
-    code = {}
-    for cid in sess["cards"]:
-        _tab, _title, fname = CARDS[cid]
-        with open(os.path.join(src, fname)) as f:
-            code[cid] = strip(f.read())
-        compile(code[cid], f"{sess['dir']}/{fname}", "exec")
-    print(f"  compile OK: {sess['dir']}",
-          {CARDS[c][2]: len(s) for c, s in code.items()})
+    code = {cid: read(rel) for cid, rel in sess["cards"].items()}
+    steps = [{"title": title, "code": read(rel)} for title, rel in sess["steps"]]
+    print(f"  compile OK: {sess['zip']}",
+          {rel: len(code[cid]) for cid, rel in sess["cards"].items()},
+          [(t, len(st["code"])) for (t, _r), st in zip(sess["steps"], steps)])
 
     overrides = {cid: {"code": code[cid]} for cid in sess["cards"]}
     if sess["params"]:
@@ -118,6 +125,7 @@ def build(sess):
         "description": sess["description"],
         "selections": {CARDS[cid][0]: cid for cid in sess["cards"]},
         "cardOverrides": overrides,
+        "steps": steps,
     }
     meta = {"version": "1.1", "sessions": [session],
             "activeSession": sess["id"]}
@@ -126,13 +134,15 @@ def build(sess):
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(meta, indent=2))
         for cid in sess["cards"]:
-            tab, title, _f = CARDS[cid]
+            tab, title = CARDS[cid]
             base = f"{sess['title']}/{tab}/{title}/"
             z.writestr(base + "card.json", json.dumps(
                 {"id": cid, "title": title, "description": "",
                  "params": overrides[cid].get("params", {}),
                  "tab": tab, "subtab": ""}, indent=2))
             z.writestr(base + "code.py", code[cid])
+        for i, st in enumerate(steps):
+            z.writestr(f"{sess['title']}/step/{i + 1:02d} {st['title']}/code.py", st["code"])
     print(f"  wrote {path} ({os.path.getsize(path)} bytes)")
 
 

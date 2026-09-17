@@ -170,6 +170,10 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     protected readonly codeByCard = new Map<string, string>();
     /** Title + description of the open case (from its meta cell), kept across saves. */
     protected caseMeta: { title: string; description: string } | undefined;
+    /** The case's own named sections between Model and Mesh ("System model",
+     *  "Code", ...): notebook content, edited in the notebook / case.py, never
+     *  by a card; kept across saves. */
+    protected caseSteps: Array<{ title: string; code: string }> = [];
     /** The case.py content we last wrote (persistCase) — the echo guard so the
      *  active-case watcher only re-absorbs EXTERNAL (editor) edits, not our writes. */
     protected lastWritten: string | undefined;
@@ -538,7 +542,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     async newCase(name: string, spec?: any): Promise<void> {
         const clean = (name || 'case').trim().replace(/[^a-zA-Z0-9_-]+/g, '_') || 'case';
         this.selected['models'] = ''; this.selected['meshes'] = ''; this.selected['solvers'] = ''; this.selected['visualizations'] = '';
-        this.edited.clear(); this.codeByCard.clear(); this.caseMeta = undefined;
+        this.edited.clear(); this.codeByCard.clear(); this.caseMeta = undefined; this.caseSteps = [];
         if (spec) { this.applySpec(spec); }
         else {
             for (const dir of ['models', 'meshes', 'solvers']) { const c = this.pickedCard(dir); if (c) { this.selected[dir] = c.id; } }
@@ -1418,10 +1422,12 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     // --- #3/#5 Case interchange via zoomy_prepost.case (through zoomy_cli). ---
     /** Build the canonical case spec from the current selection + edits. */
     protected async gatherSpec(): Promise<any> {
-        const model = this.pickedCard('models'), solver = this.pickedCard('solvers');
+        const model = this.pickedCard('models');
         // A section exists iff a card is selected for it: a case opened without
-        // a Mesh or a Visualization section (a symbolic pipeline) keeps none,
-        // and selecting a card in that tab brings the section in.
+        // a Mesh, a Solver (settings + run) or a Visualization section (a
+        // symbolic pipeline) keeps none, and selecting a card in that tab
+        // brings the section in.
+        const solver = this.selected['solvers'] ? this.pickedCard('solvers') : undefined;
         const mesh = this.selected['meshes'] ? this.pickedCard('meshes') : undefined;
         const viz = this.selected['visualizations'] ? this.pickedCard('visualizations') : undefined;
         const spec: any = {
@@ -1430,14 +1436,16 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             // is named after its model card.
             meta: this.caseMeta || { title: (model?.title || 'Zoomy case'), description: 'Exported from the Zoomy model-config GUI.' },
             model: { code: this.cardCodeFor(model), class_path: model?.class || null, init: this.mergedInit(model), card: model?.id || null },
+            steps: this.caseSteps,
             mesh: mesh ? { code: this.cardCodeFor(mesh), spec: this.mergedInit(mesh), card: mesh.id } : null,
-            settings: {},
-            solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: solver ? this.mergedInit(solver) : {} },
+            settings: solver ? {} : null,
+            solver: solver ? { tag: solver.requires_tag || 'numpy', id: solver.id || null, params: this.mergedInit(solver) } : null,
         };
         // Run cell = the solver card's stored/template code (a coupling child's coupled
         // run note is stored here as a code override and round-trips verbatim).
-        const solverCode = this.cardCodeFor(solver);
+        const solverCode = solver ? this.cardCodeFor(solver) : '';
         if (solverCode) { spec.run = { code: solverCode }; }
+        if (!solver) { spec.run = null; }
         // Compose EVERY checked viewer into the ## Visualization section (multi-
         // select → several plots of one run in the exported .py / .ipynb).
         const vizCards = (this.cardsByTab['visualizations'] || []).filter(c => this.selectedViz.has(c.id) && c.snippet);
@@ -1516,6 +1524,8 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         }
         if (!spec?.mesh) { this.selected['meshes'] = ''; }
         if (!spec?.visualization) { this.selected['visualizations'] = ''; this.selectedViz.clear(); }
+        if (!spec?.run && !spec?.solver && !spec?.settings) { this.selected['solvers'] = ''; }
+        this.caseSteps = Array.isArray(spec?.steps) ? spec.steps.map((st: any) => ({ title: String(st.title || 'Step'), code: String(st.code || '') })) : [];
         if (spec?.mesh) {
             const meshes = this.cardsByTab['meshes'] || [];
             const c = (spec.mesh.card && meshes.find(m => m.id === spec.mesh.card)) || meshes[0];
@@ -1714,17 +1724,18 @@ export class ZoomyModelConfigWidget extends ReactWidget {
             // A viewer id the catalog no longer carries still has its code in the
             // override; the first viewer then carries that code as its own.
             const viz = catalog('visualizations', sel.visualization) || (this.cardsByTab['visualizations'] || []).find(c => c.snippet);
+            const hasSolver = !!(solver || over(sel.solver).code != null);
             const spec: any = {
                 meta: { title: sess.title || slug(sess.id), description: sess.description || '' },
                 model: { code: code(model, sel.model), class_path: model?.class || null, init: params(model, sel.model), card: model?.id || null },
+                steps: Array.isArray(sess.steps) ? sess.steps.map((st: any) => ({ title: String(st.title || 'Step'), code: String(st.code || '') })) : [],
                 mesh: (mesh || over(sel.mesh).code != null)
                     ? { code: code(mesh, sel.mesh), spec: params(mesh, sel.mesh), card: mesh?.id || null }
                     : null,
-                settings: {},
-                solver: { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: over(sel.solver).params || {} },
+                settings: hasSolver ? {} : null,
+                solver: hasSolver ? { tag: solver?.requires_tag || 'numpy', id: solver?.id || null, params: over(sel.solver).params || {} } : null,
+                run: hasSolver ? { code: code(solver, sel.solver) } : null,
             };
-            const run = code(solver, sel.solver);
-            if (run) { spec.run = { code: run }; }
             const own = over(sel.visualization).code;
             if (own != null) { spec.visualization = { code: String(own), card: viz?.id || null }; }
             else if (sel.visualization && viz?.snippet) {
