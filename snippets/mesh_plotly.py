@@ -19,7 +19,7 @@ import zoomy_plotting as zp
 if store is None:
     raise RuntimeError(
         "store is not populated — run a simulation first. The solver "
-        "template writes /tmp/zoomy_sim/sim.h5 and calls open_hdf5()."
+        "template writes run_h5_path() and calls open_hdf5()."
     )
 if not isinstance(store, zp.SimulationStore):
     raise TypeError(

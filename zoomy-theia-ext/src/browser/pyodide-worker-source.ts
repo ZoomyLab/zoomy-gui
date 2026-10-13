@@ -73,6 +73,13 @@ def close_store():
     __zoomy_ns__["store"] = None
 
 
+def run_h5_path():
+    # Where a solver card writes this run's store, as engine.py's run_h5_path: the tab's own file.
+    path = "/tmp/zoomy_sim/sim.h5"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
+
+
 def open_hdf5(path):
     import zoomy_plotting as zp   # ensureDeps() installs it on seeing this name
 
@@ -98,9 +105,11 @@ def typed_kwargs(cls, settings):
     return _typed_kwargs(cls, settings)
 
 
+builtins.run_h5_path = run_h5_path
 builtins.open_hdf5 = open_hdf5
 builtins.close_store = close_store
 builtins.typed_kwargs = typed_kwargs
+__zoomy_ns__["run_h5_path"] = run_h5_path
 __zoomy_ns__["open_hdf5"] = open_hdf5
 __zoomy_ns__["close_store"] = close_store
 __zoomy_ns__["typed_kwargs"] = typed_kwargs
