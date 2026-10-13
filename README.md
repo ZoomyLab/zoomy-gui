@@ -13,7 +13,8 @@ The NumPy, JAX and AMReX solver cards run the symbolic solvers (`zoomy_core.syms
 | Split / Chorin (NumPy) | `SymbolicChorinSolverNumpy` on the VAM model card's `split` (predictor: `predictor_nsm`) | the browser |
 | Hyperbolic (JAX), IMEX (JAX) | `zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax` (`SymbolicChorinSolverJax` for a `split`) | a jax backend |
 | Hyperbolic (AMReX), Split (AMReX) | `zoomy_amrex.symsolver.SymbolicHyperbolicSolverAmrex` / `SymbolicChorinSolverAmrex`, on the mesh's uniform Cartesian grid; inside the amrex backend's image the driver builds and runs natively | an amrex backend |
-| DMPlex, Firedrake, zoomyFoam, incompressibleVOF | the backend's own solver (no symbolic solver card; zoomyFoam / VOF are the preCICE coupling participants) | that backend |
+| Hyperbolic (OpenFOAM) | `zoomy_foam.symsolver.SymbolicHyperbolicSolverFoam` (`SymbolicChorinSolverFoam` for a `split`), built with wmake | an OpenFOAM backend |
+| DMPlex, Firedrake | the backend's own solver (no symbolic solver card) | that backend |
 
 - The NumPy cards read the card's Parameters from `settings`; `typed_kwargs(cls, settings)` (`engine.py`) keeps the solver's own parameters and turns a dropdown's string back into the option member (`imex="ssp2"` -> `Imex.ssp2`).
 - A backend card carries no code: the case's Run cell is the generated runner (`zoomy_cli` `_runCode`, mirrored by `zoomy_prepost.case._run_code`): the symbolic JAX solver for `settings["backend"] == "jax"`, AMReX for `amrex`, foam for `OpenFOAM`, NumPy otherwise.

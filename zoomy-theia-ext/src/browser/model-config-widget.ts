@@ -1526,7 +1526,7 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         if (spec?.solver) {
             const solvers = this.cardsByTab['solvers'] || [];
             // Prefer the exact card id (several solvers can share a backend tag,
-            // e.g. coupled zoomyFoam + incompressibleVOF both on "OpenFOAM"); fall
+            // e.g. the NumPy hyperbolic, IMEX and split cards all on "numpy"); fall
             // back to the tag for older cases that only stored the backend.
             const c = (spec.solver.id && solvers.find(s => s.id === spec.solver.id))
                 || (spec.solver.tag && solvers.find(s => this.canonTag(s.requires_tag || 'numpy') === this.canonTag(spec.solver.tag)));

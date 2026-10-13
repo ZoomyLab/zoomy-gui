@@ -6,10 +6,10 @@ Each child is a COMPLETE, runnable preCICE participant `case.py`: a real SME (or
 VOF) model built with initial + boundary conditions (including the preCICE Coupled
 BC whose mesh_name matches the sibling ../precice-config.xml), a real mesh cell
 (`BaseMesh.create_1d/2d(...); mesh.write_to_hdf5(...)`), and settings pinning the
-OpenFOAM backend + the coupled solver. The parent folder carries coupling.yml +
+OpenFOAM backend + the "Hyperbolic (OpenFOAM)" solver card (`solver-foam`). The parent folder carries coupling.yml +
 the generated precice-config.xml.
 
-Run:  python apps/theia-preview/gui/demo/make_coupling_examples.py
+Run:  python library/zoomy_gui/demo/make_coupling_examples.py
 (regenerates the zip in place). Requires the repo's zoomy_prepost on the path.
 """
 import os, sys, json, shutil, zipfile, tempfile
@@ -30,7 +30,7 @@ RUN_NOTE = (
     "# participant is started together, shares the coupling folder (the preCICE\n"
     "# exchange-directory) and they find each other over sockets. In the GUI, running\n"
     "# this case alone is gated on a connected OpenFOAM backend (the selected solver\n"
-    "# is zoomyFoam / incompressibleVOF, not numpy) — it is NOT a local numpy run.\n")
+    "# card is Hyperbolic (OpenFOAM), not numpy) — it is NOT a local numpy run.\n")
 
 
 def header(title, desc):
@@ -122,7 +122,7 @@ def sme_child(title, desc, mesh_name):
 
 def vof_child(title, desc, mesh_name):
     return (header(title, desc) + vof_model_cell(mesh_name) + mesh_cell_2d()
-            + settings_cell("solver-foam-vof") + RUN_NOTE)
+            + settings_cell("solver-foam") + RUN_NOTE)
 
 
 # ---------------------------------------------------------------- assembly
