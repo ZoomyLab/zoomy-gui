@@ -42,7 +42,7 @@
       "reconstruction_order": 1,
       "snapshots": 20
     },
-    "template": "import os\n\nfrom zoomy_core.fvm.riemann_solvers import PositiveNonconservativeRusanov\nfrom zoomy_core.fvm.solver_chorin_vam_numpy import _pad_to_square\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\nfrom zoomy_core.symsolver.numpy_backend import SymbolicChorinSolverNumpy\n\n# Chorin projection march of the symbolic NumPy solver for the NON-HYDROSTATIC VAM chain.\n# The model card binds `split` (predictor / pressure / corrector systems); a model card\n# without `split` is hydrostatic -- march it with the \"Hyperbolic (NumPy)\" card instead.\n_h5_path = \"/tmp/zoomy_sim/sim.h5\"\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\n# The predictor on the full (padded) state: positive Rusanov, rescaled momenta.\npred, press, corr = _pad_to_square(split.SM_pred), split.SM_press, split.SM_corr\nnames = [str(s) for s in pred.state]\nfixed = {names.index(\"h\"), names.index(\"b\"), *map(int, press.equation_to_state_index)}\nnsm = NumericalSystemModel.from_system_model(\n    pred, riemann=PositiveNonconservativeRusanov,\n    reconstruction=ReconstructionSpec(order=settings.get(\"reconstruction_order\", 1)),\n    additional_systems=[press, corr],\n    scaled_q_indices=[i for i in range(pred.n_variables) if i not in fixed])\n\noptions = typed_kwargs(SymbolicChorinSolverNumpy, settings)\noptions.setdefault(\"time_end\", 0.1)\noptions.setdefault(\"dt_write\", options[\"time_end\"] / settings.get(\"snapshots\", 20))\noptions[\"output\"] = _h5_path\nsolver = SymbolicChorinSolverNumpy(**options)\nQ, Qaux = solver.setup(mesh, nsm, press, corr)\ntime, Q, Qaux = solver.run(Q, Qaux)\n\nopen_hdf5(_h5_path)\n",
+    "template": "import os\n\nfrom zoomy_core.numerics import ReconstructionSpec\nfrom zoomy_core.symsolver.numpy_backend import SymbolicChorinSolverNumpy\nfrom zoomy_core.symsolver.strategies.chorin import predictor_nsm\n\n# Chorin projection march of the symbolic NumPy solver for the NON-HYDROSTATIC VAM chain.\n# The model card binds `split` (predictor / pressure / corrector systems); a model card\n# without `split` is hydrostatic -- march it with the \"Hyperbolic (NumPy)\" card instead.\n_h5_path = \"/tmp/zoomy_sim/sim.h5\"\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\n# The predictor on the full state: positive Rusanov, rescaled momenta.\npress, corr = split.SM_press, split.SM_corr\nnsm = predictor_nsm(split.SM_pred, press, corr, ReconstructionSpec(\n    order=settings.get(\"reconstruction_order\", 1)))\n\noptions = typed_kwargs(SymbolicChorinSolverNumpy, settings)\noptions.setdefault(\"time_end\", 0.1)\noptions.setdefault(\"dt_write\", options[\"time_end\"] / settings.get(\"snapshots\", 20))\noptions[\"output\"] = _h5_path\nsolver = SymbolicChorinSolverNumpy(**options)\nQ, Qaux = solver.setup(mesh, nsm, press, corr)\ntime, Q, Qaux = solver.run(Q, Qaux)\n\nopen_hdf5(_h5_path)\n",
     "category": "Splitting"
   },
   {
@@ -125,36 +125,32 @@
   {
     "id": "solver-amrex",
     "title": "Hyperbolic (AMReX)",
-    "description": "Explicit finite-volume march on block-structured AMR (HyperbolicSolver) — needs the zoomy-amrex container.",
+    "description": "Explicit finite-volume march of the symbolic solver on AMReX (SymbolicHyperbolicSolverAmrex, zoomy_amrex.symsolver) on the mesh's uniform Cartesian grid: printed to C++, built and run in the amrex backend (zoomy-amrex container).",
     "requires_tag": "amrex",
-    "class": "zoomy_amrex.solvers.HyperbolicSolver",
+    "class": "zoomy_amrex.symsolver.SymbolicHyperbolicSolverAmrex",
     "params": {
       "time_end": {
         "type": "Number",
-        "default": 0.1
-      },
-      "CFL": {
-        "type": "Number",
-        "default": 0.45,
+        "default": 0.1,
         "bounds": [
           0,
-          1
+          null
         ]
       },
-      "order": {
+      "cfl": {
+        "type": "Number",
+        "default": 0.9,
+        "bounds": [
+          0.01,
+          0.99
+        ]
+      },
+      "reconstruction_order": {
         "type": "Integer",
         "default": 1,
         "bounds": [
           1,
           2
-        ]
-      },
-      "max_level": {
-        "type": "Integer",
-        "default": 0,
-        "bounds": [
-          0,
-          4
         ]
       }
     },
@@ -163,28 +159,32 @@
   {
     "id": "solver-split-amrex",
     "title": "Split (AMReX)",
-    "description": "Chorin pressure-projection split (SplitSolver; needs a chorin_split model) on AMReX — needs the zoomy-amrex container. Pressure preconditioner is fixed at 3 downstream (the precond knob is currently dead).",
+    "description": "Chorin projection split of the symbolic solver on AMReX (SymbolicChorinSolverAmrex: hyperbolic predictor, pressure solve, corrector) for the non-hydrostatic VAM chain; consumes the `split` the VAM model card binds. Runs in the amrex backend (zoomy-amrex container).",
     "requires_tag": "amrex",
-    "class": "zoomy_amrex.solvers.SplitSolver",
+    "class": "zoomy_amrex.symsolver.SymbolicChorinSolverAmrex",
     "params": {
       "time_end": {
         "type": "Number",
-        "default": 0.1
-      },
-      "CFL": {
-        "type": "Number",
-        "default": 0.3,
+        "default": 0.1,
         "bounds": [
           0,
-          1
+          null
         ]
       },
-      "max_level": {
-        "type": "Integer",
-        "default": 0,
+      "cfl": {
+        "type": "Number",
+        "default": 0.9,
         "bounds": [
-          0,
-          4
+          0.01,
+          0.99
+        ]
+      },
+      "reconstruction_order": {
+        "type": "Integer",
+        "default": 1,
+        "bounds": [
+          1,
+          2
         ]
       }
     },

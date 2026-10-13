@@ -42,6 +42,13 @@ model = model.replace(
     anchor,
     anchor + "\n\n# --- inlined case module: sme_malpasset_model.py " + "-" * 16 + "\n"
     + smm + "\n# " + "-" * 66)
+# the Riemann numerics from the NSM layer; no positivity knob (the symbolic solvers' positivity
+# is the hydrostatic reconstruction + CFL at order 1, MOOD at order 2)
+RIEMANN_IMPORT = "from zoomy_core.fvm.riemann_solvers import ("
+assert RIEMANN_IMPORT in model
+model = model.replace(RIEMANN_IMPORT, "from zoomy_core.numerics import (")
+model, n = re.subn(r"\n        positivity_method=\(.*?\)\),\n", "\n", model, count=1, flags=re.S)
+assert n == 1, "positivity_method entry of fs_kwargs not found"
 model_card = guard_file(model).strip() + "\n"
 
 # ---------------- mesh card ----------------
@@ -69,6 +76,7 @@ mesh_card = guard_file(mesh).strip() + "\n"
 
 # ---------------- run card ----------------
 settings_json = json.loads(read("settings.json"))
+settings_json["numerics"].pop("positivity_method", None)
 run_src = strip_future(read("run.py"))
 sib_run = "from mesh import build_mesh\nfrom model import build_model"
 assert sib_run in run_src

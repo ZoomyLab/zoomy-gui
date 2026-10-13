@@ -4,20 +4,21 @@ This repository is a submodule of the the [Zoomy Lab](https://github.com/ZoomyLa
 
 ## Solver cards
 
-The NumPy and JAX solver cards run the symbolic solvers (`zoomy_core.symsolver`, `zoomy_jax.symsolver`).
+The NumPy, JAX and AMReX solver cards run the symbolic solvers (`zoomy_core.symsolver`, `zoomy_jax.symsolver`, `zoomy_amrex.symsolver`).
 
 | card | solver | runs in |
 |---|---|---|
 | Hyperbolic (NumPy) | `zoomy_core.symsolver.numpy_backend.SymbolicHyperbolicSolverNumpy` | the browser (Pyodide) |
 | IMEX (NumPy) | the same with `imex` = `lie` / `ssp2` | the browser |
-| Split / Chorin (NumPy) | `SymbolicChorinSolverNumpy` on the VAM model card's `split` | the browser |
+| Split / Chorin (NumPy) | `SymbolicChorinSolverNumpy` on the VAM model card's `split` (predictor: `predictor_nsm`) | the browser |
 | Hyperbolic (JAX), IMEX (JAX) | `zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax` (`SymbolicChorinSolverJax` for a `split`) | a jax backend |
-| Hyperbolic (AMReX), Split (AMReX) | unchanged, legacy `zoomy_amrex.solvers.HyperbolicSolver` / `SplitSolver`: `zoomy_amrex.symsolver` builds and runs through `apptainer exec zoomy_amrex.sif` from the host, while the amrex backend is zoomy-server inside that image | an amrex backend |
-| DMPlex, Firedrake, zoomyFoam, incompressibleVOF | the backend's own solver (no symbolic solver card) | that backend |
+| Hyperbolic (AMReX), Split (AMReX) | `zoomy_amrex.symsolver.SymbolicHyperbolicSolverAmrex` / `SymbolicChorinSolverAmrex`, on the mesh's uniform Cartesian grid; inside the amrex backend's image the driver builds and runs natively | an amrex backend |
+| DMPlex, Firedrake, zoomyFoam, incompressibleVOF | the backend's own solver (no symbolic solver card; zoomyFoam / VOF are the preCICE coupling participants) | that backend |
 
 - The NumPy cards read the card's Parameters from `settings`; `typed_kwargs(cls, settings)` (`engine.py`) keeps the solver's own parameters and turns a dropdown's string back into the option member (`imex="ssp2"` -> `Imex.ssp2`).
-- A backend card carries no code: the case's Run cell is the generated runner (`zoomy_cli` `_runCode`, mirrored by `zoomy_prepost.case._run_code`): the symbolic JAX solver for `settings["backend"] == "jax"`, the symbolic NumPy solver otherwise.
+- A backend card carries no code: the case's Run cell is the generated runner (`zoomy_cli` `_runCode`, mirrored by `zoomy_prepost.case._run_code`): the symbolic JAX solver for `settings["backend"] == "jax"`, AMReX for `amrex`, foam for `OpenFOAM`, NumPy otherwise.
 - The thesis QR sessions carry their own run cards, ported by `projects/tools/port_symsolver_sessions.py` (see `projects/tools/README.md`).
+- Positivity is the hydrostatic reconstruction and the CFL step at order 1, MOOD at order 2; there is no positivity option.
 
 ## Results shelf — save a run, open it by name from a viz card
 

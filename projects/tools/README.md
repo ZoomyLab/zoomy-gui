@@ -14,7 +14,7 @@ export CARD_OUT=/tmp            # where the packers stash card_*.py for smoke te
 
 $PY pack_zoomy_pipeline_sessions.py   # -> zoomy-{derivation,systemmodel,codeprinter}-session.zip + bingham-session.zip (thesis/cases/zoomy_example/gui)
 $PY pack_bingham_analytics_session.py # -> bingham-analytics-session.zip  (linear-stability analytics; thesis/cases/bingham/analytics)
-$PY pack_bingham_threshold_session.py # -> bingham-threshold-session.zip  (measured threshold sweep; thesis/cases/bingham/threshold)
+$PY pack_bingham_threshold_session.py # -> bingham-threshold-session.zip  (measured threshold sweep; thesis/cases/bingham/threshold, live checkout)
 $PY pack_malpasset_session.py         # -> malpasset-session.zip          (session 1: jax)
 $PY pack_malpasset_amrex_session.py   # EDITS malpasset-session.zip IN PLACE (adds session 2: AMReX)
 $PY pack_coupling_session.py          # -> coupling-session.zip           (pair replay)
@@ -24,14 +24,19 @@ $PY merge_sessions.py                 # -> zoomy-cases.zip                (6 shi
 ```
 
 `port_symsolver_sessions.py` swaps the run (solver) card of the QR sessions (Bingham roll-wave,
-code printer, Steffler, Malpasset JAX) for its port in `symsolver/`: the packed case, marched by
-`SymbolicHyperbolicSolverNumpy` / `SymbolicHyperbolicSolverJax` instead of the legacy
-`zoomy_core.fvm` / `zoomy_jax.fvm` solvers (the thesis cases still use those). It stops when a
-packed run card is neither the port nor the legacy card it replaces, i.e. when the thesis case
-changed: re-port that file. Malpasset (AMReX) stays on `zoomy_amrex.solvers`:
-`zoomy_amrex.symsolver` builds and runs through `apptainer exec zoomy_amrex.sif` from the host,
-and the amrex backend is zoomy-server inside that image; `symsolver/malpasset_amrex_run.py` is
-its port for when the driver builds in the container.
+code printer, Steffler, Bingham threshold, Malpasset JAX) for its port in `symsolver/`: the packed
+case, marched by `SymbolicHyperbolicSolverNumpy` / `SymbolicHyperbolicSolverJax` instead of the
+solvers the thesis case scripts still use. It identifies the packed card it replaces by its
+SHA-256 and stops when a run card is neither the port nor that card, i.e. when the thesis case
+changed: re-port that file and record the new hash. `pack_malpasset_amrex_session.py` packs
+`symsolver/malpasset_amrex_run.py` (`SymbolicHyperbolicSolverAmrex`) itself; inside the amrex
+backend's image (zoomy-server in `zoomy_amrex.sif`) `zoomy_amrex.symsolver` builds and runs
+natively and caches in a writable directory (`ZOOMY_AMREX_SYMCACHE`).
+
+The Bingham threshold port marches each beta in one run (the packed card restarted the solver
+per frame with post-lowering `sm.initial_conditions`, a no-op: every frame replayed the seed);
+the film never dries, so it keeps the packed card's flux (the plain path-conservative Rusanov,
+numerical eigenvalues): old and new agree to round-off over a continuous march.
 
 The packers write into `../` (this checkout's `projects/`). The Malpasset and coupling
 packers read their thesis case at a pinned revision (`REV`, via `git show`; `ZOOMY_THESIS`

@@ -1,14 +1,14 @@
-"""Deliverable for the phase-3 card rework: PROVE the five authored model-card
-defaults run, straight from the catalog.
+"""Deliverable for the phase-3 card rework: PROVE the authored model-card defaults run,
+straight from the catalog, on the symbolic NumPy solver.
 
-For each card in ``cards/models/default.json`` this
+For each card in ``cards/models/default.json`` that builds a zoomy model this
   1. execs the card's ``template`` verbatim (the same string the GUI ships and
      ``tests/test_registry.py`` gates),
   2. builds the mesh from the ``mesh-create-1d`` card's ``init``
      (domain 0..10, 50 cells — no numbers are re-typed here),
-  3. marches it with the solver the card implies — ``ChorinSplitVAMSolver``
-     when the template binds ``split`` (VAM is non-hydrostatic),
-     ``HyperbolicSolver`` otherwise,
+  3. marches it with the solver the card implies — ``SymbolicChorinSolverNumpy``
+     when the template binds ``split`` (VAM is non-hydrostatic; the predictor from
+     ``predictor_nsm``), ``SymbolicHyperbolicSolverNumpy`` otherwise,
   4. writes the run to HDF5 and reads it back through
      ``zoomy_plotting.read_hdf5`` — the same store the GUI's Visualization
      cards see — then plots ``h(x)`` at t=0 and t=t_end via
@@ -17,17 +17,7 @@ For each card in ``cards/models/default.json`` this
 The per-panel annotation is the acceptance number: the discrete mass
 ``Σ h·dx`` over the inner cells.  Wall BCs on both tags make this an EXACT
 invariant of the FV update (no flux crosses either end), so ``Δmass`` is a
-wall-tightness check, not a tolerance — four of the five hold it at machine
-zero.  ``sigma3d`` does not, and the panel says so: its height flux is ``h·U``
-with ``U = ∫u dζ`` a vertical integral that the generic pointwise aux fill
-never supplies.  ``U`` stays frozen at 1, the height equation degenerates to
-unit-speed advection, and the walls (which reflect ``mom``, not the frozen aux)
-leak at the predicted rate ``d(mass)/dt = h_left·U - h_right·U = 2 - 1 = 1``:
-measured Δmass = 1.25e-2 / 2.5e-2 / 5.0e-2 / 1.0e-1 at t = 0.0125 / 0.025 /
-0.05 / 0.1, i.e. exactly t, until the waves reach the walls.  Its reference
-solver
-(``sigma3d_split_solver.Sigma3DSplitSolver``) assembles U/ω from the face mass
-fluxes and is exact — it is not wired to a solver card yet.
+wall-tightness check, not a tolerance.
 
 Reproduce::
 
@@ -44,17 +34,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import zoomy_plotting as zp
-from zoomy_core.fvm.solver_chorin_vam_numpy import ChorinSplitVAMSolver
-from zoomy_core.fvm.solver_numpy import HyperbolicSolver
-import zoomy_core.fvm.timestepping as ts
 from zoomy_core.mesh import BaseMesh
-from zoomy_core.misc.misc import Zstruct
 from zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec
+from zoomy_core.symsolver.numpy_backend import (SymbolicChorinSolverNumpy,
+                                                SymbolicHyperbolicSolverNumpy)
+from zoomy_core.symsolver.strategies.chorin import predictor_nsm
+from zoomy_core.systemmodel import SystemModel
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_PNG = os.path.join(HERE, "deliverable_default_cards.png")
 T_END = 1.0
-CFL = 0.3
+CFL = 0.9
+SNAPSHOTS = 20
 
 
 def _catalog(name):
@@ -62,40 +53,28 @@ def _catalog(name):
         return {c["id"]: c for c in json.load(fh)}
 
 
-def _settings(h5_path):
-    return Zstruct(output=Zstruct(
-        directory=os.path.dirname(h5_path),
-        filename=os.path.splitext(os.path.basename(h5_path))[0],
-        snapshots=21,
-        clean_directory=True,
-    ))
-
-
 def run_card(card, mesh, h5_path):
     """Exec the card template and march it with the solver the card implies.
     Returns (state_names, solver_label)."""
-    ns = {}
+    ns = {"display": lambda *a, **k: None}
     exec(compile(card["template"], card["id"], "exec"), ns)  # noqa: S102
     sm = ns["model"]
     names = [str(s) for s in sm.state]
-    mesh.write_to_hdf5(h5_path)
-
+    opts = dict(time_end=T_END, cfl=CFL, dt_write=T_END / SNAPSHOTS, output=h5_path)
     if "split" in ns:                       # non-hydrostatic → Chorin projection
-        solver = ChorinSplitVAMSolver(
-            stages=ns["split"].stages, pressure_solver="lu", riemann_solver="hr",
-            time_end=T_END, compute_dt=ts.adaptive(CFL=CFL, dimension=1),
-            settings=_settings(h5_path))
-        solver.setup_simulation(mesh, write_output=True)
-        solver.run_simulation()
-        return names, "ChorinSplitVAMSolver"
+        split = ns["split"]
+        solver = SymbolicChorinSolverNumpy(**opts)
+        Q, Qaux = solver.setup(mesh, predictor_nsm(split.SM_pred, split.SM_press, split.SM_corr),
+                               split.SM_press, split.SM_corr)
+        solver.run(Q, Qaux)
+        return names, "SymbolicChorinSolverNumpy"
 
     nsm = NumericalSystemModel.from_system_model(
         sm, reconstruction=ReconstructionSpec(order=1))
-    solver = HyperbolicSolver(
-        time_end=T_END, compute_dt=ts.adaptive(CFL=CFL, dimension=1),
-        settings=_settings(h5_path))
-    solver.solve(mesh, nsm, write_output=True)
-    return names, "HyperbolicSolver"
+    solver = SymbolicHyperbolicSolverNumpy(**opts)
+    Q, Qaux = solver.setup(mesh, nsm)
+    solver.run(Q, Qaux)
+    return names, "SymbolicHyperbolicSolverNumpy"
 
 
 def main():
@@ -107,7 +86,7 @@ def main():
     mesh = BaseMesh.create_1d(domain=(x0, x1), n_inner_cells=n_cells)
 
     tmp = tempfile.mkdtemp(prefix="zoomy_gui_cards_")
-    ids = list(models)
+    ids = [cid for cid in models if "SystemModel" in models[cid].get("template", "")]
     with zp.apply_style():
         fig, axes = plt.subplots(1, len(ids), figsize=(4.0 * len(ids), 3.4),
                                  sharey=True)
@@ -117,7 +96,7 @@ def main():
             names, solver_label = run_card(card, mesh, h5_path)
 
             store = zp.read_hdf5(h5_path)          # what a viz card sees
-            h_field = f"q{names.index('h')}"
+            h_field = "h"                          # the store names its fields
             plotter = zp.MatplotlibPlotter(store)
             last = len(store.times) - 1
             plotter.plot(ax, time_step=0, field=h_field,

@@ -23,9 +23,11 @@ simulation.h5 so the compose viz prelude's read_hdf5 succeeds.
 """
 import json, os, pprint, re, tempfile, zipfile
 
-ROOT = os.path.expanduser("~/git/Zoomy")
-CASE = os.path.join(ROOT, "thesis/cases/bingham/threshold")
-ZIP = os.path.join(ROOT, "library/zoomy_gui/projects/bingham-threshold-session.zip")
+#: The thesis checkout (`ZOOMY_THESIS`); the zip goes to this checkout's projects/.
+THESIS = os.environ.get("ZOOMY_THESIS", os.path.expanduser("~/git/Zoomy/thesis"))
+CASE = os.path.join(THESIS, "cases/bingham/threshold")
+ZIP = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                   "bingham-threshold-session.zip")
 
 read = lambda f: open(os.path.join(CASE, f)).read()
 strip_future = lambda s: re.sub(r"^from __future__ import.*\n", "", s, flags=re.M)

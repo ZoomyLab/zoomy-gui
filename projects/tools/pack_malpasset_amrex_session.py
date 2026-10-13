@@ -1,5 +1,9 @@
 """Add the 'Malpasset (AMReX)' session to gui/projects/malpasset-session.zip
-(second session, same zip — one Malpasset artifact, two backends)."""
+(second session, same zip — one Malpasset artifact, two backends).
+
+Model, mesh and visualization cards come from the thesis case at REV; the run card is
+`symsolver/malpasset_amrex_run.py` (the symbolic AMReX solver, `SymbolicHyperbolicSolverAmrex`).
+"""
 import json, os, pprint, re, subprocess, zipfile
 
 #: The thesis checkout, read at REV (the revision the shipped session was packed from).
@@ -38,8 +42,42 @@ def load_settings(path=None):
             s["run"] = dict(s["run"], t_end=float(gui["time_end"]))
     return s'''
 
+#: Module docstrings of the model and mesh cards (the case's describe its legacy solver).
+MODEL_DOC = '''"""Malpasset (AMReX backend) — GUI folder-case ``model.py``.
+
+The model incl. BCs baked, driven by ``settings.json``.  The physics is the
+canonical wet/dry SWE variant :class:`~zoomy_core.model.models.malpasset.MalpassetSWE`
+(state ``[b, h, hu, hv]`` + aux ``[hinv]``); KP-desingularised ``hinv`` + gated
+eigenvalues carry the wetting/drying, so the solver never floors ``h``.
+
+The basin is closed by a reflective **Wall BC on every structured face** —
+West=x-lo, East=x-hi, South=y-lo, North=y-hi (the compass names of the Cartesian
+grid's sides): each Wall mirrors ``h`` + bed and negates the normal momentum
+``[hu, hv]``, so no mass crosses a wall face.
+
+The **initial condition is data, not code** here: the reservoir bathymetry ``B``
+and the reservoir-full depth ``H`` ride the case ``.msh`` as gmsh ``$NodeData``,
+and the run card rasterises them onto the structured grid (bed → state comp 0,
+depth → state comp 1; momentum rows start at rest).  So this module only supplies
+the model + its wall BCs; the mesh (``mesh.py``) carries the IC.
+"""'''
+MESH_DOC = '''"""Malpasset (AMReX backend) — GUI folder-case ``mesh.py``.
+
+AMReX is a *structured* (block-rectangular) framework, so the "mesh" the run card
+consumes is the case-shipped real Malpasset triangular ``.msh``
+(``geo_malpasset-small.msh``, ~2.6 MB, carries the ``B``/``H``/``U``/``V`` survey
+node data): the run card takes the axis-aligned bounding box of the triangulation
+as the rectangular AMReX domain and rasterises the node data (bathymetry +
+reservoir-full depth) onto the cell centres (``zoomy_amrex.malpasset``).
+
+``settings['mesh']`` names the file (relative to the case dir), so the folder
+case is self-contained.  The structured RESOLUTION lives in
+``settings['numerics']['n_cells']`` (never in the ``.msh``).
+"""'''
+redoc = lambda src, doc: re.sub(r'^\s*""".*?"""', lambda _: doc, src, count=1, flags=re.S)
+
 # ---------------- model card (no siblings) ----------------
-model_card = read("model.py").strip() + "\n"
+model_card = redoc(read("model.py"), MODEL_DOC).strip() + "\n"
 
 # ---------------- mesh card ----------------
 mesh = read("mesh.py")
@@ -63,32 +101,13 @@ def _ensure_mesh(fname, case_dir=None):
 
 
 ''' + anchor)
-mesh_card = guard_file(mesh).strip() + "\n"
+mesh_card = guard_file(redoc(mesh, MESH_DOC)).strip() + "\n"
 
 # ---------------- run card ----------------
-run_src = read("run.py")
-old_load = '''def load_settings(path=None):
-    with open(path or os.path.join(CASE_DIR, "settings.json")) as f:
-        return json.load(f)'''
-assert old_load in run_src
-run_src = run_src.replace(old_load, NEW_LOAD)
-old_sib = '''    from zoomy_amrex.solvers import HyperbolicSolver
-    from mesh import build_mesh
-    from model import build_model'''
-assert old_sib in run_src
-run_src = run_src.replace(old_sib, '''    from zoomy_amrex.solvers import HyperbolicSolver
-    # Case modules: defined by the Model/Mesh cells in notebook form;
-    # imported from the sibling files in a materialized case folder.  A lookup,
-    # not a bare-name probe: the imports below make both names local to run().
-    if "build_mesh" in globals() and "build_model" in globals():
-        build_mesh, build_model = globals()["build_mesh"], globals()["build_model"]
-    else:
-        from mesh import build_mesh
-        from model import build_model''')
-old_main = 'if __name__ == "__main__":\n    run()'
-assert old_main in run_src
-run_src = run_src.replace(old_main, "run()")
-run_card = guard_file(run_src).strip() + "\n"
+# the symbolic AMReX solver; the thesis case's run.py drives the legacy one
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "symsolver",
+                       "malpasset_amrex_run.py")) as f:
+    run_card = f.read()
 
 # ---------------- viz card ----------------
 dlv = read("deliverable.py")
@@ -125,7 +144,7 @@ TITLE = "Malpasset (AMReX)"
 sess = {
     "id": "session-malpasset-amrex",
     "title": TITLE,
-    "description": ("Malpasset on AMReX (order-2 well-balanced SWE) — needs an "
+    "description": ("Malpasset on AMReX (order-2 SWE, symbolic solver) — needs an "
                     "amrex backend. time_end 100 s = full deck."),
     "selections": {"model": "card-sme", "mesh": "card-mesh-create-2d",
                    "solver": "card-solver-amrex", "visualization": "card-vis-empty-mpl"},

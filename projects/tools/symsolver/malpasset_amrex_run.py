@@ -9,9 +9,10 @@ and the reservoir depth rasterised from the ``.msh`` ``$NodeData``
 shared zoomy store) and copies it to ``./simulation.h5``.  The server executes
 this file as-is in the AMReX backend container.
 
-Standalone: ``python run.py`` — run it in the AMReX backend container (needs
-``zoomy_amrex`` and its apptainer image; the solver is printed, built and cached
-on demand).  Set ``ZOOMY_T_END`` to override ``t_end`` (smoke runs).
+Standalone: ``python run.py`` with ``zoomy_amrex``: in the AMReX backend container
+the solver is printed, built and run natively, on a host through ``apptainer exec``
+of the AMReX image (built once, cached).  Set ``ZOOMY_T_END`` to override ``t_end``
+(smoke runs).
 """
 
 import json
