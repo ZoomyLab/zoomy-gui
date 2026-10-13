@@ -19,6 +19,10 @@ let logSink: ((level: string, msg: string) => void) | undefined;
 export function setLogSink(fn: ((level: string, msg: string) => void) | undefined): void { logSink = fn; }
 
 let cliPromise: Promise<any> | undefined;
+let rules: any;
+/** The card rules of the loaded zoomy_cli (src/cards.mjs): a card's code and where a
+ *  solver card runs. Defined once getZoomyCli() has resolved. */
+export function cardRules(): any { return rules; }
 
 function loadScript(src: string): Promise<void> {
     return new Promise((res, rej) => {
@@ -108,6 +112,7 @@ export function getZoomyCli(): Promise<any> {
             const dynImport = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
             const mod = await dynImport(base + 'zoomy_cli/browser.mjs');
             const { ZoomyCLI, PyodideAdapter, FetchStorage, IdbStorage } = mod;
+            rules = mod.cards;
             const pyodide = new PyodideAdapter({
                 workerUrl: base + 'pyodide-worker.js',
                 // The adapter calls onLog with the whole {level,msg} message object.

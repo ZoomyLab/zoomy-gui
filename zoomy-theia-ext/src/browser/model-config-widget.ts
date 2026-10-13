@@ -5,7 +5,7 @@ import { OpenerService, open } from '@theia/core/lib/browser';
 import { URI, Emitter } from '@theia/core';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
-import { getZoomyCli, setDisplaySink, setLogSink, ensureRenderLibs, ensureJSZip, emitCasesChanged, emitBackendsChanged, emitSimOutput, DisplayCell } from './zoomy-cli-loader';
+import { cardRules, getZoomyCli, setDisplaySink, setLogSink, ensureRenderLibs, ensureJSZip, emitCasesChanged, emitBackendsChanged, emitSimOutput, DisplayCell } from './zoomy-cli-loader';
 import { hasPendingProjectDeepLink } from './zoomy-deep-link';
 
 // The project root in the browser FS. A case is a folder here with a canonical
@@ -118,24 +118,9 @@ function mdInline(s: string): string {
     return esc.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
-/** Fill a `{key}` template from the card's init dict (mesh cards use this); a
- *  template with no placeholders is returned unchanged (model/solver cards). */
-function fillTemplate(tpl: string, init: any): string {
-    if (!tpl) { return ''; }
-    return tpl.replace(/\{(\w+)\}/g, (m, k) => (init && k in init ? String(init[k]) : m));
-}
-/** The runnable code for a card given its effective init (card.init + edits):
- *  the card's template ({key}-filled), else an auto import+construct. */
-function cardCode(card: any, init: any): string | undefined {
-    if (card.template) { return fillTemplate(card.template, init); }
-    if (card.class) {
-        const dot = card.class.lastIndexOf('.');
-        const mod = card.class.slice(0, dot), cls = card.class.slice(dot + 1);
-        const kw = Object.entries(init || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
-        return `from ${mod} import ${cls}\n\nmodel = ${cls}(${kw})\ndisplay(model.describe())`;
-    }
-    return undefined; // params-only card (remote backend) — not locally runnable
-}
+/** The code a card contributes for its effective init (card.init + edits): the
+ *  zoomy_cli card rules (src/cards.mjs), shared with the backend e2e harness. */
+function cardCode(card: any, init: any): string | undefined { return cardRules().cardCode(card, init); }
 
 /** The "Model configuration" GUI: the real card catalog (models/meshes/solvers/
  *  visualizations) loaded through the vendored ZoomyCLI and run on the in-browser
@@ -1284,10 +1269,9 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         emitSimOutput({ kind: 'line', level: 'info', text: '▶ Running case "' + this.caseName + '"…' });
         try {
             const solver = this.pickedCard('solvers');
-            const solverTag = solver?.requires_tag || 'numpy';
-            const solverLocal = !!cardCode(solver, this.mergedInit(solver));
-            if (!solverLocal) {
-                // Remote solver: submit the whole case to its connected backend.
+            const solverTag = solver?.requires_tag || cardRules().BROWSER_TAG;
+            // The solver card's backend decides, never its code (zoomy_cli cards.mjs).
+            if (cardRules().solverRoute(solver) === cardRules().Route.backend) {
                 if (!this.tagMatches(solverTag, this.connectedTags)) {
                     this.simStatus = 'Solver "' + (solver?.title || solverTag) + '" needs a "' + solverTag + '" backend — connect one.';
                     emitSimOutput({ kind: 'line', level: 'error', text: '✗ Needs a "' + solverTag + '" backend (not connected).' }); this.update(); return;
@@ -1836,15 +1820,15 @@ export class ZoomyModelConfigWidget extends ReactWidget {
     // rebuilt to report OpenFOAM. Canonicalizes foam -> OpenFOAM so an OpenFOAM-
     // tagged card is satisfied by a connected foam backend (and vice versa). Route
     // ALL backend tag-matching through tagMatches — don't scatter string compares.
-    protected canonTag(t: string): string { return t === 'foam' ? 'OpenFOAM' : t; }
+    protected canonTag(t: string): string { return cardRules().canonTag(t); }
     protected tagMatches(requiredTag: string, connectedTags: string[]): boolean {
         const want = this.canonTag(requiredTag);
         return (connectedTags || []).some(t => this.canonTag(t) === want);
     }
     protected cardFlag(card: any, dir: string, runnable: boolean): { label: string; available: boolean; tip: string } | null {
         if (dir !== 'solvers' && dir !== 'visualizations') { return card.requires_tag ? { label: card.requires_tag, available: this.tagMatches(card.requires_tag, this.connectedTags), tip: 'Needs a "' + card.requires_tag + '" backend' } : null; }
-        // Built-in: has a local template (solver) or a snippet with no remote tag (viz).
-        const builtin = card.flag === 'built-in' || (card.requires_tag ? runnable : (dir === 'visualizations' ? !!card.snippet : runnable));
+        // Built-in: a browser card with code (solver) or a snippet with no remote tag (viz).
+        const builtin = card.flag === 'built-in' || (dir === 'visualizations' && !card.requires_tag ? !!card.snippet : runnable && cardRules().runsInBrowser(card));
         if (builtin) { return { label: 'built-in', available: true, tip: 'Built in — runs in the browser (Pyodide), no backend needed.' }; }
         if (card.requires_tag) { const ok = this.tagMatches(card.requires_tag, this.connectedTags); return { label: card.requires_tag, available: ok, tip: ok ? 'Backend "' + card.requires_tag + '" connected — can run.' : 'Needs a "' + card.requires_tag + '" backend (not connected).' }; }
         return { label: 'post-processing', available: false, tip: 'Needs a post-processing backend (e.g. 3-D interpolation on a general mesh).' };

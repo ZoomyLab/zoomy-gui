@@ -15,7 +15,11 @@ t = float(store.times[step]) if store.times is not None and len(store.times) els
 title = depth if t is None else f"{depth} at t = {t:.3f} s"
 
 with zp.apply_style():
-    fig, ax = plt.subplots()
+    if store.dim == 3:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+    else:
+        fig, ax = plt.subplots()
     if store.dim == 1:
         x = store.cell_centers[:, 0]
         order = np.argsort(x)
