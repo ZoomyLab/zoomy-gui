@@ -33,6 +33,16 @@ changed: re-port that file and record the new hash. `pack_malpasset_amrex_sessio
 backend's image (zoomy-server in `zoomy_amrex.sif`) `zoomy_amrex.symsolver` builds and runs
 natively and caches in a writable directory (`ZOOMY_AMREX_SYMCACHE`).
 
+The two Malpasset sessions also get their model card ported (`symsolver/malpasset_*_model.py`):
+the thesis run (`thesis/cases/malpasset_jax/output/zp_l1`: SME level 1, mixing-length bulk,
+rough wall function bed, order 2 with the a-priori front detector and MOOD, point-implicit
+source, CFL 0.4 from the cells' wave speeds), which the packed folder case predates. Its case
+module, `symsolver/sme_malpasset_model.py`, is the revision that ran (uncommitted in the thesis,
+in its stash "wip-other-sessions"); the port step inlines it into the cards (a port line
+`from <module> import *` of a `symsolver/` module) and copies the run card's `_CASE_SETTINGS`
+into the visualization card. `symsolver/figures/malpasset_thesis_vs_new.py` compares a session
+run with the thesis run.
+
 The Bingham threshold port marches each beta in one run (the packed card restarted the solver
 per frame with post-lowering `sm.initial_conditions`, a no-op: every frame replayed the seed);
 the film never dries, so it keeps the packed card's flux (the plain path-conservative Rusanov,

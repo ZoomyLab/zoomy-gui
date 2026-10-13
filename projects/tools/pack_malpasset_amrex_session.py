@@ -4,7 +4,7 @@
 Model, mesh and visualization cards come from the thesis case at REV; the run card is
 `symsolver/malpasset_amrex_run.py` (the symbolic AMReX solver, `SymbolicHyperbolicSolverAmrex`).
 """
-import json, os, pprint, re, subprocess, zipfile
+import ast, json, os, pprint, re, subprocess, zipfile
 
 #: The thesis checkout, read at REV (the revision the shipped session was packed from).
 THESIS = os.environ.get("ZOOMY_THESIS", os.path.expanduser("~/git/Zoomy/thesis"))
@@ -108,6 +108,11 @@ mesh_card = guard_file(redoc(mesh, MESH_DOC)).strip() + "\n"
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "symsolver",
                        "malpasset_amrex_run.py")) as f:
     run_card = f.read()
+# its settings (the thesis run, port_symsolver_sessions.py ports the model card) set the
+# GUI's time_end knob
+RUN_T_END = next(ast.literal_eval(n.value) for n in ast.parse(run_card).body
+                 if isinstance(n, ast.Assign)
+                 and getattr(n.targets[0], "id", None) == "_CASE_SETTINGS")["run"]["t_end"]
 
 # ---------------- viz card ----------------
 dlv = read("deliverable.py")
@@ -144,15 +149,15 @@ TITLE = "Malpasset (AMReX)"
 sess = {
     "id": "session-malpasset-amrex",
     "title": TITLE,
-    "description": ("Malpasset on AMReX (order-2 SWE, symbolic solver) — needs an "
-                    "amrex backend. time_end 100 s = full deck."),
+    "description": ("Malpasset on AMReX, the thesis run (SME level 1, mixing length + "
+                    "wall function, order 2) on a 180 x 96 grid — needs an amrex backend. "
+                    "time_end 2000 s = full run."),
     "selections": {"model": "card-sme", "mesh": "card-mesh-create-2d",
                    "solver": "card-solver-amrex", "visualization": "card-vis-empty-mpl"},
     "cardOverrides": {
         "card-sme": {"code": model_card},
         "card-mesh-create-2d": {"code": mesh_card},
-        "card-solver-amrex": {"code": run_card,
-                              "params": {"time_end": settings_json["run"]["t_end"]}},
+        "card-solver-amrex": {"code": run_card, "params": {"time_end": RUN_T_END}},
         "card-vis-empty-mpl": {"code": viz_card},
     },
 }

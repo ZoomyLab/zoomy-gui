@@ -1,13 +1,13 @@
-"""Malpasset (jax backend) — GUI folder-case ``run.py`` (REQ-137).
+"""Malpasset (jax backend): GUI folder-case ``run.py``, the thesis run.
 
-Reads ``settings.json``, builds the mesh + model (IC/BC baked), constructs the
-symbolic JAX solver (``SymbolicHyperbolicSolverJax``; the wet/dry numerics are the
-model's: KP-desingularised ``hinv`` aux, positive HLL, MOOD at order 2), solves,
-and writes ``output/<name>.h5`` (``/mesh`` + ``iteration_*`` snapshots).  The server
-executes this file as-is in the backend container.
+Reads ``settings.json``, builds the mesh + model (IC/BC baked; the thesis model and numerics,
+see the model card), constructs the symbolic JAX solver (``SymbolicHyperbolicSolverJax``) with
+the thesis' time integration: SSP-RK2 with the point-implicit source in every stage, the CFL
+step from the cells' wave speeds at CFL 0.4, MOOD at order 2; solves, and writes
+``output/<name>.h5`` (``/mesh`` + ``iteration_*`` snapshots, every 50 s of the 2000 s event like
+the thesis run ``output/zp_l1``).  The server executes this file as-is in the backend container.
 
-Standalone: ``python run.py``.  Reproduces ``malpasset_sme_jax.py --level 1``.
-The multi-order deck-comparison orchestrator is ``run_orders.py`` (separate).
+Standalone: ``python run.py``.
 """
 
 import json
@@ -18,7 +18,7 @@ import os
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 from zoomy_core.misc.misc import get_main_directory
-from zoomy_core.symsolver.discretization.time import Imex
+from zoomy_core.symsolver.discretization.time import CflWaveSpeed, Imex
 from zoomy_jax.symsolver.solver import SymbolicHyperbolicSolverJax
 
 # Case modules: defined by the Model/Mesh cells in notebook form;
@@ -41,20 +41,23 @@ _CASE_SETTINGS = {'name': 'malpasset_sme_l1',
  'model': {'type': 'MalpassetSME',
            'level': 1,
            'dimension': 3,
-           'closure': 'navier',
-           'nu': 1.0,
-           'lambda_s': 0.5,
+           'closure': 'mixing',
+           'k_s': 0.05,
+           'zeta_p': 0.15,
+           'quadrature_order': 5,
            'wet_dry_eps': 0.001,
+           'u_max': 30.0,
            'desingularize': True,
            'clamp': True},
- 'numerics': {'order': 1,
-              'cfl': 0.4,
+ 'numerics': {'order': 2,
+              'limiter': 'venkatakrishnan',
+              'front_tol': 0.5,
+              'mood': True,
               'riemann': 'hr',
-              'reconstruction_variables': 'eta'},
- 'run': {'solver': 'explicit',
-         'source_mode': 'local',
-         't_end': 2000.0,
-         'snapshots': 60}}
+              'source_treatment': 'linearized',
+              'cfl': 0.4,
+              'cfl_wave_speed': 'cells'},
+ 'run': {'imex': None, 't_end': 2000.0, 'snapshots': 41}}
 
 
 def load_settings(path=None):
@@ -86,13 +89,17 @@ def run(settings=None):
     t_end = float(run_cfg["t_end"])
     out_rel = os.path.relpath(os.path.join(CASE_DIR, "output", name + ".h5"),
                               get_main_directory())
+    num = settings["numerics"]
+    # imex None: the source is point-implicit inside every explicit stage (the thesis);
+    # 'lie' / 'ssp2' step the source implicitly instead
+    imex = Imex(run_cfg["imex"]) if run_cfg.get("imex") else False
     solver = SymbolicHyperbolicSolverJax(
-        time_end=t_end, cfl=settings["numerics"].get("cfl", 0.4),
-        imex=Imex.lie if run_cfg.get("solver") == "imex" else False,
-        dt_write=t_end / (run_cfg.get("snapshots", 60) - 1), output=out_rel)
+        time_end=t_end, cfl=num.get("cfl", 0.4), mood=num.get("mood", True),
+        cfl_wave_speed=CflWaveSpeed(num.get("cfl_wave_speed", CflWaveSpeed.cells)),
+        imex=imex, dt_write=t_end / (run_cfg.get("snapshots", 41) - 1), output=out_rel)
 
     print(f"[{name}] solving t_end={t_end}s "
-          f"(order={settings['numerics'].get('order', 1)}, "
+          f"(order={num.get('order', 2)}, "
           f"platform={os.environ['JAX_PLATFORMS']}) ...", flush=True)
     Q, Qaux = solver.setup(mesh, nsm)
     solver.run(Q, Qaux)

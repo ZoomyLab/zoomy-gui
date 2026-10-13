@@ -162,8 +162,8 @@ TITLE = "Malpasset dam break"
 sess = {
     "id": "session-malpasset",
     "title": TITLE,
-    "description": ("Malpasset dam break, SME level 1 — needs a jax backend. "
-                    "time_end 2000 s = full run."),
+    "description": ("Malpasset dam break, the thesis run (SME level 1, mixing length + "
+                    "wall function, order 2) — needs a jax backend. time_end 2000 s = full run."),
     "selections": {"model": "card-sme", "mesh": "card-mesh-create-2d",
                    "solver": "card-solver-jax", "visualization": "card-vis-empty-mpl"},
     "cardOverrides": {
