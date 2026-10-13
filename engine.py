@@ -3,7 +3,7 @@
 Design notes:
 
 * Simulation results live in an HDF5 file on Pyodide's virtual filesystem
-  (``/tmp/zoomy_sim/sim.h5`` by convention). Nothing else. The browser is a
+  (``/tmp/zoomy_sim/sim.h5``, ``run_h5_path()``). Nothing else. The browser is a
   regular filesystem as far as Python is concerned.
 * ``store`` is a :class:`zoomy_plotting.SimulationStore` built via
   ``zoomy_plotting.read_hdf5(path)``. Lazy field reads, no in-memory
@@ -181,7 +181,20 @@ class _LiveStdout(io.StringIO):
         return len(s)
 
 
-# --- Helper used by the solver template to load results into the store. ---
+# --- Helpers used by the solver template: where the run's store is written, and loading it. ---
+def run_h5_path():
+    """The file a solver card writes this run's HDF5 store to (then ``open_hdf5``s): the
+    browser tab's own ``/tmp/zoomy_sim/sim.h5``. The zoomy-server's case runner
+    (``zoomy_server.case_run``) provides the same name for the job's own ``simulation.h5``, so
+    concurrent jobs do not write one file."""
+    path = "/tmp/zoomy_sim/sim.h5"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
+
+
+sys._shallowflow_scope["run_h5_path"] = run_h5_path
+
+
 def open_hdf5(path):
     """Open an HDF5 simulation output via zoomy_plotting and install it
     as the exec-scope ``store``.
