@@ -328,6 +328,44 @@ def close_store():
 sys._shallowflow_scope["close_store"] = close_store
 
 
+# --- Card parameters -> constructor arguments. ---------------------------
+def typed_kwargs(cls, settings):
+    """The entries of `settings` that are parameters of the `param` class `cls`, as its
+    constructor takes them.
+
+    The Parameters panel shows a `param.Selector` (an `OptionParam` too) as a dropdown of
+    `str(object)` and hands the choice back as that string; here it becomes the selector's
+    object again (the `Option` member, `False`, ...), so typed options get members, never
+    strings.  Keys that are not parameters of `cls` (`backend`, `solver_id`, ...) are dropped.
+    """
+    import param as _param
+
+    params = cls.param.objects("existing")
+    out = {}
+    for key, val in (settings or {}).items():
+        p = params.get(key)
+        if p is None or key == "name":
+            continue
+        if isinstance(p, _param.Selector) and isinstance(val, str):
+            val = _selector_object(p, key, val)
+        out[key] = val
+    return out
+
+
+def _selector_object(p, key, val):
+    """The object of selector `p` whose string (an enum member: value or name) is `val`."""
+    import enum
+
+    for obj in p.objects:
+        names = (str(obj.value), obj.name) if isinstance(obj, enum.Enum) else (str(obj),)
+        if val.lower() in (n.lower() for n in names):      # JS String(false) is "false"
+            return obj
+    raise ValueError(f"{key}: {val!r} is not one of {[str(o) for o in p.objects]}")
+
+
+sys._shallowflow_scope["typed_kwargs"] = typed_kwargs
+
+
 def _is_store_producer(code):
     """A run that re-creates the results store — it truncates a fresh HDF5
     (``mesh.write_to_hdf5``) and/or re-opens it (``open_hdf5``). Pure viz

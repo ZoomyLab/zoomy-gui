@@ -78,10 +78,11 @@ old_sib = '''    from zoomy_amrex.solvers import HyperbolicSolver
 assert old_sib in run_src
 run_src = run_src.replace(old_sib, '''    from zoomy_amrex.solvers import HyperbolicSolver
     # Case modules: defined by the Model/Mesh cells in notebook form;
-    # imported from the sibling files in a materialized case folder.
-    try:
-        build_mesh, build_model  # noqa: B018  (probe the notebook namespace)
-    except NameError:
+    # imported from the sibling files in a materialized case folder.  A lookup,
+    # not a bare-name probe: the imports below make both names local to run().
+    if "build_mesh" in globals() and "build_model" in globals():
+        build_mesh, build_model = globals()["build_mesh"], globals()["build_model"]
+    else:
         from mesh import build_mesh
         from model import build_model''')
 old_main = 'if __name__ == "__main__":\n    run()'

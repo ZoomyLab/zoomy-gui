@@ -14,9 +14,9 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strip_comments import strip  # noqa: E402  (the notebook shows code, not commentary)
 
-ROOT = os.path.expanduser("~/git/Zoomy")
-CASES = os.path.join(ROOT, "thesis/cases/zoomy_example/gui")
-OUT = os.path.join(ROOT, "library/zoomy_gui/projects")
+THESIS = os.environ.get("ZOOMY_THESIS", os.path.expanduser("~/git/Zoomy/thesis"))
+CASES = os.path.join(THESIS, "cases/zoomy_example/gui")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)   # this checkout's projects/
 
 # card id -> (tab, title). The ids are the catalog ids with the `card-` prefix,
 # which is what the GUI resolves a selection against; a session lists only the

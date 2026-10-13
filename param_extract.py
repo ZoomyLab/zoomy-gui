@@ -1,5 +1,11 @@
+import enum
 import json
 import param
+
+
+def _plain(value):
+    """An enum member as its value (JSON-safe); anything else unchanged."""
+    return value.value if isinstance(value, enum.Enum) else value
 
 
 def extract_param_schema(class_path, init_kwargs=None):
@@ -29,8 +35,11 @@ def extract_param_schema(class_path, init_kwargs=None):
         elif isinstance(p, param.String):
             entry["default"] = p.default
         elif isinstance(p, (param.Selector, param.ObjectSelector)):
-            entry["default"] = p.default
-            entry["objects"] = list(p.objects or [])
+            # Any selector (an `OptionParam` too) is a dropdown; enum members go out as their
+            # values, and engine.typed_kwargs maps the choice back to the member.
+            entry["type"] = "Selector"
+            entry["default"] = _plain(p.default)
+            entry["objects"] = [_plain(o) for o in (p.objects or [])]
         elif isinstance(p, param.Parameter):
             val = p.default
             if callable(val):

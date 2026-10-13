@@ -2,48 +2,55 @@
   {
     "id": "solver-numpy",
     "title": "Hyperbolic (NumPy)",
-    "description": "Explicit finite-volume march (HyperbolicSolver). Runs locally in the browser via Pyodide — no server needed. IMEX / splitting schemes live in zoomy_core.fvm.solver_imex_numpy / solver_splitting_numpy.",
+    "description": "Explicit finite-volume march of the symbolic solver (SymbolicHyperbolicSolverNumpy, zoomy_core.symsolver). Runs locally in the browser via Pyodide — no server needed. `imex` (lie | ssp2) makes the model's source and diffusion implicit.",
     "requires_tag": "numpy",
-    "class": "zoomy_core.fvm.solver_numpy.HyperbolicSolver",
+    "class": "zoomy_core.symsolver.numpy_backend.SymbolicHyperbolicSolverNumpy",
     "init": {
       "time_end": 0.1,
-      "reconstruction_order": 1
+      "cfl": 0.9,
+      "reconstruction_order": 1,
+      "snapshots": 20
     },
-    "template": "# Slim numpy solver card template (HANDOFF for the regen agent -> cards/solvers/default.json \"template\").\n# engine.py now auto-closes the previous run's store, so NO close_store() call is needed here.\nimport os\nfrom zoomy_core.fvm.solver_numpy import HyperbolicSolver\nimport zoomy_core.fvm.timestepping as ts\nfrom zoomy_core.misc.misc import Zstruct\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\n\n_h5_path = '/tmp/zoomy_sim/sim.h5'\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\nsettings = Zstruct(output=Zstruct(\n    directory=os.path.dirname(_h5_path),\n    filename=os.path.splitext(os.path.basename(_h5_path))[0],\n    snapshots=20,\n    clean_directory=True,\n))\n\nnsm = NumericalSystemModel.from_system_model(\n    model, reconstruction=ReconstructionSpec(order=1))\n\nsolver = HyperbolicSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    settings=settings,\n)\n\nmesh.write_to_hdf5(_h5_path)\nsolver.solve(mesh, nsm, write_output=True)\n\nopen_hdf5(_h5_path)\n",
+    "template": "import os\n\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\nfrom zoomy_core.symsolver.numpy_backend import SymbolicHyperbolicSolverNumpy\n\n# The symbolic NumPy solver (zoomy_core.symsolver), in the browser. `settings` (the\n# Solver settings cell) carries this card's Parameters; typed_kwargs keeps the solver's\n# own ones and turns a dropdown's string into its option (e.g. imex=\"ssp2\" -> Imex.ssp2).\n_h5_path = \"/tmp/zoomy_sim/sim.h5\"\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\nnsm = NumericalSystemModel.from_system_model(\n    model, reconstruction=ReconstructionSpec(order=settings.get(\"reconstruction_order\", 1)))\n\noptions = typed_kwargs(SymbolicHyperbolicSolverNumpy, settings)\noptions.setdefault(\"time_end\", 0.1)\noptions.setdefault(\"dt_write\", options[\"time_end\"] / settings.get(\"snapshots\", 20))\noptions[\"output\"] = _h5_path\nsolver = SymbolicHyperbolicSolverNumpy(**options)\nQ, Qaux = solver.setup(mesh, nsm)\ntime, Q, Qaux = solver.run(Q, Qaux)\n\nopen_hdf5(_h5_path)\n",
     "category": "Built-in (NumPy)"
   },
   {
     "id": "solver-imex-numpy",
     "title": "IMEX (NumPy)",
-    "description": "IMEX march — explicit Riemann flux + implicit (Newton/GMRES) source (IMEXSolver). Runs locally in the browser via Pyodide — no server needed.",
+    "description": "IMEX march of the symbolic solver (SymbolicHyperbolicSolverNumpy, `imex`): explicit Riemann flux, the model's source and diffusion implicit (lie: implicit Euler after the flux step; ssp2: IMEX-SSP2(2,2,2)). Runs locally in the browser via Pyodide — no server needed.",
     "requires_tag": "numpy",
-    "class": "zoomy_core.fvm.solver_imex_numpy.IMEXSolver",
+    "class": "zoomy_core.symsolver.numpy_backend.SymbolicHyperbolicSolverNumpy",
     "init": {
       "time_end": 0.1,
-      "reconstruction_order": 1
+      "cfl": 0.9,
+      "reconstruction_order": 1,
+      "snapshots": 20,
+      "imex": "ssp2"
     },
-    "template": "import os\nfrom zoomy_core.fvm.solver_imex_numpy import IMEXSolver\nimport zoomy_core.fvm.timestepping as ts\nfrom zoomy_core.misc.misc import Zstruct\n\n# IMEX: explicit Riemann flux + implicit (Newton/GMRES) source. Same\n# HDF5-first pattern as the Hyperbolic card — mesh written first, the\n# solver appends /fields/, and open_hdf5 hands the store to the viz layer.\n_h5_path = '/tmp/zoomy_sim/sim.h5'\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\nclose_store()\n\nsettings = Zstruct(output=Zstruct(\n    directory=os.path.dirname(_h5_path),\n    filename=os.path.splitext(os.path.basename(_h5_path))[0],\n    snapshots=20,\n    clean_directory=True,\n))\n\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\nnsm = NumericalSystemModel.from_system_model(\n    model, reconstruction=ReconstructionSpec(order=1))\n\nsolver = IMEXSolver(\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3),\n    settings=settings,\n)\n\nmesh.write_to_hdf5(_h5_path)\nsolver.solve(mesh, nsm, write_output=True)\n\nopen_hdf5(_h5_path)\n",
+    "template": "import os\n\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\nfrom zoomy_core.symsolver.numpy_backend import SymbolicHyperbolicSolverNumpy\n\n# The symbolic NumPy solver (zoomy_core.symsolver), in the browser. `settings` (the\n# Solver settings cell) carries this card's Parameters; typed_kwargs keeps the solver's\n# own ones and turns a dropdown's string into its option (e.g. imex=\"ssp2\" -> Imex.ssp2).\n_h5_path = \"/tmp/zoomy_sim/sim.h5\"\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\nnsm = NumericalSystemModel.from_system_model(\n    model, reconstruction=ReconstructionSpec(order=settings.get(\"reconstruction_order\", 1)))\n\noptions = typed_kwargs(SymbolicHyperbolicSolverNumpy, settings)\noptions.setdefault(\"time_end\", 0.1)\noptions.setdefault(\"dt_write\", options[\"time_end\"] / settings.get(\"snapshots\", 20))\noptions[\"output\"] = _h5_path\nsolver = SymbolicHyperbolicSolverNumpy(**options)\nQ, Qaux = solver.setup(mesh, nsm)\ntime, Q, Qaux = solver.run(Q, Qaux)\n\nopen_hdf5(_h5_path)\n",
     "category": "Built-in (NumPy)"
   },
   {
     "id": "solver-split-numpy",
     "title": "Split / Chorin (NumPy)",
-    "description": "Chorin projection split for the non-hydrostatic VAM chain (ChorinSplitVAMSolver: hyperbolic predictor + elliptic pressure solve + pointwise corrector). Runs locally via Pyodide. Consumes the `split` binding the VAM model card publishes; hydrostatic models take the Hyperbolic (NumPy) card instead.",
+    "description": "Chorin projection split of the symbolic solver for the non-hydrostatic VAM chain (SymbolicChorinSolverNumpy: hyperbolic predictor, pressure solve, corrector). Runs locally via Pyodide. Consumes the `split` the VAM model card binds; hydrostatic models take the Hyperbolic (NumPy) card instead.",
     "requires_tag": "numpy",
-    "class": "zoomy_core.fvm.solver_chorin_vam_numpy.ChorinSplitVAMSolver",
+    "class": "zoomy_core.symsolver.numpy_backend.SymbolicChorinSolverNumpy",
     "init": {
       "time_end": 0.1,
-      "reconstruction_order": 1
+      "cfl": 0.9,
+      "reconstruction_order": 1,
+      "snapshots": 20
     },
-    "template": "import os\nfrom zoomy_core.fvm.solver_chorin_vam_numpy import ChorinSplitVAMSolver\nimport zoomy_core.fvm.timestepping as ts\nfrom zoomy_core.misc.misc import Zstruct\n\n# Chorin projection march for the NON-HYDROSTATIC VAM chain.  The model card\n# binds `split` (predictor / pressure / corrector stages); this solver consumes\n# it by KIND.  A model card that does not bind `split` is hydrostatic -- march\n# it with the \"Hyperbolic (NumPy)\" card instead.\n_h5_path = '/tmp/zoomy_sim/sim.h5'\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\nsettings = Zstruct(output=Zstruct(\n    directory=os.path.dirname(_h5_path),\n    filename=os.path.splitext(os.path.basename(_h5_path))[0],\n    snapshots=20,\n    clean_directory=True,\n))\n\nsolver = ChorinSplitVAMSolver(\n    stages=split.stages,\n    pressure_solver=\"lu\",\n    riemann_solver=\"hr\",\n    time_end=0.1,\n    compute_dt=ts.adaptive(CFL=0.3, dimension=1),\n    settings=settings,\n)\n\nmesh.write_to_hdf5(_h5_path)\nsolver.setup_simulation(mesh, write_output=True)\nsolver.run_simulation()\n\nopen_hdf5(_h5_path)\n",
+    "template": "import os\n\nfrom zoomy_core.fvm.riemann_solvers import PositiveNonconservativeRusanov\nfrom zoomy_core.fvm.solver_chorin_vam_numpy import _pad_to_square\nfrom zoomy_core.numerics import NumericalSystemModel, ReconstructionSpec\nfrom zoomy_core.symsolver.numpy_backend import SymbolicChorinSolverNumpy\n\n# Chorin projection march of the symbolic NumPy solver for the NON-HYDROSTATIC VAM chain.\n# The model card binds `split` (predictor / pressure / corrector systems); a model card\n# without `split` is hydrostatic -- march it with the \"Hyperbolic (NumPy)\" card instead.\n_h5_path = \"/tmp/zoomy_sim/sim.h5\"\nos.makedirs(os.path.dirname(_h5_path), exist_ok=True)\n\n# The predictor on the full (padded) state: positive Rusanov, rescaled momenta.\npred, press, corr = _pad_to_square(split.SM_pred), split.SM_press, split.SM_corr\nnames = [str(s) for s in pred.state]\nfixed = {names.index(\"h\"), names.index(\"b\"), *map(int, press.equation_to_state_index)}\nnsm = NumericalSystemModel.from_system_model(\n    pred, riemann=PositiveNonconservativeRusanov,\n    reconstruction=ReconstructionSpec(order=settings.get(\"reconstruction_order\", 1)),\n    additional_systems=[press, corr],\n    scaled_q_indices=[i for i in range(pred.n_variables) if i not in fixed])\n\noptions = typed_kwargs(SymbolicChorinSolverNumpy, settings)\noptions.setdefault(\"time_end\", 0.1)\noptions.setdefault(\"dt_write\", options[\"time_end\"] / settings.get(\"snapshots\", 20))\noptions[\"output\"] = _h5_path\nsolver = SymbolicChorinSolverNumpy(**options)\nQ, Qaux = solver.setup(mesh, nsm, press, corr)\ntime, Q, Qaux = solver.run(Q, Qaux)\n\nopen_hdf5(_h5_path)\n",
     "category": "Splitting"
   },
   {
     "id": "solver-jax",
     "title": "Hyperbolic (JAX)",
-    "description": "Explicit finite-volume march (HyperbolicSolver) on the JAX/GPU backend — needs the zoomy-jax container.",
+    "description": "Explicit finite-volume march of the symbolic solver on the JAX/GPU backend (SymbolicHyperbolicSolverJax; a VAM `split` runs SymbolicChorinSolverJax) — needs the zoomy-jax container.",
     "requires_tag": "jax",
-    "class": "zoomy_jax.fvm.solver_jax.HyperbolicSolver",
+    "class": "zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax",
     "params": {
       "time_end": {
         "type": "Number",
@@ -53,9 +60,9 @@
           null
         ]
       },
-      "CFL": {
+      "cfl": {
         "type": "Number",
-        "default": 0.45,
+        "default": 0.9,
         "bounds": [
           0.01,
           0.99
@@ -75,9 +82,9 @@
   {
     "id": "solver-imex-jax",
     "title": "IMEX (JAX)",
-    "description": "IMEX march — explicit flux + implicit source (IMEXSourceSolverJax) on the JAX/GPU backend — needs the zoomy-jax container.",
+    "description": "IMEX march of the symbolic solver on the JAX/GPU backend (SymbolicHyperbolicSolverJax, `imex`): explicit flux, the model's source and diffusion implicit — needs the zoomy-jax container.",
     "requires_tag": "jax",
-    "class": "zoomy_jax.fvm.IMEXSourceSolverJax",
+    "class": "zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax",
     "params": {
       "time_end": {
         "type": "Number",
@@ -87,9 +94,9 @@
           null
         ]
       },
-      "CFL": {
+      "cfl": {
         "type": "Number",
-        "default": 0.45,
+        "default": 0.9,
         "bounds": [
           0.01,
           0.99
@@ -102,6 +109,15 @@
           1,
           2
         ]
+      },
+      "imex": {
+        "type": "Selector",
+        "default": "ssp2",
+        "objects": [
+          "lie",
+          "ssp2"
+        ],
+        "doc": "lie: implicit Euler after the flux step; ssp2: IMEX-SSP2(2,2,2)."
       }
     },
     "category": "JAX"

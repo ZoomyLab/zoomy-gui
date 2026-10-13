@@ -2,6 +2,23 @@
 
 This repository is a submodule of the the [Zoomy Lab](https://github.com/ZoomyLab/Zoomy) repository.
 
+## Solver cards
+
+The NumPy and JAX solver cards run the symbolic solvers (`zoomy_core.symsolver`, `zoomy_jax.symsolver`).
+
+| card | solver | runs in |
+|---|---|---|
+| Hyperbolic (NumPy) | `zoomy_core.symsolver.numpy_backend.SymbolicHyperbolicSolverNumpy` | the browser (Pyodide) |
+| IMEX (NumPy) | the same with `imex` = `lie` / `ssp2` | the browser |
+| Split / Chorin (NumPy) | `SymbolicChorinSolverNumpy` on the VAM model card's `split` | the browser |
+| Hyperbolic (JAX), IMEX (JAX) | `zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax` (`SymbolicChorinSolverJax` for a `split`) | a jax backend |
+| Hyperbolic (AMReX), Split (AMReX) | unchanged, legacy `zoomy_amrex.solvers.HyperbolicSolver` / `SplitSolver`: `zoomy_amrex.symsolver` builds and runs through `apptainer exec zoomy_amrex.sif` from the host, while the amrex backend is zoomy-server inside that image | an amrex backend |
+| DMPlex, Firedrake, zoomyFoam, incompressibleVOF | the backend's own solver (no symbolic solver card) | that backend |
+
+- The NumPy cards read the card's Parameters from `settings`; `typed_kwargs(cls, settings)` (`engine.py`) keeps the solver's own parameters and turns a dropdown's string back into the option member (`imex="ssp2"` -> `Imex.ssp2`).
+- A backend card carries no code: the case's Run cell is the generated runner (`zoomy_cli` `_runCode`, mirrored by `zoomy_prepost.case._run_code`): the symbolic JAX solver for `settings["backend"] == "jax"`, the symbolic NumPy solver otherwise.
+- The thesis QR sessions carry their own run cards, ported by `projects/tools/port_symsolver_sessions.py` (see `projects/tools/README.md`).
+
 ## Results shelf — save a run, open it by name from a viz card
 
 A finished run's result store can be **saved under a name** and any

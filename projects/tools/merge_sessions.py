@@ -14,7 +14,7 @@ adjusts.
 """
 import json, os, zipfile
 
-P = os.path.expanduser("~/git/Zoomy/library/zoomy_gui/projects")
+P = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)   # this checkout's projects/
 SRC = ["bingham-analytics-session.zip", "bingham-threshold-session.zip",
        "bingham-session.zip", "malpasset-session.zip", "coupling-session.zip",
        "coupling-live-session.zip", "coupling-triple-live-session.zip"]
