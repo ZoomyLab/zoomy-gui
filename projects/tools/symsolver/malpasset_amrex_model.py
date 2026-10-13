@@ -17,7 +17,8 @@ each mirroring ``h`` and the bed and negating the normal momentum of every mode.
 """
 
 from zoomy_core.model.boundary_conditions import BoundaryConditions, Wall
-from zoomy_core.numerics import Limiter, NumericalSystemModel, ReconstructionSpec
+from zoomy_core.numerics import (
+    Limiter, NumericalSystemModel, ReconstructionSpec, SourceTreatment)
 from zoomy_core.numerics import (
     PositiveNonconservativeHLL, PositiveNonconservativeRusanov)
 
@@ -89,5 +90,6 @@ def build_model(settings):
             order=order, limiter=Limiter(num.get("limiter", Limiter.venkatakrishnan)),
             ties={str(s): "h" for s in sm.state if str(s) != "h"},
             front_tol=num.get("front_tol") if order >= 2 else None),
-        source_treatment=num.get("source_treatment", "linearized"))
+        source_treatment=SourceTreatment(
+            num.get("source_treatment", SourceTreatment.linearized)))
     return {"nsm": nsm, "sm": sm, "idx": idx}

@@ -28,7 +28,8 @@ import numpy as np
 import zoomy_core.model.initial_conditions as IC
 from zoomy_core.mesh import initial_conditions_from_mesh
 from zoomy_core.model.boundary_conditions import BoundaryConditions, Wall
-from zoomy_core.numerics import Limiter, NumericalSystemModel, ReconstructionSpec
+from zoomy_core.numerics import (
+    Limiter, NumericalSystemModel, ReconstructionSpec, SourceTreatment)
 from zoomy_core.numerics import (
     PositiveNonconservativeHLL, PositiveNonconservativeRusanov)
 
@@ -177,5 +178,6 @@ def build_model(settings, mesh, case_dir=None):
             order=order, limiter=Limiter(num.get("limiter", Limiter.venkatakrishnan)),
             ties={str(s): "h" for s in sm.state if str(s) != "h"},
             front_tol=num.get("front_tol") if order >= 2 else None),
-        source_treatment=num.get("source_treatment", "linearized"))
+        source_treatment=SourceTreatment(
+            num.get("source_treatment", SourceTreatment.linearized)))
     return {"nsm": nsm, "sm": sm, "idx": idx, "tags": tags}
