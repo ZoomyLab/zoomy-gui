@@ -199,6 +199,22 @@ importScripts("https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/pyodide.
 var PY_HELPERS = ${JSON.stringify(PY_HELPERS)};
 function log(msg) { postMessage({ type: "log", msg: msg }); }
 
+// zoomy-core / zoomy-plotting: the wheels built from the deployed commit
+// (docs/scripts/build_gui_wheels.py) under WHEELS (the page's gui/wheels/, set by
+// pyodide-runtime.ts: a Blob worker has no base URL of its own); the PyPI spec only
+// when there is no index (local dev).
+var _wheelIndex = null;
+async function zoomyPackage(name, pypiSpec) {
+    if (!_wheelIndex) {
+        _wheelIndex = (typeof WHEELS === "string"
+            ? fetch(WHEELS + "index.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : {}; })
+            : Promise.resolve({})).catch(function () { return {}; });
+    }
+    var w = (await _wheelIndex)[name];
+    log(name + ": " + (w ? w.wheel + " (" + w.commit.slice(0, 7) + ")" : pypiSpec + " from PyPI"));
+    return w ? WHEELS + w.wheel : pypiSpec;
+}
+
 async function boot() {
     if (_bootPromise) return _bootPromise;
     _bootPromise = (async function () {
@@ -211,7 +227,7 @@ async function boot() {
         // The minimum the shipped notebooks need (a store with field names and
         // the t = 0 / t = time_end records; analysis without IPython). A stale
         // index then fails here, visibly, instead of running an older core.
-        await mp.install(["zoomy-core>=0.2.12"]);
+        await mp.install([await zoomyPackage("zoomy-core", "zoomy-core>=0.2.12")]);
         await py.runPythonAsync(PY_HELPERS);
         log("Kernel ready.");
     })();
@@ -266,7 +282,7 @@ function installZp() {
     if (_zpPromise) return _zpPromise;
     _zpPromise = (async function () {
         await boot();
-        try { var mp = py.pyimport("micropip"); await mp.install(["zoomy-plotting>=0.2.4"]); log("plotting ready"); }
+        try { var mp = py.pyimport("micropip"); await mp.install([await zoomyPackage("zoomy-plotting", "zoomy-plotting>=0.2.4")]); log("plotting ready"); }
         catch (e) { log("zoomy-plotting failed: " + (e.message || e)); }
     })();
     return _zpPromise;

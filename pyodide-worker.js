@@ -33,6 +33,22 @@ async function initPyodide() {
     return py;
 }
 
+/* zoomy-core / zoomy-plotting: the wheels built from the deployed commit
+   (docs/scripts/build_gui_wheels.py), served next to this worker as
+   wheels/index.json; the PyPI spec only when there is no index (local dev). */
+var WHEELS = new URL("wheels/", self.location.href).href;
+var _wheelIndex = null;
+async function zoomyPackage(name, pypiSpec) {
+    if (!_wheelIndex) {
+        _wheelIndex = fetch(WHEELS + "index.json", { cache: "no-cache" })
+            .then(function (r) { return r.ok ? r.json() : {}; })
+            .catch(function () { return {}; });
+    }
+    var w = (await _wheelIndex)[name];
+    postMessage({ type: "log", level: "info", msg: name + ": " + (w ? w.wheel + " (" + w.commit.slice(0, 7) + ")" : pypiSpec + " from PyPI") });
+    return w ? WHEELS + w.wheel : pypiSpec;
+}
+
 /* Each install phase caches its Promise so concurrent callers share the same
    in-flight work instead of racing to install the same packages twice. */
 var _paramPromise = null;
@@ -56,7 +72,7 @@ function installParam() {
             postMessage({ type: "log", level: "warn", msg: "h5py failed: " + (e.message || e) });
         }
         var mp = py.pyimport("micropip");
-        await mp.install(["param", "zoomy-core>=0.2.12"]);
+        await mp.install(["param", await zoomyPackage("zoomy-core", "zoomy-core>=0.2.12")]);
         var code = await fetch("param_extract.py").then(function (r) { return r.text(); });
         await py.runPythonAsync(code);
     })();
@@ -151,7 +167,7 @@ function installZoomyPlotting() {
         postMessage({ type: "log", level: "info", msg: "installing plotting" });
         try {
             var mp = py.pyimport("micropip");
-            await mp.install(["zoomy-plotting>=0.2.4"]);
+            await mp.install([await zoomyPackage("zoomy-plotting", "zoomy-plotting>=0.2.4")]);
             postMessage({ type: "log", level: "info", msg: "plotting ready" });
         } catch (e) {
             postMessage({ type: "log", level: "warn", msg: "zoomy-plotting failed: " + (e.message || e) });

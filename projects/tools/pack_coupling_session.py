@@ -6,13 +6,16 @@ session materializes the recorded run (release asset case-data-v1) and the viz
 card recomposes the case's real 3-panel figures from the raw participant
 outputs via zoomy_core.postprocessing.column_plots.
 """
-import json, os, pprint, re, zipfile
+import json, os, pprint, re, subprocess, zipfile
 
-ROOT = os.path.expanduser("~/git/Zoomy")
-CASE = os.path.join(ROOT, "thesis/notebooks/coupling/cases/sme_vof")
-ZIP = os.path.join(ROOT, "library/zoomy_gui/projects/coupling-session.zip")
+#: The thesis checkout, read at REV (the revision the shipped session was packed from).
+THESIS = os.environ.get("ZOOMY_THESIS", os.path.expanduser("~/git/Zoomy/thesis"))
+REV = "08d3b2cd"
+CASE = "notebooks/coupling/cases/sme_vof"
+ZIP = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "coupling-session.zip")
 
-read = lambda f: open(os.path.join(CASE, f)).read()
+read = lambda f: subprocess.check_output(
+    ["git", "-C", THESIS, "show", f"{REV}:{CASE}/{f}"], text=True)
 strip_future = lambda s: re.sub(r"^from __future__ import.*\n", "", s, flags=re.M)
 # shebangs don't survive the percent-format round-trip (to_folder re-emits
 # "#!..." as "!...") and cards aren't executables — drop them.
@@ -78,22 +81,24 @@ the Visualization card recomposes the case's real figures from the actual
 participant outputs. Replayed data, clearly labeled — no simulation happens
 here.
 """
-import io
 import os
 import shutil
 import tarfile
-import urllib.request
 
-PAYLOAD = ("https://github.com/ZoomyLab/Zoomy/releases/download/"
-           "case-data-v1/sme_vof_snap_gui_l1.tar.gz")
+from zoomy_core.misc.download import download
+
+PAYLOAD = "sme_vof_snap_gui_l1.tar.gz"
+#: The site's copy first (same origin as the GUI, so the browser may read it), then the
+#: release asset (GitHub sends no CORS headers for it: CPython only).
+SOURCES = ("https://zoomylab.github.io/Zoomy/gui/gui/data/" + PAYLOAD,
+           "https://github.com/ZoomyLab/Zoomy/releases/download/case-data-v1/" + PAYLOAD)
 RUN = "snap_gui_l1"
 
 if not os.path.isdir(RUN):
     print("fetching recorded coupled run:", PAYLOAD, flush=True)
-    with urllib.request.urlopen(PAYLOAD, timeout=180) as r:
-        _buf = io.BytesIO(r.read())
-    with tarfile.open(fileobj=_buf, mode="r:gz") as t:
+    with tarfile.open(download(SOURCES, PAYLOAD), mode="r:gz") as t:
         t.extractall(".")
+    os.remove(PAYLOAD)
     print("extracted ->", RUN)
 else:
     print("recorded run already present ->", RUN)
@@ -117,6 +122,16 @@ viz = viz.replace(old_ap, '''    class a:                     # GUI replay card:
         rundir = "snap_gui_l1"   # materialized by the Run section
         level = S["level"]
         gif = True''')
+# The participant's closure set (create_model.py --closure S["closure"]): SME(level) with
+# no closures is not a closed system.
+old_sm = '    sm = SystemModel.from_model(SME(level=a.level, boundary_conditions=bcs))'
+assert old_sm in viz
+viz = viz.replace(old_sm, '''    from zoomy_core.model.models import closures as C
+    closures = {"newtonian": [C.Newtonian(), C.NavierSlip(), C.StressFree()],
+                "roughwall": [C.Newtonian(), C.RoughWall(), C.StressFree()],
+                "manning": [C.ManningFriction()]}.get(S["closure"], [])
+    sm = SystemModel.from_model(SME(level=a.level, closures=closures,
+                                    boundary_conditions=bcs))''')
 old_main = 'if __name__ == "__main__":\n    main()'
 assert old_main in viz
 viz = viz.replace(old_main, "main()")

@@ -7,13 +7,22 @@ run   card (solver-jax code) = run.py + guarded imports + _CASE_SETTINGS +
             GUI time_end knob -> run.t_end [s] + simulation.h5 copy
 viz   card = deliverable.py (plot layer) inlined into visualize.py
 """
-import json, os, pprint, re, zipfile
+import json, os, pprint, re, subprocess, zipfile
 
-ROOT = os.path.expanduser("~/git/Zoomy")
-CASE = os.path.join(ROOT, "thesis/cases/malpasset_jax")
-ZIP = os.path.join(ROOT, "library/zoomy_gui/projects/malpasset-session.zip")
+#: The thesis checkout; the sources are read at REV, the revision the shipped session
+#: was packed from. The case has moved on since (deliverable.py now imports
+#: postprocess.py, which this packer does not inline): re-pin only with the packer.
+THESIS = os.environ.get("ZOOMY_THESIS", os.path.expanduser("~/git/Zoomy/thesis"))
+REV = "84e545d1"
+CASE = "cases/malpasset_jax"
+ZIP = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "malpasset-session.zip")
+#: The mesh, from the public data repo at a fixed commit (CORS-enabled raw URL); the
+#: meshes catalog does not carry it.
+MESH_URL = ("https://raw.githubusercontent.com/ZoomyLab/data/"
+            "f46bdde4d5c66c18e597afcfef8a9ffce171fd05/malpasset/")
 
-read = lambda f: open(os.path.join(CASE, f)).read()
+read = lambda f: subprocess.check_output(
+    ["git", "-C", THESIS, "show", f"{REV}:{CASE}/{f}"], text=True)
 strip_future = lambda s: re.sub(r"^from __future__ import.*\n", "", s, flags=re.M)
 FILE_GUARD = ('(os.path.dirname(os.path.abspath(__file__))\n'
               '            if "__file__" in globals() else os.getcwd())')
@@ -42,16 +51,16 @@ assert old_load_mesh in mesh
 mesh = mesh.replace(old_load_mesh,
                     'return LSQMesh.from_msh(_ensure_mesh(settings["mesh"], case_dir))')
 mesh = mesh.replace('def build_mesh(settings, case_dir=None):', '''\
-MESH_CATALOG = "https://zoomylab.github.io/meshes/meshes/"
+MESH_URL = ''' + repr(MESH_URL) + '''
 
 
 def _ensure_mesh(fname, case_dir=None):
-    """Case-shipped mesh if present, else fetch from the deployed catalog."""
+    """Case-shipped mesh if present, else fetch it from the Zoomy data repository."""
     p = os.path.join(case_dir or CASE_DIR, fname)
     if not os.path.exists(p):
         import urllib.request
-        print("mesh not found locally; fetching", MESH_CATALOG + fname, flush=True)
-        urllib.request.urlretrieve(MESH_CATALOG + fname, p)
+        print("mesh not found locally; fetching", MESH_URL + fname, flush=True)
+        urllib.request.urlretrieve(MESH_URL + fname, p)
     return p
 
 
@@ -105,6 +114,10 @@ run_card = run_src.strip() + "\n"
 dlv = strip_future(read("deliverable.py"))
 cut = dlv.index("def main():")
 dlv = dlv[:cut].rstrip()
+# The store names its fields (b, h, q_x_0, ...); q0/q1 were the old positional names.
+old_fields = 'TOPO, FIELD = "q0", "q1"                  # q0 = b (bathymetry), q1 = h (depth)'
+assert old_fields in dlv
+dlv = dlv.replace(old_fields, 'TOPO, FIELD = "b", "h"                    # bathymetry, water depth')
 viz = strip_future(read("visualize.py"))
 viz_read = '''    if settings is None:
         with open(os.path.join(CASE_DIR, "settings.json")) as f:

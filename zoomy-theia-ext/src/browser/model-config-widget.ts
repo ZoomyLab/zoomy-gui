@@ -1311,17 +1311,25 @@ export class ZoomyModelConfigWidget extends ReactWidget {
         }
     }
 
-    /** Local numpy (Pyodide) run: model → mesh → solver in the shared scope. */
+    /** Local numpy (Pyodide) run in the shared scope: the case's own code cells as
+     *  the notebook composes them (model, steps, mesh, solver settings, run), so a
+     *  packed session runs its cards' code and its `settings`, not catalog templates. */
     protected async runLocalSteps(): Promise<void> {
-        for (const [dir, label] of [['models', 'model'], ['meshes', 'mesh'], ['solvers', 'solver']] as const) {
-            if (this.simStopped) { return; }
+        for (const [dir, label] of [['models', 'model'], ['solvers', 'solver']] as const) {
             const card = this.pickedCard(dir);
-            if (!card) { this.simError = { cells: [], stdout: 'No ' + label + ' selected.', status: 'error', running: false }; emitSimOutput({ kind: 'line', level: 'error', text: 'No ' + label + ' selected.' }); return; }
-            const code = cardCode(card, this.mergedInit(card));
-            if (!code) { this.simError = { cells: [], stdout: label + ' needs a backend.', status: 'error', running: false }; emitSimOutput({ kind: 'line', level: 'error', text: label + ' "' + (card.title || card.id) + '" needs a backend.' }); return; }
-            this.simStatus = 'Running ' + label + ': ' + (card.title || card.id) + '…'; this.update();
-            emitSimOutput({ kind: 'line', level: 'info', text: '· ' + label + ': ' + (card.title || card.id) + '…' });
-            const res = await this.cli.runCode(code);
+            if (!card || !this.cardCodeFor(card)) {
+                const msg = card ? label + ' "' + (card.title || card.id) + '" needs a backend.' : 'No ' + label + ' selected.';
+                this.simError = { cells: [], stdout: msg, status: 'error', running: false }; emitSimOutput({ kind: 'line', level: 'error', text: msg }); return;
+            }
+        }
+        const labels: Record<string, string> = { model: 'model', step: 'step', mesh: 'mesh', settings: 'solver settings', run: 'solver' };
+        const cells = (this.cli._caseCells(await this.gatherSpec()) as any[]).filter(c => c.type === 'code' && labels[c.meta?.role]);
+        for (const cell of cells) {
+            if (this.simStopped) { return; }
+            const label = cell.meta.role === 'step' ? String(cell.meta.title || 'step') : labels[cell.meta.role];
+            this.simStatus = 'Running ' + label + '…'; this.update();
+            emitSimOutput({ kind: 'line', level: 'info', text: '· ' + label + '…' });
+            const res = await this.cli.runCode(String(cell.source || ''));
             if (res?.output) { emitSimOutput({ kind: 'line', level: 'stdout', text: String(res.output).trimEnd() }); }
             if (res?.status === 'error') { this.simStatus = 'Error in ' + label + ': see below'; this.simError = { cells: [], stdout: res.output || '', status: 'error', running: false }; emitSimOutput({ kind: 'line', level: 'error', text: '✗ Error in ' + label + '.' }); return; }
             if (res?.store_meta) { this.storeMeta = res.store_meta; }

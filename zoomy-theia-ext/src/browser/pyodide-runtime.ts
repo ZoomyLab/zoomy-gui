@@ -31,7 +31,11 @@ export class PyodideClient {
     backgroundReady = false;
 
     constructor(protected readonly log: (m: string) => void) {
-        const blob = new Blob([WORKER_SOURCE], { type: 'application/javascript' });
+        // The site's wheels (gui/wheels/, next to the card worker): a Blob worker
+        // resolves no relative URL, so it gets the absolute one.
+        const wheels = new URL('gui/wheels/', document.baseURI).href;
+        const src = WORKER_SOURCE.replace('"use strict";', '"use strict";\nvar WHEELS = ' + JSON.stringify(wheels) + ';');
+        const blob = new Blob([src], { type: 'application/javascript' });
         this.worker = new Worker(URL.createObjectURL(blob));
         this.worker.onmessage = e => this.onMessage(e.data);
         this.worker.onerror = e => this.log('worker error: ' + (e.message || e.toString()));

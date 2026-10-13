@@ -1,12 +1,18 @@
 """Add the 'Malpasset (AMReX)' session to gui/projects/malpasset-session.zip
 (second session, same zip — one Malpasset artifact, two backends)."""
-import json, os, pprint, re, zipfile
+import json, os, pprint, re, subprocess, zipfile
 
-ROOT = os.path.expanduser("~/git/Zoomy")
-CASE = os.path.join(ROOT, "thesis/cases/malpasset_amrex")
-ZIP = os.path.join(ROOT, "library/zoomy_gui/projects/malpasset-session.zip")
+#: The thesis checkout, read at REV (the revision the shipped session was packed from).
+THESIS = os.environ.get("ZOOMY_THESIS", os.path.expanduser("~/git/Zoomy/thesis"))
+REV = "748eef8b"
+CASE = "cases/malpasset_amrex"
+ZIP = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "malpasset-session.zip")
+#: The mesh, from the public data repo at a fixed commit (the meshes catalog lacks it).
+MESH_URL = ("https://raw.githubusercontent.com/ZoomyLab/data/"
+            "f46bdde4d5c66c18e597afcfef8a9ffce171fd05/malpasset/")
 
-_read = lambda f: open(os.path.join(CASE, f)).read()
+_read = lambda f: subprocess.check_output(
+    ["git", "-C", THESIS, "show", f"{REV}:{CASE}/{f}"], text=True)
 strip_future = lambda s: re.sub(r"^from __future__ import.*\n", "", s, flags=re.M)
 read = lambda f: re.sub(r"^#!.*\n", "", strip_future(_read(f)), count=1)
 FILE_GUARD = ('(os.path.dirname(os.path.abspath(__file__))\n'
@@ -43,16 +49,16 @@ assert old in mesh
 mesh = mesh.replace(old, '''    case_dir = case_dir or CASE_DIR
     return _ensure_mesh(settings["mesh"], case_dir)''')
 anchor = "def build_mesh(settings, case_dir=None):"
-mesh = mesh.replace(anchor, '''MESH_CATALOG = "https://zoomylab.github.io/meshes/meshes/"
+mesh = mesh.replace(anchor, '''MESH_URL = ''' + repr(MESH_URL) + '''
 
 
 def _ensure_mesh(fname, case_dir=None):
-    """Case-shipped mesh if present, else fetch from the deployed catalog."""
+    """Case-shipped mesh if present, else fetch it from the Zoomy data repository."""
     p = os.path.join(case_dir or CASE_DIR, fname)
     if not os.path.exists(p):
         import urllib.request
-        print("mesh not found locally; fetching", MESH_CATALOG + fname, flush=True)
-        urllib.request.urlretrieve(MESH_CATALOG + fname, p)
+        print("mesh not found locally; fetching", MESH_URL + fname, flush=True)
+        urllib.request.urlretrieve(MESH_URL + fname, p)
     return p
 
 

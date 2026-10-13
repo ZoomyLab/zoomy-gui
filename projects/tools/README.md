@@ -22,6 +22,19 @@ $PY pack_coupling_triple_session.py   # -> coupling-triple-session.zip    (tripl
 $PY merge_sessions.py                 # -> zoomy-cases.zip                (6 shipped sessions)
 ```
 
+The packers write into `../` (this checkout's `projects/`). The Malpasset and coupling
+packers read their thesis case at a pinned revision (`REV`, via `git show`; `ZOOMY_THESIS`
+names the thesis checkout, default `~/git/Zoomy/thesis`): the revision the shipped session
+was packed from, so a regeneration changes only what the packer changes. The Malpasset case
+has moved on since (its deliverable imports `postprocess.py`, which the packer does not
+inline); re-pin only together with the packer. `steffler-session.zip` has no packer (packed
+by hand, 2e2c7b7).
+
+Browser sessions fetch files with `zoomy_core.misc.download` (synchronous XHR in Pyodide's
+worker, urllib in CPython), from URLs a browser may read: the GUI's own site or a
+CORS-enabled host. The coupling replay payload is a release asset (no CORS), so the deploy
+mirrors it to `gui/gui/data/` and the run card tries that first.
+
 `pack_zoomy_pipeline_sessions.py` writes comment-free card code (`strip_comments.py`)
 for the four thesis QR sessions. `pack_malpasset_amrex_session.py` mutates `malpasset-session.zip`, so it MUST
 run after `pack_malpasset_session.py`. `merge_sessions.py` reads the per-session
