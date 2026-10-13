@@ -6,8 +6,8 @@ override and the card's `code.py`) with its port in `symsolver/`: the same case,
 and settings, marched by the symbolic solvers (`SymbolicHyperbolicSolverNumpy`,
 `SymbolicHyperbolicSolverJax`, `SymbolicHyperbolicSolverAmrex`).  Run it after the packers and
 before `merge_sessions.py`.  A card that is already the port is left alone; a card that is
-neither the port nor the packed card it replaces (identified by its SHA-256: the thesis case
-changed) stops the run.
+neither the port nor a card it replaces (the packed card or an earlier port, identified by its
+SHA-256: the thesis case changed) stops the run.
 """
 import hashlib
 import json
@@ -18,19 +18,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECTS = os.path.join(HERE, os.pardir)
 PORTS = os.path.join(HERE, "symsolver")
 
-#: (zip, session index, port, SHA-256 of the packed run card it replaces or None (the
-#: packer writes the port itself, or the zip has no packer), strip comments)
+#: (zip, session index, port, SHA-256s of the run cards it replaces: the packed card and earlier
+#: versions of the port (none: the packer writes the port itself, or the zip has no packer),
+#: strip comments)
 SESSIONS = [
     ("bingham-session.zip", 0, "bingham_run.py",
-     "e2cf042413c9f5c8750a253117b8ba98e5fc451772666cc128c648657bbd58f2", True),
+     ("e2cf042413c9f5c8750a253117b8ba98e5fc451772666cc128c648657bbd58f2",
+      "1bee87ebb816a251a3f816e050132beabbbe4b5bbe30c6c24f795ef6a06ef527"), True),
     ("zoomy-codeprinter-session.zip", 0, "codeprinter_run.py",
-     "fa7ecb14fa7b94905bbe45eef0e303a6596c1df81e89597aa48f6a1529eb2ed6", True),
-    ("steffler-session.zip", 0, "steffler_run.py", None, False),
+     ("fa7ecb14fa7b94905bbe45eef0e303a6596c1df81e89597aa48f6a1529eb2ed6",
+      "5854289f854617fa81ccdcd8391afc0e997979b0f17ec4163b61da66b2cb60af"), True),
+    ("steffler-session.zip", 0, "steffler_run.py", (), False),
     ("bingham-threshold-session.zip", 0, "bingham_threshold_run.py",
-     "5463bdaf1b5f8ce059ca3065090bd6c4bbef4f532c58d1785ff6fd5b12a871b8", False),
+     ("5463bdaf1b5f8ce059ca3065090bd6c4bbef4f532c58d1785ff6fd5b12a871b8",), False),
     ("malpasset-session.zip", 0, "malpasset_jax_run.py",
-     "ec3820738ec470fa45b8761166128cf38cecfef6a992d15bd01f02dcd7dbfe1f", False),
-    ("malpasset-session.zip", 1, "malpasset_amrex_run.py", None, False),
+     ("ec3820738ec470fa45b8761166128cf38cecfef6a992d15bd01f02dcd7dbfe1f",), False),
+    ("malpasset-session.zip", 1, "malpasset_amrex_run.py", (), False),
 ]
 
 
@@ -47,7 +50,7 @@ def port_code(name, strip_comments):
 
 
 def port(zname, jobs):
-    """Apply `[(index, port name, packed card hash, strip)]` to one zip."""
+    """Apply `[(index, port name, hashes of the cards it replaces, strip)]` to one zip."""
     path = os.path.join(PROJECTS, zname)
     with zipfile.ZipFile(path) as z:
         items = {n: z.read(n) for n in z.namelist()}
@@ -61,7 +64,7 @@ def port(zname, jobs):
         if old == new:
             print(f"  {zname}#{idx}: already on the symbolic solver")
             continue
-        if packed is None or hashlib.sha256(old.encode()).hexdigest() != packed:
+        if hashlib.sha256(old.encode()).hexdigest() not in packed:
             raise SystemExit(f"{zname}#{idx}: the run card is neither the port nor the packed "
                              f"card it replaces: re-port {name}")
         files = [n for n in items if n.startswith(sess["title"] + "/solver/")

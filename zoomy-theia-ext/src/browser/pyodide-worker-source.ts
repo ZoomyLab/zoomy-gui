@@ -92,10 +92,18 @@ def open_hdf5(path):
     return store
 
 
+def typed_kwargs(cls, settings):
+    # The solver cards' Parameters -> constructor arguments, as engine.py provides it.
+    from zoomy_core.misc.options import typed_kwargs as _typed_kwargs
+    return _typed_kwargs(cls, settings)
+
+
 builtins.open_hdf5 = open_hdf5
 builtins.close_store = close_store
+builtins.typed_kwargs = typed_kwargs
 __zoomy_ns__["open_hdf5"] = open_hdf5
 __zoomy_ns__["close_store"] = close_store
+__zoomy_ns__["typed_kwargs"] = typed_kwargs
 
 
 def __zoomy_exec__(src):

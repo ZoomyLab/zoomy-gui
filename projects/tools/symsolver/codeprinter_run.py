@@ -1,3 +1,5 @@
+import shutil
+
 import numpy as np
 
 import zoomy_core.model.boundary_conditions as BC
@@ -18,3 +20,4 @@ solver = SymbolicHyperbolicSolverNumpy(time_end=time_end, cfl=0.9, dt_write=time
                                        output="output/simulation.h5")
 Q, Qaux = solver.setup(mesh, nsm)
 time, Q, Qaux = solver.run(Q, Qaux)
+shutil.copy("output/simulation.h5", "simulation.h5")

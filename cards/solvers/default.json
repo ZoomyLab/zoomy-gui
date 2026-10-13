@@ -51,6 +51,11 @@
     "description": "Explicit finite-volume march of the symbolic solver on the JAX/GPU backend (SymbolicHyperbolicSolverJax; a VAM `split` runs SymbolicChorinSolverJax) — needs the zoomy-jax container.",
     "requires_tag": "jax",
     "class": "zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax",
+    "init": {
+      "time_end": 0.1,
+      "cfl": 0.9,
+      "reconstruction_order": 1
+    },
     "params": {
       "time_end": {
         "type": "Number",
@@ -85,6 +90,12 @@
     "description": "IMEX march of the symbolic solver on the JAX/GPU backend (SymbolicHyperbolicSolverJax, `imex`): explicit flux, the model's source and diffusion implicit — needs the zoomy-jax container.",
     "requires_tag": "jax",
     "class": "zoomy_jax.symsolver.solver.SymbolicHyperbolicSolverJax",
+    "init": {
+      "time_end": 0.1,
+      "cfl": 0.9,
+      "reconstruction_order": 1,
+      "imex": "ssp2"
+    },
     "params": {
       "time_end": {
         "type": "Number",
@@ -128,6 +139,11 @@
     "description": "Explicit finite-volume march of the symbolic solver on AMReX (SymbolicHyperbolicSolverAmrex, zoomy_amrex.symsolver) on the mesh's uniform Cartesian grid: printed to C++, built and run in the amrex backend (zoomy-amrex container).",
     "requires_tag": "amrex",
     "class": "zoomy_amrex.symsolver.SymbolicHyperbolicSolverAmrex",
+    "init": {
+      "time_end": 0.1,
+      "cfl": 0.9,
+      "reconstruction_order": 1
+    },
     "params": {
       "time_end": {
         "type": "Number",
@@ -162,6 +178,11 @@
     "description": "Chorin projection split of the symbolic solver on AMReX (SymbolicChorinSolverAmrex: hyperbolic predictor, pressure solve, corrector) for the non-hydrostatic VAM chain; consumes the `split` the VAM model card binds. Runs in the amrex backend (zoomy-amrex container).",
     "requires_tag": "amrex",
     "class": "zoomy_amrex.symsolver.SymbolicChorinSolverAmrex",
+    "init": {
+      "time_end": 0.1,
+      "cfl": 0.9,
+      "reconstruction_order": 1
+    },
     "params": {
       "time_end": {
         "type": "Number",
@@ -234,22 +255,31 @@
   },
   {
     "id": "solver-foam",
-    "title": "zoomyFoam (SME)",
-    "description": "OpenFOAM+preCICE **SME participant** (zoomyFoam). Emits the SME(level) model, builds the zoomyFoam binary, and runs it as ONE preCICE participant. Put it in a case folder to be an SME side of a coupling: pair two zoomyFoam cases for **SME ↔ SME**, or one zoomyFoam + one incompressibleVOF for **SME ↔ VOF**. Runs on the foam backend (`oras://ghcr.io/zoomylab/zoomy_openfoam_sif:latest`).",
+    "title": "Hyperbolic (OpenFOAM)",
+    "description": "Explicit finite-volume march of the symbolic solver printed to an OpenFOAM solver (SymbolicHyperbolicSolverFoam, zoomy_foam.symsolver; a VAM `split` runs SymbolicChorinSolverFoam), built with wmake and run in the foam backend (`oras://ghcr.io/zoomylab/zoomy_openfoam_sif:latest`).",
     "requires_tag": "OpenFOAM",
-    "params": {
-      "time_end": 4
+    "init": {
+      "time_end": 0.1,
+      "cfl": 0.9
     },
-    "category": "Coupled"
-  },
-  {
-    "id": "solver-foam-vof",
-    "title": "incompressibleVOF (OpenFOAM)",
-    "description": "OpenFOAM+preCICE **VOF participant** (`foamRun` solver `incompressibleVoF`). Runs a resolved incompressible Volume-of-Fluid case as ONE preCICE participant, coupled at the interface. Pair with a zoomyFoam case for an **SME ↔ VOF** run. Runs on the same foam backend (`oras://ghcr.io/zoomylab/zoomy_openfoam_sif:latest`).",
-    "requires_tag": "OpenFOAM",
     "params": {
-      "time_end": 4
+      "time_end": {
+        "type": "Number",
+        "default": 0.1,
+        "bounds": [
+          0,
+          null
+        ]
+      },
+      "cfl": {
+        "type": "Number",
+        "default": 0.9,
+        "bounds": [
+          0.01,
+          0.99
+        ]
+      }
     },
-    "category": "Coupled"
+    "category": "OpenFOAM"
   }
 ]
