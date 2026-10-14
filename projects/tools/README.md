@@ -19,6 +19,7 @@ $PY pack_malpasset_session.py         # -> malpasset-session.zip          (sessi
 $PY pack_malpasset_amrex_session.py   # EDITS malpasset-session.zip IN PLACE (adds session 2: AMReX)
 $PY pack_coupling_session.py          # -> coupling-session.zip           (pair replay)
 $PY pack_coupling_triple_session.py   # -> coupling-triple-session.zip    (triple replay; payload upload GATED — see below)
+$PY pack_coupling_live_sessions.py    # -> coupling-live-session.zip + coupling-triple-live-session.zip (live, symbolic solvers)
 $PY port_symsolver_sessions.py       # EDITS the QR session zips IN PLACE: run cards on the symbolic solvers
 $PY merge_sessions.py                 # -> zoomy-cases.zip                (6 shipped sessions)
 ```
@@ -105,3 +106,20 @@ print(len(m["sessions"]),"sessions"); [print(s["title"],"|",s["description"]) fo
 ```
 
 Expect 6 sessions, terse descriptions, each with 4 `cardOverrides` carrying code.
+
+## Live SME | VOF sessions (symbolic solvers)
+
+`pack_coupling_live_sessions.py` packs `symsolver/coupling_live_{model,mesh,run,viz}.py` into the
+pair and the triple session (they differ in `ARMS` and the function object's `FO`). The session
+runs on the OpenFOAM backend, which marches the VOF tank (`zoomy_foam.vof`) and submits the SME
+arm(s) to the JAX backend (`zoomy_jax.symsolver.coupling.column_participant`) through
+`zoomy_server.peers`: each server needs `ZOOMY_PEERS` (the JAX backend's URL) and
+`ZOOMY_COUPLE_DIR` (a directory both containers see at the same path). Configuration: the
+Fr* = 0.752 dam break to t = 2.5 s (later the run amplifies a 1e-9 perturbation of the dam
+height ~1e6-fold and the tank's step collapses, for the old zoomyFoam participant as well).
+
+Old vs new: `symsolver/figures/coupling_live_old_reference.py` runs the configuration with the
+zoomyFoam participant the sessions ran before (and with the reservoir 1e-9 m deeper: the run's
+own sensitivity); the stored runs are `figures/coupling_live_old_{pair,triple}[_p].npz`.
+`figures/coupling_live_old_vs_new.py` compares a live run's case folder with them
+(`coupling_live_{pair,triple}_old_vs_new.{json,png,svg}`: the runs of tests/backend_e2e).
