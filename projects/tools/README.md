@@ -24,9 +24,14 @@ $PY merge_sessions.py                 # -> zoomy-cases.zip                (6 shi
 ```
 
 `port_symsolver_sessions.py` swaps the run (solver) card of the QR sessions (Bingham roll-wave,
-code printer, Steffler, Bingham threshold, Malpasset JAX) for its port in `symsolver/`: the packed
-case, marched by `SymbolicHyperbolicSolverNumpy` / `SymbolicHyperbolicSolverJax` instead of the
-solvers the thesis case scripts still use. It identifies the packed card it replaces by its
+code printer, Steffler, Bingham threshold, Malpasset JAX and AMReX, SME-VOF replay) for its port in
+`symsolver/`: the packed case, marched by `SymbolicHyperbolicSolverNumpy` /
+`SymbolicHyperbolicSolverJax` instead of the solvers the thesis case scripts still use. The run
+cards follow the GUI's solver-card contract (`cards/solvers/default.json`): write the run's store
+to `run_h5_path()` and publish it with `open_hdf5(...)`, in the browser's card worker, its
+notebook kernel and the server's `zoomy_server.case_run` alike; `run_h5_path()` closes a store
+already open on that file, so a re-run (Run All twice) can rewrite it. The visualization cards
+(`symsolver/*_viz.py`) read that published `store`, not a file. It identifies the packed card it replaces by its
 SHA-256 and stops when a run card is neither the port nor that card, i.e. when the thesis case
 changed: re-port that file and record the new hash. `pack_malpasset_amrex_session.py` packs
 `symsolver/malpasset_amrex_run.py` (`SymbolicHyperbolicSolverAmrex`) itself; inside the amrex

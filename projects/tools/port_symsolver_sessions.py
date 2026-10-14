@@ -8,7 +8,9 @@ and settings, marched by the symbolic solvers (`SymbolicHyperbolicSolverNumpy`,
 get their model card ported: the thesis run's model and numerics, which the packed folder case
 predates.  A port line `from <module> import *` naming a module in `symsolver/` is replaced by
 that module (the cards are self-contained), and a visualization card's `_CASE_SETTINGS` follows
-the ported run card's.  Run it after the packers and before `merge_sessions.py`.  A card that
+the ported run card's.  The run cards follow the GUI's solver-card contract: write the run's
+store to `run_h5_path()` and publish it with `open_hdf5`; the visualization cards use `store`.
+Run it after the packers and before `merge_sessions.py`.  A card that
 is already the port is left alone; a card that is neither the port nor a card it
 replaces (the packed card or an earlier port, identified by its SHA-256: the thesis case
 changed) stops the run.
@@ -31,25 +33,47 @@ MODEL_AMREX = "e5e63fce7a9ecf6e677e3b640515cb25efbfb91699ee024d2b42779befd60c31"
 MODEL_JAX_STR = "13efaa9e3f22038623f276c8af6f0bea78a5cb72dea9b3aa72837effd93c869a"
 MODEL_AMREX_STR = "a11c21db875dbf8863f6c6b72ab4c8ca24db4e4456392f2f58c12d1f6052141a"
 #: (zip, session index, card role, port, SHA-256s of the cards it replaces: the packed card and
-#: earlier versions of the port (none: the packer writes the port itself, or the zip has no
-#: packer), strip comments)
+#: earlier versions of the port (the packer writes the port itself, or the zip has no packer:
+#: only earlier ports), strip comments). The ports before the run_h5_path() / open_hdf5()
+#: contract wrote output/<name>.h5 and copied it to simulation.h5; their visualization cards
+#: read those files. A visualization card is hashed with its `_CASE_SETTINGS` set to the
+#: port's (`sync_settings`): a packer writes the thesis case's settings, the port the run's.
 SESSIONS = [
     ("bingham-session.zip", 0, "solver", "bingham_run.py",
      ("e2cf042413c9f5c8750a253117b8ba98e5fc451772666cc128c648657bbd58f2",
-      "1bee87ebb816a251a3f816e050132beabbbe4b5bbe30c6c24f795ef6a06ef527"), True),
+      "1bee87ebb816a251a3f816e050132beabbbe4b5bbe30c6c24f795ef6a06ef527",
+      "5adb904208eec076a168195f372071167f3dbc76ad62e54540f013307405b034"), True),
     ("zoomy-codeprinter-session.zip", 0, "solver", "codeprinter_run.py",
      ("fa7ecb14fa7b94905bbe45eef0e303a6596c1df81e89597aa48f6a1529eb2ed6",
-      "5854289f854617fa81ccdcd8391afc0e997979b0f17ec4163b61da66b2cb60af"), True),
-    ("steffler-session.zip", 0, "solver", "steffler_run.py", (), False),
+      "5854289f854617fa81ccdcd8391afc0e997979b0f17ec4163b61da66b2cb60af",
+      "3122a89f0847c843e97e495a023dc1c761ad0a8fd957e71fd3bd5b863420ff6f"), True),
+    ("steffler-session.zip", 0, "solver", "steffler_run.py",
+     ("094fb2b6e18890f110f28bc56af9db8f162ead2d6bf213175c2db21945ddaf98",), False),
     ("bingham-threshold-session.zip", 0, "solver", "bingham_threshold_run.py",
-     ("5463bdaf1b5f8ce059ca3065090bd6c4bbef4f532c58d1785ff6fd5b12a871b8",), False),
+     ("5463bdaf1b5f8ce059ca3065090bd6c4bbef4f532c58d1785ff6fd5b12a871b8",
+      "10a60e8a48ae6bc27e72af0082223103eeaba1743980484ff2239318c2bfc3fe"), False),
     ("malpasset-session.zip", 0, "solver", "malpasset_jax_run.py",
-     ("ec3820738ec470fa45b8761166128cf38cecfef6a992d15bd01f02dcd7dbfe1f",), False),
+     ("ec3820738ec470fa45b8761166128cf38cecfef6a992d15bd01f02dcd7dbfe1f",
+      "1ea24b0a51bbcf7793a127d33f8b9c4e33dba49cc54c33b6011ce0977acf6bc8"), False),
     ("malpasset-session.zip", 0, "model", "malpasset_jax_model.py",
      (MODEL_JAX, MODEL_JAX_STR), False),
-    ("malpasset-session.zip", 1, "solver", "malpasset_amrex_run.py", (), False),
+    ("malpasset-session.zip", 1, "solver", "malpasset_amrex_run.py",
+     ("a4ef7529e2a1d75c47e9a7a8929a2edf6b90a203fc1a1c6b5487014d859c1402",), False),
     ("malpasset-session.zip", 1, "model", "malpasset_amrex_model.py",
      (MODEL_AMREX, MODEL_AMREX_STR), False),
+    ("coupling-session.zip", 0, "solver", "coupling_run.py",
+     ("6c640a69fa8cb687d19902b7e9b54fd4b431d744702f1ea45bb64effa72a5482",), False),
+    # the visualization cards read the store the run card opened (`store`), not a file
+    ("bingham-session.zip", 0, "visualization", "bingham_viz.py",
+     ("3d55cedfa4f55b984bb7aed248c6379fcffdfc918480d0d6a139345b39871e8a",), True),
+    ("zoomy-codeprinter-session.zip", 0, "visualization", "codeprinter_viz.py",
+     ("05e40465013eff8bbd9d8b42499f4dcbbb5a290f380e33531167d0f2f1f97dbd",), True),
+    ("steffler-session.zip", 0, "visualization", "steffler_viz.py",
+     ("05ff31bd31c1c1363086791b7523122825c49bdf77f114a23cb9c468e23212e3",), False),
+    ("malpasset-session.zip", 0, "visualization", "malpasset_jax_viz.py",
+     ("66bb9de0b7d50ed42591aad46dc21d9d4d68a902d0cbd342b504c6ec4c0bf6d2",), False),
+    ("malpasset-session.zip", 1, "visualization", "malpasset_amrex_viz.py",
+     ("0212a83d6b64da914ee6501fda24da0199c378d6df95215e0f45c781515a2183",), False),
 ]
 #: `from <module> import *` of a sibling module in `symsolver/` (the port runs standalone there)
 INLINE = re.compile(r"^from (\w+) import \*.*\n", re.M)
@@ -125,7 +149,8 @@ def port(zname, jobs):
         if old == new:
             print(f"  {zname}#{idx}: {role} card already ported")
             continue
-        if hashlib.sha256(old.encode()).hexdigest() not in packed:
+        key = sync_settings(old, new) if role == "visualization" else old
+        if hashlib.sha256(key.encode()).hexdigest() not in packed:
             raise SystemExit(f"{zname}#{idx}: the {role} card is neither the port nor a "
                              f"card it replaces: re-port {name}")
         put(sess, role, old, new)
