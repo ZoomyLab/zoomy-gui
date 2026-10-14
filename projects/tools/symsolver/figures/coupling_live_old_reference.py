@@ -7,10 +7,14 @@ sessions' configuration (Fr* = 0.752, window 2 ms, the characteristic ghost with
 convention, t_end 2.5 s). Writes the arms' snapshots and the seam ledger to an npz.
 
     python coupling_live_old_reference.py pair|triple OUT.npz [WORK] [--perturb 1e-9]
+        [--level 1] [--h-low 0.04] [--t-end 2.5] [--fo JSON] [--fo-base starstate|none]
 
 `--perturb` raises the reservoir depth by that much: the run's own sensitivity, the floor
-of any old-vs-new comparison. Needs apptainer and the OpenFOAM image (`ZOOMY_OF_SIF`);
-builds in WORK (default a temporary directory).
+of any old-vs-new comparison. `--level`, `--h-low`, `--t-end` and the function object's
+settings (`--fo-base`: `zoomy_foam.vof.FO_STARSTATE` or none, then `--fo`, a JSON object, on
+top; default the sessions' `FO`) select another configuration of the same case (the thesis
+case `sme_vof_coupling`). Needs apptainer and the OpenFOAM image (`ZOOMY_OF_SIF`); builds in
+WORK (default a temporary directory).
 """
 import argparse
 import csv
@@ -33,14 +37,16 @@ FO = {"pair": {}, "triple": {"imposeMode": "fluxonly", "imposeVertical": "no"}}
 HDR = "FoamFile {{ format ascii; class {c}; object {o}; }}"
 
 
-def build(work):
-    """zoomyFoam against the SME(1) headers, in a copy of library/zoomy_foam under `work`."""
+def build(work, level=1):
+    """zoomyFoam against the SME(level) headers, in a copy of library/zoomy_foam under
+    `work`."""
+    work = work / f"L{level}"
     src = work / "zoomy_foam"
     if (work / "bin" / "zoomyFoam").exists():
         return work / "bin" / "zoomyFoam"
     shutil.copytree(FOAM_ROOT, src, ignore=shutil.ignore_patterns(
         ".bincache", "__pycache__", "lnInclude", "linux64*", "tests"), dirs_exist_ok=True)
-    subprocess.run([sys.executable, str(src / "create_model.py"), "--level", "1", "--closure",
+    subprocess.run([sys.executable, str(src / "create_model.py"), "--level", str(level), "--closure",
                     "newtonian", "--bcs", "coupling", "--outer", "wall", "--out", str(src)],
                    check=True)
     (work / "bin").mkdir(exist_ok=True)
@@ -49,7 +55,7 @@ def build(work):
     return work / "bin" / "zoomyFoam"
 
 
-def sme_case(case, name, domain, side, dam, config, h_high):
+def sme_case(case, name, domain, side, dam, config, h_high, level=1, h_low=H_LOW, t_end=T_END):
     """The zoomyFoam case of arm `name`, as thesis/notebooks/coupling/cases/sme_vof/generate.py
     wrote it."""
     (x0, x1) = domain
@@ -70,7 +76,7 @@ mergePatchPairs ();
     data = " ".join(f"{f}_S" for f in vof.FIELDS), " ".join(f"{f}_V" for f in vof.FIELDS)
     w(case / "system/controlDict", f"""{HDR.format(c="dictionary", o="controlDict")}
 application zoomyFoam;
-startFrom startTime; startTime 0; stopAt endTime; endTime {T_END};
+startFrom startTime; startTime 0; stopAt endTime; endTime {t_end};
 deltaT {WINDOW}; writeControl runTime; writeInterval {DT_WRITE};
 purgeWrite 0; writeFormat ascii; writePrecision 10; timeFormat general;
 runTimeModifiable true; adjustTimeStep no; maxCo 0.9; reconstructionOrder 1;
@@ -97,12 +103,12 @@ snGradSchemes { default corrected; }
       + '\nsolvers { "Q.*" { solver diagonal; } }\n')
     if dam is not None:
         w(case / "system/setFieldsDict", f"""{HDR.format(c="dictionary", o="setFieldsDict")}
-defaultFieldValues ( volScalarFieldValue Q1 {H_LOW} );
+defaultFieldValues ( volScalarFieldValue Q1 {h_low} );
 regions ( boxToCell {{ box ({x0 - 1} -100 -100) ({dam} 100 100);
   fieldValues ( volScalarFieldValue Q1 {h_high} ); }} );
 """)
     (case / "constant").mkdir(parents=True, exist_ok=True)
-    for i, val in enumerate([0.0, H_LOW, 0.0, 0.0]):
+    for i, val in enumerate([0.0, h_low] + [0.0] * (level + 1)):
         w(case / "0" / f"Q{i}", f"""{HDR.format(c="volScalarField", o=f"Q{i}")}
 dimensions [0 0 0 0 0 0 0]; internalField uniform {val};
 boundaryField {{
@@ -114,7 +120,7 @@ boundaryField {{
 """)
 
 
-def read_case(case):
+def read_case(case, nq=4):
     """`(t, Q)` of a zoomyFoam case's time directories."""
     def field(d, n):
         a = (d / n).read_text().split("internalField")[1]
@@ -124,7 +130,7 @@ def read_case(case):
     dirs = sorted((d for d in case.iterdir() if d.is_dir() and (d / "Q1").exists()),
                   key=lambda d: float(d.name))
     return (np.array([float(d.name) for d in dirs]),
-            np.stack([np.stack([field(d, f"Q{i}") for i in range(4)]) for d in dirs]))
+            np.stack([np.stack([field(d, f"Q{i}") for i in range(nq)]) for d in dirs]))
 
 
 def ledger(path):
@@ -144,29 +150,38 @@ def main():
     ap.add_argument("out")
     ap.add_argument("work", nargs="?")
     ap.add_argument("--perturb", type=float, default=0.0)
+    ap.add_argument("--level", type=int, default=1)
+    ap.add_argument("--h-low", type=float, default=H_LOW)
+    ap.add_argument("--t-end", type=float, default=T_END)
+    ap.add_argument("--fo-base", choices=("starstate", "none"), default="starstate")
+    ap.add_argument("--fo", default=None, help="JSON object of function-object settings")
     a = ap.parse_args()
+    import json
+    fo = dict(vof.FO_STARSTATE) if a.fo_base == "starstate" else {}
+    fo.update(json.loads(a.fo) if a.fo is not None else FO[a.mode])
     work = Path(a.work or tempfile.mkdtemp(prefix="sme_vof_old_")).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    binary = build(work)
+    binary = build(work, a.level)
     run = work / f"run_{a.mode}{'_p' if a.perturb else ''}"
     shutil.rmtree(run, ignore_errors=True)
     run.mkdir()
     arms = [vof.Arm(n, f"{n}Mesh", "VofInletMesh" if s == "right" else "VofOutletMesh",
                     "left" if s == "right" else "right") for n, (_, s, _) in ARMS[a.mode].items()]
-    config = vof.write_config(run / "precice-config.xml", arms=arms, t_end=T_END,
+    config = vof.write_config(run / "precice-config.xml", arms=arms, t_end=a.t_end,
                               window=WINDOW, exchange=run)
-    tank = vof.Tank(h0=H_LOW)
-    tank.fo.update(FO[a.mode])
-    case = vof.write_case(run / "vof_case", tank, arms=arms, config=config, t_end=T_END,
+    tank = vof.Tank(h0=a.h_low, fo=fo)
+    case = vof.write_case(run / "vof_case", tank, arms=arms, config=config, t_end=a.t_end,
                           window=WINDOW, write_interval=DT_WRITE)
     for n, (dom, side, dam) in ARMS[a.mode].items():
-        sme_case(run / f"{n}_case", n, dom, side, dam, config, H_HIGH + a.perturb)
+        sme_case(run / f"{n}_case", n, dom, side, dam, config, H_HIGH + a.perturb,
+                 level=a.level, h_low=a.h_low, t_end=a.t_end)
     import importlib.util
     spec = importlib.util.spec_from_file_location("create_model", FOAM_ROOT / "create_model.py")
     cm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cm)
-    lib = vof.coupling_library(cm.build_system_model(1, outer="wall", closure="newtonian",
-                                                     bcs="coupling", project_nz=NZ))
+    lib = vof.coupling_library(cm.build_system_model(a.level, outer="wall",
+                                                     closure="newtonian", bcs="coupling",
+                                                     project_nz=NZ))
     lines = [f"export LD_LIBRARY_PATH={lib}:$LD_LIBRARY_PATH", "unset FOAM_SIGFPE FOAM_SETNAN"]
     for n in ARMS[a.mode]:
         lines.append(f"(cd {run}/{n}_case && blockMesh > log.blockMesh 2>&1 && "
@@ -180,9 +195,10 @@ def main():
     r = subprocess.run(_apptainer_cmd("\n".join(lines), binds=[work, lib]))
     if r.returncode:
         raise SystemExit(f"old reference run failed (see {run}/log.*)")
-    res = {"t_end": T_END, "mode": a.mode, "perturb": a.perturb}
+    res = {"t_end": a.t_end, "mode": a.mode, "perturb": a.perturb, "level": a.level,
+           "h_low": a.h_low, "fo": json.dumps(fo)}
     for n in ARMS[a.mode]:
-        t, Q = read_case(run / f"{n}_case")
+        t, Q = read_case(run / f"{n}_case", nq=3 + a.level)
         res[f"{n}_t"], res[f"{n}_Q"] = t, Q
     res["ledger"] = ledger(case / "ledger.csv")
     np.savez(a.out, **res)
