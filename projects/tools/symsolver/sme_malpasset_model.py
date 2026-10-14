@@ -220,7 +220,7 @@ class SmoothManningFriction(ManningFriction):
     reservoir is motionless at t=0.
 
     Explicitly stepped that is harmless — nothing ever evaluates the jacobian.
-    It bites the POINT-IMPLICIT source (``source_treatment="linearized"``),
+    It bites the POINT-IMPLICIT source (``source_treatment=SourceTreatment.linearized``),
     which assembles ``A = I − dt·J`` per cell: MEASURED on this model at
     dimension=3, q=0, h=55 m, 2 of the 16 jacobian entries come out non-finite,
     so ``A`` is NaN in every cell on step 1 and the run dies immediately.
@@ -330,7 +330,7 @@ MALPASSET_MANNING_PARAMS = {"g": 9.81, "rho": 1.0, "nu": 1.0, "n": 0.033}
 #: exists to measure, and shrinking it only trades one arbitrary constant for
 #: another.  The stiffness it was papering over is removed properly by the
 #: POINT-IMPLICIT source instead — build the NSM with
-#: ``source_treatment="linearized"`` and the friction is applied as
+#: ``source_treatment=SourceTreatment.linearized`` and the friction is applied as
 #: ``(I − dt·J)⁻¹ S`` with the consistent jacobian, which is unconditionally
 #: stable in the stiff limit and drives ``u → 0`` as ``h → 0`` by construction,
 #: with the true ``h^(1/3)`` kept everywhere.  Order 1 never produces h<0, so

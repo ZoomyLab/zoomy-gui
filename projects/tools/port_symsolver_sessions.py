@@ -27,6 +27,9 @@ PORTS = os.path.join(HERE, "symsolver")
 #: SHA-256 of the packed Malpasset model cards (navier closure, order 1; MalpassetSWE on AMReX)
 MODEL_JAX = "678ddf728db1fa58c08869584ffb009a6c9b5dd2187d56b40f57c34d3c1e540c"
 MODEL_AMREX = "e5e63fce7a9ecf6e677e3b640515cb25efbfb91699ee024d2b42779befd60c31"
+#: SHA-256 of the ported model cards before `source_treatment` became a `SourceTreatment`
+MODEL_JAX_STR = "13efaa9e3f22038623f276c8af6f0bea78a5cb72dea9b3aa72837effd93c869a"
+MODEL_AMREX_STR = "a11c21db875dbf8863f6c6b72ab4c8ca24db4e4456392f2f58c12d1f6052141a"
 #: (zip, session index, card role, port, SHA-256s of the cards it replaces: the packed card and
 #: earlier versions of the port (none: the packer writes the port itself, or the zip has no
 #: packer), strip comments)
@@ -42,9 +45,11 @@ SESSIONS = [
      ("5463bdaf1b5f8ce059ca3065090bd6c4bbef4f532c58d1785ff6fd5b12a871b8",), False),
     ("malpasset-session.zip", 0, "solver", "malpasset_jax_run.py",
      ("ec3820738ec470fa45b8761166128cf38cecfef6a992d15bd01f02dcd7dbfe1f",), False),
-    ("malpasset-session.zip", 0, "model", "malpasset_jax_model.py", (MODEL_JAX,), False),
+    ("malpasset-session.zip", 0, "model", "malpasset_jax_model.py",
+     (MODEL_JAX, MODEL_JAX_STR), False),
     ("malpasset-session.zip", 1, "solver", "malpasset_amrex_run.py", (), False),
-    ("malpasset-session.zip", 1, "model", "malpasset_amrex_model.py", (MODEL_AMREX,), False),
+    ("malpasset-session.zip", 1, "model", "malpasset_amrex_model.py",
+     (MODEL_AMREX, MODEL_AMREX_STR), False),
 ]
 #: `from <module> import *` of a sibling module in `symsolver/` (the port runs standalone there)
 INLINE = re.compile(r"^from (\w+) import \*.*\n", re.M)
