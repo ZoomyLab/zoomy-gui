@@ -3,21 +3,19 @@
 Reads ``settings.json``, builds the mesh + model (IC/BC baked; the thesis model and numerics,
 see the model card), constructs the symbolic JAX solver (``SymbolicHyperbolicSolverJax``) with
 the thesis' time integration: SSP-RK2 with the point-implicit source in every stage, the CFL
-step from the cells' wave speeds at CFL 0.4, MOOD at order 2; solves, and writes
-``output/<name>.h5`` (``/mesh`` + ``iteration_*`` snapshots, every 50 s of the 2000 s event like
-the thesis run ``output/zp_l1``).  The server executes this file as-is in the backend container.
-
-Standalone: ``python run.py``.
+step from the cells' wave speeds at CFL 0.4, MOOD at order 2; solves into the run's store
+(``run_h5_path()``: ``/mesh`` + ``iteration_*`` snapshots, every 50 s of the 2000 s event like
+the thesis run ``output/zp_l1``) and opens it (``open_hdf5``).  The JAX backend's server runs
+the composed case (``zoomy_server.case_run``, which provides both helpers, as the GUI does).
 """
 
 import json
 import os
 
 # Let the environment pick the device (server/GPU sets cuda); default cpu so the
-# case runs standalone.  MUST precede any jax-touching import.
+# case runs on a CPU host.  MUST precede any jax-touching import.
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-from zoomy_core.misc.misc import get_main_directory
 from zoomy_core.symsolver.discretization.time import CflWaveSpeed, Imex
 from zoomy_jax.symsolver.solver import SymbolicHyperbolicSolverJax
 
@@ -74,7 +72,7 @@ def load_settings(path=None):
 
 def run(settings=None):
     """Build + solve from ``settings`` (dict or None → settings.json).  Returns
-    the output ``.h5`` path."""
+    the run's store path."""
     if settings is None:
         settings = load_settings()
     name = settings.get("name", "malpasset_sme_l1")
@@ -87,8 +85,7 @@ def run(settings=None):
           f"states={[str(s) for s in bundle['sm'].state]}", flush=True)
 
     t_end = float(run_cfg["t_end"])
-    out_rel = os.path.relpath(os.path.join(CASE_DIR, "output", name + ".h5"),
-                              get_main_directory())
+    h5 = run_h5_path()
     num = settings["numerics"]
     # imex None: the source is point-implicit inside every explicit stage (the thesis);
     # 'lie' / 'ssp2' step the source implicitly instead
@@ -96,20 +93,15 @@ def run(settings=None):
     solver = SymbolicHyperbolicSolverJax(
         time_end=t_end, cfl=num.get("cfl", 0.4), mood=num.get("mood", True),
         cfl_wave_speed=CflWaveSpeed(num.get("cfl_wave_speed", CflWaveSpeed.cells)),
-        imex=imex, dt_write=t_end / (run_cfg.get("snapshots", 41) - 1), output=out_rel)
+        imex=imex, dt_write=t_end / (run_cfg.get("snapshots", 41) - 1), output=h5)
 
     print(f"[{name}] solving t_end={t_end}s "
           f"(order={num.get('order', 2)}, "
           f"platform={os.environ['JAX_PLATFORMS']}) ...", flush=True)
     Q, Qaux = solver.setup(mesh, nsm)
     solver.run(Q, Qaux)
-    h5 = os.path.join(CASE_DIR, "output", name + ".h5")
     print(f"[{name}] done -> {h5}", flush=True)
     return h5
 
 
-_h5 = run()
-import shutil
-
-shutil.copy(_h5, "simulation.h5")   # standard artifact name (viz prelude / postproc)
-print("artifact -> simulation.h5")
+open_hdf5(run())

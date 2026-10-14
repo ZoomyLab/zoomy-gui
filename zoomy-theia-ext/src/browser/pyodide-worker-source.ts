@@ -11,9 +11,13 @@
 // Python helpers: notebook-cell exec (last-expression display + matplotlib PNG +
 // rich repr) and jedi autocomplete (copied from zoomy_gui/engine.py).
 const PY_HELPERS = `
-import sys, io, os, base64, json, ast, builtins
+import sys, io, os, base64, json, ast, builtins, tempfile
 os.environ.setdefault("MPLBACKEND", "AGG")
-__zoomy_ns__ = {"__name__": "__main__"}
+# The cells run as the GUI runs a case's cells (the card worker's engine.py, the server's
+# zoomy_server.case_run): one namespace, __name__ not "__main__", so a folder-case card's
+# command-line block (if __name__ == "__main__":, e.g. the coupling model card's foam
+# emission through a subprocess) stays out of the notebook as it stays out of a GUI run.
+__zoomy_ns__ = {"__name__": "zoomy_case"}
 
 #: Rich outputs emitted DURING a cell by display(), in call order.
 __zoomy_outs__ = []
@@ -59,9 +63,10 @@ __zoomy_ns__["display"] = display
 # __zoomy_exec__ and complete_code from that file. So every exported notebook
 # died on NameError: name 'open_hdf5' is not defined. Same contract as
 # engine.py's, retargeted from sys._shallowflow_scope to this kernel's cell
-# namespace: close any store already open (its h5py handle would otherwise
-# stop a re-run truncating the same path), cross-check the mesh against the
-# fields, and publish store so later plotting cells find it.
+# namespace: run_h5_path() and open_hdf5() close any store already open (its
+# h5py handle would otherwise stop a re-run -- Run All twice -- truncating the
+# same path), open_hdf5 cross-checks the mesh against the fields and publishes
+# store so later plotting cells find it.
 def close_store():
     s = __zoomy_ns__.get("store")
     if s is None:
@@ -74,8 +79,10 @@ def close_store():
 
 
 def run_h5_path():
-    # Where a solver card writes this run's store, as engine.py's run_h5_path: the tab's own file.
-    path = "/tmp/zoomy_sim/sim.h5"
+    # Where a solver card writes this run's store, as engine.py's run_h5_path: the tab's own
+    # file, written afresh, so the store a previous run opened on it is closed first.
+    close_store()
+    path = os.path.join(tempfile.gettempdir(), "zoomy_sim", "sim.h5")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     return path
 
@@ -115,16 +122,26 @@ __zoomy_ns__["close_store"] = close_store
 __zoomy_ns__["typed_kwargs"] = typed_kwargs
 
 
+#: Outcome of every cell this kernel ran, in order: None (succeeded) or the error. A cell
+#: can judge the cells run before it (the QR browser tests' final check cell does).
+sys.zoomy_cell_log = []
+
+
 def __zoomy_exec__(src):
     __zoomy_outs__.clear()
-    tree = ast.parse(src, mode="exec")
-    val = None
-    if tree.body and isinstance(tree.body[-1], ast.Expr):
-        last = tree.body.pop()
-        exec(compile(tree, "<cell>", "exec"), __zoomy_ns__)
-        val = eval(compile(ast.Expression(last.value), "<cell>", "eval"), __zoomy_ns__)
-    else:
-        exec(compile(tree, "<cell>", "exec"), __zoomy_ns__)
+    try:
+        tree = ast.parse(src, mode="exec")
+        val = None
+        if tree.body and isinstance(tree.body[-1], ast.Expr):
+            last = tree.body.pop()
+            exec(compile(tree, "<cell>", "exec"), __zoomy_ns__)
+            val = eval(compile(ast.Expression(last.value), "<cell>", "eval"), __zoomy_ns__)
+        else:
+            exec(compile(tree, "<cell>", "exec"), __zoomy_ns__)
+    except BaseException as e:
+        sys.zoomy_cell_log.append(f"{type(e).__name__}: {e}")
+        raise
+    sys.zoomy_cell_log.append(None)
     # Mid-cell display() output comes first: it happened before the final value.
     outs = list(__zoomy_outs__)
     __zoomy_outs__.clear()

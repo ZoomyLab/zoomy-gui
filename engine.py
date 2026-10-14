@@ -3,8 +3,9 @@
 Design notes:
 
 * Simulation results live in an HDF5 file on Pyodide's virtual filesystem
-  (``/tmp/zoomy_sim/sim.h5``, ``run_h5_path()``). Nothing else. The browser is a
-  regular filesystem as far as Python is concerned.
+  (``/tmp/zoomy_sim/sim.h5``, ``run_h5_path()``, which closes the previous run's
+  store). Nothing else. The browser is a regular filesystem as far as Python is
+  concerned.
 * ``store`` is a :class:`zoomy_plotting.SimulationStore` built via
   ``zoomy_plotting.read_hdf5(path)``. Lazy field reads, no in-memory
   arrays outside the open h5py handle.
@@ -20,6 +21,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 
 import numpy as np
 
@@ -184,10 +186,13 @@ class _LiveStdout(io.StringIO):
 # --- Helpers used by the solver template: where the run's store is written, and loading it. ---
 def run_h5_path():
     """The file a solver card writes this run's HDF5 store to (then ``open_hdf5``s): the
-    browser tab's own ``/tmp/zoomy_sim/sim.h5``. The zoomy-server's case runner
-    (``zoomy_server.case_run``) provides the same name for the job's own ``simulation.h5``, so
-    concurrent jobs do not write one file."""
-    path = "/tmp/zoomy_sim/sim.h5"
+    browser tab's own ``<tempdir>/zoomy_sim/sim.h5`` (``/tmp`` in Pyodide; a CPython process's
+    ``TMPDIR``). The card writes it afresh, so the store a previous run opened on it is closed
+    first: its h5py handle would stop the truncation ("unable to truncate a file which is
+    already open"). The zoomy-server's case runner (``zoomy_server.case_run``) provides the
+    same name for the job's own ``simulation.h5``, so concurrent jobs do not write one file."""
+    close_store()
+    path = os.path.join(tempfile.gettempdir(), "zoomy_sim", "sim.h5")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     return path
 
@@ -324,10 +329,9 @@ def close_store():
 
     The previous run's ``SimulationStore`` holds an open ``h5py.File`` via
     ``_resource``; that lock prevents ``mesh.write_to_hdf5(path)`` from
-    truncating the same path on a subsequent run. ``process_code`` now calls
-    this automatically at the start of every store-producing (solver) run, so
-    card code NEVER needs it — it is kept as a public no-op-compatible shim
-    for backward compatibility with older cards that still call it."""
+    truncating the same path on a subsequent run. ``run_h5_path()`` and
+    ``open_hdf5()`` call it, so a solver card following the contract (write
+    to ``run_h5_path()``, then ``open_hdf5``) never needs it."""
     s = sys._shallowflow_scope.get("store")
     if s is None:
         return
@@ -352,14 +356,6 @@ def typed_kwargs(cls, settings):
 
 
 sys._shallowflow_scope["typed_kwargs"] = typed_kwargs
-
-
-def _is_store_producer(code):
-    """A run that re-creates the results store — it truncates a fresh HDF5
-    (``mesh.write_to_hdf5``) and/or re-opens it (``open_hdf5``). Pure viz
-    cards do neither; they read the scope ``store`` the solver run installed,
-    so we must NOT close it out from under them."""
-    return ("write_to_hdf5" in code) or ("open_hdf5" in code)
 
 
 # --- Autocomplete via jedi ------------------------------------------------
@@ -478,12 +474,6 @@ def process_code(code_string):
     # the previous one" behaviour in the GUI a simple clear-then-append.
     res = {"status": "success", "output": "", "store_meta": None}
     scope = sys._shallowflow_scope
-
-    # Auto-close the previous run's store before a solver run truncates the
-    # same HDF5 path. Card code never needs close_store(); pure viz runs (no
-    # write_to_hdf5/open_hdf5) keep the installed store so plots still resolve.
-    if _is_store_producer(code_string):
-        close_store()
 
     try:
         if _plt is not None:

@@ -1,5 +1,3 @@
-import shutil
-
 import numpy as np
 
 import zoomy_core.model.initial_conditions as IC
@@ -23,8 +21,9 @@ nsm = NumericalSystemModel.from_system_model(
     sm, reconstruction=ReconstructionSpec(order=1), dt_max=0.4 / rate)
 
 time_end = settings["time_end"] * tscale
+_h5_path = run_h5_path()
 solver = SymbolicHyperbolicSolverNumpy(time_end=time_end, cfl=0.9, dt_write=time_end / 80,
-                                       output="output/simulation.h5")
+                                       output=_h5_path)
 Q, Qaux = solver.setup(mesh, nsm)
 time, Q, Qaux = solver.run(Q, Qaux)
-shutil.copy("output/simulation.h5", "simulation.h5")
+open_hdf5(_h5_path)

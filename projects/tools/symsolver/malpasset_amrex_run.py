@@ -7,17 +7,17 @@ in ONE continuous run on the structured grid: the bounding box of the triangulat
 reservoir depth rasterised from the ``.msh`` ``$NodeData``
 (``zoomy_amrex.malpasset.prepare_rasters``).  The thesis' time integration: SSP-RK2 with the
 point-implicit source in every stage, the CFL step from the cells' wave speeds at CFL 0.4, MOOD
-at order 2.  Writes ``output/<name>.h5`` (the shared zoomy store) and copies it to
-``./simulation.h5``.  The server executes this file as-is in the AMReX backend container.
+at order 2.  Writes the run's store (``run_h5_path()``, the shared zoomy store) and opens it
+(``open_hdf5``).  The AMReX backend's server runs the composed case (``zoomy_server.case_run``,
+which provides both helpers, as the GUI does).
 
-Standalone: ``python run.py`` with ``zoomy_amrex``: in the AMReX backend container the solver
-is printed, built and run natively, on a host through ``apptainer exec`` of the AMReX image
-(built once, cached).  Set ``ZOOMY_T_END`` to override ``t_end`` (smoke runs).
+With ``zoomy_amrex``: in the AMReX backend container the solver is printed, built and run
+natively, on a host through ``apptainer exec`` of the AMReX image (built once, cached).  Set
+``ZOOMY_T_END`` to override ``t_end`` (smoke runs).
 """
 
 import json
 import os
-import shutil
 
 import numpy as np
 
@@ -101,7 +101,7 @@ def structured_case(mesh_path, n_cells, raster_dir, idx):
 
 def run(settings=None):
     """Build + solve from ``settings`` (dict or None → settings.json).  Returns
-    the output ``.h5`` path."""
+    the run's store path."""
     if settings is None:
         settings = load_settings()
     name = settings.get("name", "malpasset_amrex")
@@ -110,7 +110,6 @@ def run(settings=None):
 
     from zoomy_amrex.symsolver import SymbolicHyperbolicSolverAmrex
     from zoomy_core.misc.io import _save_fields_to_hdf5, write_mesh_to_hdf5
-    from zoomy_core.misc.misc import get_main_directory
     from zoomy_core.symsolver.discretization.time import CflWaveSpeed, Imex
 
     out_dir = os.path.join(CASE_DIR, "output")
@@ -131,15 +130,12 @@ def run(settings=None):
           f"(CFL={solver.cfl}, order={nsm.reconstruction.order}) ...", flush=True)
     solver.run(mesh, nsm, Q0, os.path.join(out_dir, "amrex"))
 
-    h5 = os.path.join(out_dir, name + ".h5")
-    rel = os.path.relpath(h5, get_main_directory())
-    write_mesh_to_hdf5(rel, mesh, names=[str(v) for v in sm.state])
+    h5 = run_h5_path()
+    write_mesh_to_hdf5(h5, mesh, names=[str(v) for v in sm.state])
     for k, (time, Q) in enumerate(solver.snapshots):
-        _save_fields_to_hdf5(rel, k, time, Q)
-    shutil.copy2(h5, os.path.join(CASE_DIR, "simulation.h5"))
-    print(f"[{name}] done ({solver.steps} steps) -> {h5}  "
-          f"(+ {os.path.join(CASE_DIR, 'simulation.h5')})", flush=True)
+        _save_fields_to_hdf5(h5, k, time, Q)
+    print(f"[{name}] done ({solver.steps} steps) -> {h5}", flush=True)
     return h5
 
 
-run()
+open_hdf5(run())

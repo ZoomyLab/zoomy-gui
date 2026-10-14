@@ -12,10 +12,10 @@ times on an emptied domain).
 
 Writes ONE primary store ``output/bingham_threshold.npz`` (per-beta amplitude
 series ``amp_i`` + full snapshot stacks ``S_i`` + fitted transit-window growth
-rates ``rate_i`` + the analytic ``beta_c``), and a minimal server-facing
-``output/bingham_threshold.h5`` (``/mesh`` + ``fields/iteration_*``) built from
-the UNSTABLE run via the core HDF5 writers, so the results endpoint / vtk
-fallback has a real snapshot store to render.  ``run()`` returns the npz path.
+rates ``rate_i`` + the analytic ``beta_c``), and the run's store
+(``run_h5_path()``, ``/mesh`` + ``fields/iteration_*``) built from the UNSTABLE run
+via the core HDF5 writers and opened (``open_hdf5``), so the GUI and the results
+endpoint have a real snapshot store to render.  ``run()`` returns both paths.
 
 GUI time knob: ``settings['run']['t_end_prime']`` is honored as in
 ``../transient/run.py`` — but here it is the PHYSICAL end time in seconds (the
@@ -23,7 +23,8 @@ sweep spans three betas => three ``tscale``s, so a single non-dimensional t'
 would map to three different physical horizons and break the shared,
 physical growth-rate window).  Default 100 s matches ``bingham_rollwaves.py``.
 
-Standalone: ``python run.py``.
+The GUI runtime (the browser, ``zoomy_server.case_run``) provides ``run_h5_path`` and
+``open_hdf5``.
 """
 
 import json
@@ -32,7 +33,6 @@ import time
 
 import numpy as np
 
-from zoomy_core.misc.misc import get_main_directory
 from zoomy_core.misc.io import write_mesh_to_hdf5, _save_fields_to_hdf5
 from zoomy_core.numerics import NonconservativeRusanov, NumericalSystemModel, ReconstructionSpec
 from zoomy_core.symsolver.numpy_backend import SymbolicHyperbolicSolverNumpy
@@ -169,21 +169,18 @@ def _solve_beta(settings, mesh, beta, frame_times, num, h0, xmax, nc):
     return S, amp, qauxs, sc
 
 
-def _write_server_h5(mesh, S, qauxs, frame_times, name):
-    """Minimal server-facing store from the unstable run (core HDF5 writers)."""
-    h5_abs = os.path.join(CASE_DIR, "output", name + ".h5")
-    h5_rel = os.path.relpath(h5_abs, get_main_directory())
-    if os.path.exists(h5_abs):
-        os.remove(h5_abs)
-    write_mesh_to_hdf5(h5_rel, mesh)          # /mesh (self-describing)
+def _write_server_h5(mesh, S, qauxs, frame_times):
+    """The run's store (``run_h5_path()``) from the unstable run (core HDF5 writers)."""
+    h5 = run_h5_path()
+    write_mesh_to_hdf5(h5, mesh)              # /mesh (self-describing)
     for i in range(len(S)):
-        _save_fields_to_hdf5(h5_rel, i, float(frame_times[i]), S[i], qauxs[i])
-    return h5_abs
+        _save_fields_to_hdf5(h5, i, float(frame_times[i]), S[i], qauxs[i])
+    return h5
 
 
 def run(settings=None):
-    """Sweep the betas, fit growth rates, write the npz (+ server h5).  Returns
-    the npz path."""
+    """Sweep the betas, fit growth rates, write the npz (+ the run's store).  Returns
+    the npz path and the store's."""
     if settings is None:
         settings = load_settings()
     name = settings.get("name", "bingham_threshold")
@@ -241,19 +238,15 @@ def run(settings=None):
 
     # server h5 from the most-unstable (largest beta) run
     iu = int(np.argmax(betas))
-    h5 = _write_server_h5(mesh, S_list[iu], qaux_list[iu], frame_times, name)
+    h5 = _write_server_h5(mesh, S_list[iu], qaux_list[iu], frame_times)
     print(f"[{name}] wrote {h5}", flush=True)
 
     for b, r, v in zip(betas, rates, verdicts):
         print(f"  VERDICT beta={b:<6}: rate {r:+.4f} 1/s -> {v}", flush=True)
-    return npz
+    return npz, h5
 
 
-_npz = run()
-import shutil
-
-# run.py writes a server-facing store output/<name>.h5; copy it to the standard
-# artifact name so the compose viz prelude's read_hdf5 succeeds (the figure
-# itself is recomputed from the .npz by visualize.py).
-shutil.copy(_npz[:-4] + ".h5", "simulation.h5")
-print("artifact -> simulation.h5")
+_npz, _h5 = run()
+# the figure itself is recomputed from the .npz by visualize.py; the store is what the GUI
+# shows and keeps of the run
+open_hdf5(_h5)

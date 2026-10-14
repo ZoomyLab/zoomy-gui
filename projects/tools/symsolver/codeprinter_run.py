@@ -1,5 +1,3 @@
-import shutil
-
 import numpy as np
 
 import zoomy_core.model.boundary_conditions as BC
@@ -16,8 +14,9 @@ nsm.initial_conditions = IC.RP(
 nsm.aux_initial_conditions = IC.Constant(constants=lambda n: np.zeros(n))
 
 time_end = settings["time_end"]
+_h5_path = run_h5_path()
 solver = SymbolicHyperbolicSolverNumpy(time_end=time_end, cfl=0.9, dt_write=time_end / 39,
-                                       output="output/simulation.h5")
+                                       output=_h5_path)
 Q, Qaux = solver.setup(mesh, nsm)
 time, Q, Qaux = solver.run(Q, Qaux)
-shutil.copy("output/simulation.h5", "simulation.h5")
+open_hdf5(_h5_path)
